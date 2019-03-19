@@ -23,11 +23,16 @@ use crate::libtx::{aggsig, proof};
 use crate::util::static_secp_instance;
 
 /// output a reward output
-pub fn output<K>(keychain: &K, key_id: &Identifier, fees: u64) -> Result<(Output, TxKernel), Error>
+pub fn output<K>(
+	keychain: &K,
+	key_id: &Identifier,
+	height: u64,
+	fees: u64,
+) -> Result<(Output, TxKernel), Error>
 where
 	K: Keychain,
 {
-	let value = reward(fees);
+	let value = reward(height, fees);
 	let commit = keychain.commit(value, key_id)?;
 
 	trace!("Block reward - Pedersen Commit is: {:?}", commit,);
@@ -42,7 +47,7 @@ where
 
 	let secp = static_secp_instance();
 	let secp = secp.lock();
-	let over_commit = secp.commit_value(reward(fees))?;
+	let over_commit = secp.commit_value(reward(height, fees))?;
 	let out_commit = output.commitment();
 	let excess = secp.commit_sum(vec![out_commit], vec![over_commit])?;
 	let pubkey = excess.to_pubkey(&secp)?;

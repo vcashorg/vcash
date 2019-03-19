@@ -3,45 +3,31 @@
 [![Support chat](https://badges.gitter.im/grin_community/Lobby.png)](https://gitter.im/grin_community/support)
 [![Codecov coverage status](https://codecov.io/gh/mimblewimble/grin/branch/master/graph/badge.svg)](https://codecov.io/gh/mimblewimble/grin)
 
-# Grin
+# Vcash
 
-Grin is an in-progress implementation of the MimbleWimble protocol. Many characteristics are still undefined but the following constitutes a first set of choices:
+VCash is the combined outcome of Bitcoin characteristics integrated with Mimblewimble technology. It inherits Bitcoin’s distribution mechanism and uses Grin's Mimblewimble implementation.
 
-  * Clean and minimal implementation, and aiming to stay as such.
-  * Follows the MimbleWimble protocol, which provides great anonymity and scaling characteristics.
-  * Cuckoo Cycle proof of work in two variants named Cuckaroo (ASIC-resistant) and Cuckatoo (ASIC-targeted).
-  * Relatively fast block time: one minute.
-  * Fixed block reward over time with a decreasing dilution.
-  * Transaction fees are based on the number of Outputs created/destroyed and total transaction size.
-  * Smooth curve for difficulty adjustments.
+Bitcoin has proven some facts in the last ten years. For example, the best way to protect assets is consuming energy through POW, a fixed quantity of coins give rise to good performance, ASIC devices do not violate the goal of decentralisation, and decentralised systems are reliable.
 
-To learn more, read our [introduction to MimbleWimble and Grin](doc/intro.md).
+Currently, Bitcoin's privacy protocol is still relatively poor whereby the flow of most transactions under the UTXO model are analysed, and transaction amounts are made public. This means there are no privacy and anonymity in Bitcoin, which in turn hinders liquidity of the coins and limits people's freedom to use the coins.
+
+Grin's privacy protocol is second to none. It is extremely reliable and simple because it only utilises a number of basic mathematical laws. It is such a pity that the only blemish in Grin is that its coin parameter settings adopted the linear coin delivery model.
+
+VCash combines advantages of the two coins. In terms of Bitcoin, it inherits its economic parameter as well as its immense hash power. In terms of Grin, it derives its powerful technology in privacy protocols.
+
+VCash adopts Merged Mining method to mine coins alongside Bitcoin, that is, VCash blocks can be computed whilst computing Bitcoin blocks. In general, POW chains need to take into consideration that there is a 51% risk of attack on the network. Since Bitcoin has the largest number of miners in the world whereby hash power is broadly distributed, VCash can easily obtain most of Bitcoin’s hash power with the support of the Bitcoin mining pool. This means VCash possesses the same level of security as Bitcoin hence launching a 51% attack on it would be equally difficult.
+
+The goal of VCash is to be the most private and secure chain for storing values.
 
 ## Status
 
-Grin is live with mainnet. Still, much is left to be done and [contributions](CONTRIBUTING.md) are welcome (see below). Check our [mailing list archives](https://lists.launchpad.net/mimblewimble/) for the latest status.
-
-## Contributing
-
-To get involved, read our [contributing docs](CONTRIBUTING.md).
-
-Find us:
-
-* Chat: [Gitter](https://gitter.im/grin_community/Lobby).
-* Mailing list: join the [~MimbleWimble team](https://launchpad.net/~mimblewimble) and subscribe on Launchpad.
-* Twitter for the Grin council: [@grincouncil](https://twitter.com/grincouncil)
+VCash is live with mainnet. Still, much is left to be done and [contributions](CONTRIBUTING.md) are welcome (see below). Check our [mailing list archives](https://lists.launchpad.net/mimblewimble/) for the latest status.
 
 ## Getting Started
 
 To learn more about the technology, read our [introduction](doc/intro.md).
 
-To build and try out Grin, see the [build docs](doc/build.md).
-
-## Philosophy
-
-Grin likes itself small and easy on the eyes. It wants to be inclusive and welcoming for all walks of life, without judgement. Grin is terribly ambitious, but not at the detriment of others, rather to further us all. It may have strong opinions to stay in line with its objectives, which doesn't mean disrespect of others' ideas.
-
-We believe in pull requests, data and scientific research. We do not believe in unfounded beliefs.
+To build and try out Vcash, see the [build docs](doc/build.md).
 
 ## Credits
 

@@ -530,6 +530,8 @@ pub struct BlockHeaderPrintable {
 	pub range_proof_root: String,
 	/// Merklish root of all transaction kernels in the TxHashSet
 	pub kernel_root: String,
+	/// mergemining diff
+	pub bits: u32,
 	/// Nonce increment used to mine this block.
 	pub nonce: u64,
 	/// Size of the cuckoo graph
@@ -556,12 +558,36 @@ impl BlockHeaderPrintable {
 			output_root: util::to_hex(header.output_root.to_vec()),
 			range_proof_root: util::to_hex(header.range_proof_root.to_vec()),
 			kernel_root: util::to_hex(header.kernel_root.to_vec()),
+			bits: header.bits,
 			nonce: header.pow.nonce,
 			edge_bits: header.pow.edge_bits(),
 			cuckoo_solution: header.pow.proof.nonces.clone(),
 			total_difficulty: header.pow.total_difficulty.to_num(),
 			secondary_scaling: header.pow.secondary_scaling,
 			total_kernel_offset: header.total_kernel_offset.to_hex(),
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BlockAuxHeaderPrintable {
+	pub version: i32,
+	pub prev_hash: String,
+	pub merkle_root: String,
+	pub mine_time: u32,
+	pub nbits: u32,
+	pub nonce: u32,
+}
+
+impl BlockAuxHeaderPrintable {
+	pub fn from_block_aux_date(data: &core::BlockAuxData) -> BlockAuxHeaderPrintable {
+		BlockAuxHeaderPrintable {
+			version: data.aux_header.version,
+			prev_hash: util::to_hex(data.aux_header.prev_hash.to_vec()),
+			merkle_root: util::to_hex(data.aux_header.merkle_root.to_vec()),
+			mine_time: data.aux_header.mine_time,
+			nbits: data.aux_header.nbits,
+			nonce: data.aux_header.nonce,
 		}
 	}
 }
@@ -577,6 +603,8 @@ pub struct BlockPrintable {
 	pub outputs: Vec<OutputPrintable>,
 	/// A printable version of the transaction kernels
 	pub kernels: Vec<TxKernelPrintable>,
+	///aux data for verify diffcuilty
+	pub aux_data: BlockAuxHeaderPrintable,
 }
 
 impl BlockPrintable {
@@ -613,6 +641,7 @@ impl BlockPrintable {
 			inputs: inputs,
 			outputs: outputs,
 			kernels: kernels,
+			aux_data: BlockAuxHeaderPrintable::from_block_aux_date(&block.aux_data),
 		})
 	}
 }

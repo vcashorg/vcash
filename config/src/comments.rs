@@ -28,7 +28,7 @@ fn comments() -> HashMap<String, String> {
 # order:
 #
 # -The working directory
-# -[user home]/.grin
+# -[user home]/.vcash
 #
 
 #########################################
@@ -78,8 +78,8 @@ fn comments() -> HashMap<String, String> {
 #parameters used for mining as well as wallet output coinbase maturity. Can be:
 #AutomatedTesting - For CI builds and instant blockchain creation
 #UserTesting - For regular user testing (cuckoo 16)
-#Floonet - For the long term floonet test network
-#Mainnet - For mainnet
+#Floonet - For the long term Floonet test network
+#Mainnet
 "
 		.to_string(),
 	);
@@ -172,10 +172,52 @@ fn comments() -> HashMap<String, String> {
 	);
 
 	retval.insert(
-		"[server.p2p_config]".to_string(),
+		"[server.pool_server_config]".to_string(),
 		"#test miner wallet URL (burns if this doesn't exist)
-#test_miner_wallet_url = \"http://127.0.0.1:3415\"
+#test_miner_wallet_url = \"http://127.0.0.1:3515\"
 
+################################################
+### POOL SERVER CONFIGURATION      ###
+################################################
+"
+		.to_string(),
+	);
+
+	retval.insert(
+		"enable_pool_server".to_string(),
+		"
+#whether pool server is enabled
+"
+		.to_string(),
+	);
+
+	retval.insert(
+		"pool_server_addr".to_string(),
+		"
+#the address on which pool server will listen
+"
+		.to_string(),
+	);
+
+	retval.insert(
+		"pool_server_wallet_url".to_string(),
+		"
+#pool server wallet URL
+"
+		.to_string(),
+	);
+
+	retval.insert(
+		"chain_notify_url".to_string(),
+		"
+#the addresses which pool server will post new mine block param when chain height grows
+"
+		.to_string(),
+	);
+
+	retval.insert(
+		"[server.p2p_config]".to_string(),
+		"
 #########################################
 ### SERVER P2P CONFIGURATION          ###
 #########################################
@@ -214,15 +256,15 @@ fn comments() -> HashMap<String, String> {
 		"[server.p2p_config.capabilities]".to_string(),
 		"#If the seeding type is List, the list of peers to connect to can
 #be specified as follows:
-#seeds = [\"192.168.0.1:3414\",\"192.168.0.2:3414\"]
+#seeds = [\"192.168.0.1:3514\",\"192.168.0.2:3514\"]
 
 #hardcoded peer lists for allow/deny
 #will *only* connect to peers in allow list
-#peers_allow = [\"192.168.0.1:3414\", \"192.168.0.2:3414\"]
+#peers_allow = [\"192.168.0.1:3514\", \"192.168.0.2:3514\"]
 #will *never* connect to peers in deny list
-#peers_deny = [\"192.168.0.3:3414\", \"192.168.0.4:3414\"]
+#peers_deny = [\"192.168.0.3:3514\", \"192.168.0.4:3514\"]
 #a list of preferred peers to connect to
-#peers_preferred = [\"192.168.0.1:3414\",\"192.168.0.2:3414\"]
+#peers_preferred = [\"192.168.0.1:3514\",\"192.168.0.2:3514\"]
 
 #how long a banned peer should stay banned
 #ban_window = 10800

@@ -98,7 +98,7 @@ pub struct StratumStats {
 	/// what block height we're mining at
 	pub block_height: u64,
 	/// current network difficulty we're working on
-	pub network_difficulty: u64,
+	pub network_difficulty: u32,
 	/// cuckoo size used for mining
 	pub edge_bits: u16,
 	/// Individual worker status

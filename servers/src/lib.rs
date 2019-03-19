@@ -39,9 +39,12 @@ use grin_wallet as wallet;
 pub mod common;
 mod grin;
 mod mining;
+mod poolserver;
 mod webwallet;
 
 pub use crate::common::stats::{DiffBlock, PeerStats, ServerStats, StratumStats, WorkerStats};
 pub use crate::common::types::{ServerConfig, StratumServerConfig};
 pub use crate::grin::server::Server;
+pub use crate::poolserver::JobInfo;
+pub use crate::poolserver::SubmitInfo;
 pub use crate::webwallet::server::start_webwallet_server;

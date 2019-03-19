@@ -119,7 +119,7 @@ fn _install_web_wallet() -> Result<bool, Box<std::error::Error>> {
 
 	// remove old version
 	let mut remove_path = out_path.clone();
-	remove_path.push("grin-wallet");
+	remove_path.push("vcash-wallet");
 	let _ = fs::remove_dir_all(remove_path);
 
 	// Untar

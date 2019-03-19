@@ -752,6 +752,7 @@ where
 			batch.delete_private_context(slate.id.as_bytes())?;
 			batch.commit()?;
 		}
+
 		w.close()?;
 		Ok(())
 	}

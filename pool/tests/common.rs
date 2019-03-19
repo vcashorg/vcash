@@ -176,7 +176,7 @@ where
 {
 	let output_sum = output_values.iter().sum::<u64>() as i64;
 
-	let coinbase_reward: u64 = 60_000_000_000;
+	let coinbase_reward: u64 = 50_000_000_000;
 
 	let fees: i64 = coinbase_reward as i64 - output_sum;
 	assert!(fees >= 0);

@@ -60,7 +60,7 @@ impl MainService {
 		// Set up directory relative to executable for the time being
 		let mut exe_path = env::current_exe().unwrap();
 		exe_path.pop();
-		exe_path.push("grin-wallet");
+		exe_path.push("vcash-wallet");
 		MainService {
 			static_: Static::new(exe_path),
 		}

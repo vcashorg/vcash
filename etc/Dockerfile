@@ -38,11 +38,11 @@ COPY --from=builder /usr/src/grin/target/release/grin /usr/local/bin/grin
 WORKDIR /root/.grin
 
 RUN grin server config && \
-    sed -i -e 's/run_tui = true/run_tui = false/' grin-server.toml
+    sed -i -e 's/run_tui = true/run_tui = false/' vcash-server.toml
 
 VOLUME ["/root/.grin"]
 
-EXPOSE 3413 3414 3415 3416
+EXPOSE 3513 3514 3515 3516
 
 ENTRYPOINT ["grin"]
 

@@ -38,11 +38,11 @@ COPY --from=builder /usr/src/grin/target/release/grin /usr/local/bin/grin
 WORKDIR /root/.grin
 
 RUN grin --floonet server config && \
-    sed -i -e 's/run_tui = true/run_tui = false/' grin-server.toml
+    sed -i -e 's/run_tui = true/run_tui = false/' vcash-server.toml
 
 VOLUME ["/root/.grin"]
 
-EXPOSE 13413 13414 13415 13416
+EXPOSE 13513 13514 13515 13516
 
 ENTRYPOINT ["grin", "--floonet"]
 

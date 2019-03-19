@@ -48,6 +48,9 @@ use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 
 pub use self::common::EdgeType;
 pub use self::types::*;
+pub use crate::pow::common::{
+	compact_to_diff, biguint_to_compact, biguint_to_hash, compact_to_biguint, hash_to_biguint,
+};
 pub use crate::pow::cuckaroo::{new_cuckaroo_ctx, CuckarooContext};
 pub use crate::pow::cuckatoo::{new_cuckatoo_ctx, CuckatooContext};
 pub use crate::pow::error::Error;

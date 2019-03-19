@@ -18,11 +18,10 @@
 
 use crate::consensus::HeaderInfo;
 use crate::consensus::{
-	graph_weight, BASE_EDGE_BITS, BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON,
-	DAY_HEIGHT, DEFAULT_MIN_EDGE_BITS, DIFFICULTY_ADJUST_WINDOW, INITIAL_DIFFICULTY,
-	MAX_BLOCK_WEIGHT, PROOFSIZE, SECOND_POW_EDGE_BITS, STATE_SYNC_THRESHOLD,
+	BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT, DIFFICULTY_ADJUST_WINDOW,
+	MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
 };
-use crate::pow::{self, new_cuckaroo_ctx, new_cuckatoo_ctx, EdgeType, PoWContext};
+use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
 /// An enum collecting sets of parameters used throughout the
 /// code wherever mining is needed. This should allow for
 /// different sets of parameters for different purposes,
@@ -152,50 +151,63 @@ pub fn create_pow_context<T>(
 where
 	T: EdgeType + 'static,
 {
-	let chain_type = CHAIN_TYPE.read().clone();
-	match chain_type {
-		// Mainnet has Cuckaroo29 for AR and Cuckatoo30+ for AF
-		ChainTypes::Mainnet if edge_bits == 29 => new_cuckaroo_ctx(edge_bits, proof_size),
-		ChainTypes::Mainnet => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
-
-		// Same for Floonet
-		ChainTypes::Floonet if edge_bits == 29 => new_cuckaroo_ctx(edge_bits, proof_size),
-		ChainTypes::Floonet => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
-
-		// Everything else is Cuckatoo only
-		_ => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
-	}
+	//	let chain_type = CHAIN_TYPE.read().clone();
+	//	match chain_type {
+	//		// Mainnet has Cuckaroo29 for AR and Cuckatoo30+ for AF
+	//		ChainTypes::Mainnet if edge_bits == 29 => new_cuckaroo_ctx(edge_bits, proof_size),
+	//		ChainTypes::Mainnet => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
+	//
+	//		// Same for Floonet
+	//		ChainTypes::Floonet if edge_bits == 29 => new_cuckaroo_ctx(edge_bits, proof_size),
+	//		ChainTypes::Floonet => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
+	//
+	//		// Everything else is Cuckatoo only
+	//		_ => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
+	new_cuckatoo_ctx(edge_bits, proof_size, max_sols)
 }
 
 /// The minimum acceptable edge_bits
 pub fn min_edge_bits() -> u8 {
-	let param_ref = CHAIN_TYPE.read();
-	match *param_ref {
-		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_MIN_EDGE_BITS,
-		ChainTypes::UserTesting => USER_TESTING_MIN_EDGE_BITS,
-		_ => DEFAULT_MIN_EDGE_BITS,
-	}
+	//	let param_ref = CHAIN_TYPE.read();
+	//	match *param_ref {
+	//		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_MIN_EDGE_BITS,
+	//		ChainTypes::UserTesting => USER_TESTING_MIN_EDGE_BITS,
+	//		_ => DEFAULT_MIN_EDGE_BITS,
+	//	}
+	AUTOMATED_TESTING_MIN_EDGE_BITS
 }
 
 /// Reference edge_bits used to compute factor on higher Cuck(at)oo graph sizes,
 /// while the min_edge_bits can be changed on a soft fork, changing
 /// base_edge_bits is a hard fork.
 pub fn base_edge_bits() -> u8 {
-	let param_ref = CHAIN_TYPE.read();
-	match *param_ref {
-		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_MIN_EDGE_BITS,
-		ChainTypes::UserTesting => USER_TESTING_MIN_EDGE_BITS,
-		_ => BASE_EDGE_BITS,
-	}
+	//	let param_ref = CHAIN_TYPE.read();
+	//	match *param_ref {
+	//		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_MIN_EDGE_BITS,
+	//		ChainTypes::UserTesting => USER_TESTING_MIN_EDGE_BITS,
+	//		_ => BASE_EDGE_BITS,
+	//	}
+	AUTOMATED_TESTING_MIN_EDGE_BITS
 }
 
 /// The proofsize
 pub fn proofsize() -> usize {
+	//	let param_ref = CHAIN_TYPE.read();
+	//	match *param_ref {
+	//		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_PROOF_SIZE,
+	//		ChainTypes::UserTesting => USER_TESTING_PROOF_SIZE,
+	//		_ => PROOFSIZE,
+	//	}
+	AUTOMATED_TESTING_PROOF_SIZE
+}
+
+/// Minimum bit difficulty
+pub fn min_bit_diff() -> u32 {
 	let param_ref = CHAIN_TYPE.read();
 	match *param_ref {
-		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_PROOF_SIZE,
-		ChainTypes::UserTesting => USER_TESTING_PROOF_SIZE,
-		_ => PROOFSIZE,
+		ChainTypes::Floonet => 0x1a0c2a12,
+		ChainTypes::Mainnet => 0x18120f14,
+		_ => 0x2100ffff,
 	}
 }
 
@@ -211,23 +223,25 @@ pub fn coinbase_maturity() -> u64 {
 
 /// Initial mining difficulty
 pub fn initial_block_difficulty() -> u64 {
-	let param_ref = CHAIN_TYPE.read();
-	match *param_ref {
-		ChainTypes::AutomatedTesting => TESTING_INITIAL_DIFFICULTY,
-		ChainTypes::UserTesting => TESTING_INITIAL_DIFFICULTY,
-		ChainTypes::Floonet => INITIAL_DIFFICULTY,
-		ChainTypes::Mainnet => INITIAL_DIFFICULTY,
-	}
+	//	let param_ref = CHAIN_TYPE.read();
+	//	match *param_ref {
+	//		ChainTypes::AutomatedTesting => TESTING_INITIAL_DIFFICULTY,
+	//		ChainTypes::UserTesting => TESTING_INITIAL_DIFFICULTY,
+	//		ChainTypes::Floonet => INITIAL_DIFFICULTY,
+	//		ChainTypes::Mainnet => INITIAL_DIFFICULTY,
+	//	}
+	TESTING_INITIAL_DIFFICULTY
 }
 /// Initial mining secondary scale
 pub fn initial_graph_weight() -> u32 {
-	let param_ref = CHAIN_TYPE.read();
-	match *param_ref {
-		ChainTypes::AutomatedTesting => TESTING_INITIAL_GRAPH_WEIGHT,
-		ChainTypes::UserTesting => TESTING_INITIAL_GRAPH_WEIGHT,
-		ChainTypes::Floonet => graph_weight(0, SECOND_POW_EDGE_BITS) as u32,
-		ChainTypes::Mainnet => graph_weight(0, SECOND_POW_EDGE_BITS) as u32,
-	}
+	//	let param_ref = CHAIN_TYPE.read();
+	//	match *param_ref {
+	//		ChainTypes::AutomatedTesting => TESTING_INITIAL_GRAPH_WEIGHT,
+	//		ChainTypes::UserTesting => TESTING_INITIAL_GRAPH_WEIGHT,
+	//		ChainTypes::Floonet => graph_weight(0, SECOND_POW_EDGE_BITS) as u32,
+	//		ChainTypes::Mainnet => graph_weight(0, SECOND_POW_EDGE_BITS) as u32,
+	//	}
+	TESTING_INITIAL_GRAPH_WEIGHT
 }
 
 /// Maximum allowed block weight.
@@ -300,17 +314,18 @@ pub fn is_mainnet() -> bool {
 /// as the genesis block POW solution turns out to be the same for every new
 /// block chain at the moment
 pub fn get_genesis_nonce() -> u64 {
-	let param_ref = CHAIN_TYPE.read();
-	match *param_ref {
-		// won't make a difference
-		ChainTypes::AutomatedTesting => 0,
-		// Magic nonce for current genesis block at cuckatoo15
-		ChainTypes::UserTesting => 27944,
-		// Placeholder, obviously not the right value
-		ChainTypes::Floonet => 0,
-		// Placeholder, obviously not the right value
-		ChainTypes::Mainnet => 0,
-	}
+	//	let param_ref = CHAIN_TYPE.read();
+	//	match *param_ref {
+	//		// won't make a difference
+	//		ChainTypes::AutomatedTesting => 0,
+	//		// Magic nonce for current genesis block at cuckatoo15
+	//		ChainTypes::UserTesting => 27944,
+	//		// Placeholder, obviously not the right value
+	//		ChainTypes::Floonet => 0,
+	//		// Placeholder, obviously not the right value
+	//		ChainTypes::Mainnet => 0,
+	//	}
+	0
 }
 
 /// Short name representing the current chain type ("floo", "main", etc.)

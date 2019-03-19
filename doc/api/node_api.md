@@ -940,7 +940,7 @@ Ban a specific peer.
 
   ```javascript
     $.ajax({
-      url: "/v1/peers/192.168.1.1:13414/ban",
+      url: "/v1/peers/192.168.1.1:13514/ban",
       dataType: "json",
       type : "POST",
       success : function(r) {
@@ -981,7 +981,7 @@ Unban a specific peer.
 
   ```javascript
     $.ajax({
-      url: "/v1/192.168.1.1:13414/unban",
+      url: "/v1/192.168.1.1:13514/unban",
       dataType: "json",
       type : "POST",
       success : function(r) {

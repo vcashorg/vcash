@@ -25,10 +25,11 @@ use crate::chain;
 use crate::common::types::StratumServerConfig;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::verifier_cache::VerifierCache;
-use crate::core::core::{Block, BlockHeader};
+use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader};
 use crate::core::global;
 use crate::mining::mine_block;
 use crate::pool;
+use crate::util;
 use crate::util::{Mutex, StopState};
 
 pub struct Miner {
@@ -154,6 +155,7 @@ impl Miner {
 				wallet_listener_url.clone(),
 			);
 
+			b.header.bits = 0x2100ffff;
 			let sol = self.inner_mining_loop(
 				&mut b,
 				&head,
@@ -169,6 +171,11 @@ impl Miner {
 					b.hash(),
 					b.header.prev_root,
 				);
+				let coin_base_str = get_grin_magic_data_str(b.header.hash());
+				b.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+				b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
+				b.aux_data.aux_header.nbits = b.header.bits;
+
 				let res = self.chain.process_block(b, chain::Options::MINE);
 				if let Err(e) = res {
 					error!(

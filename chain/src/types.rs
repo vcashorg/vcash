@@ -80,6 +80,10 @@ impl Hashed for Tip {
 	fn hash(&self) -> Hash {
 		self.last_block_h
 	}
+
+	fn dhash(&self) -> Hash {
+		self.last_block_h
+	}
 }
 
 impl Default for Tip {

@@ -59,10 +59,10 @@ mod wallet_tests {
 		current_dir.push(wallet_name);
 		let _ = fs::create_dir_all(current_dir.clone());
 		let mut config_file_name = current_dir.clone();
-		config_file_name.push("grin-wallet.toml");
+		config_file_name.push("vcash-wallet.toml");
 		if config_file_name.exists() {
 			return Err(grin_wallet::ErrorKind::ArgumentError(
-				"grin-wallet.toml already exists in the target directory. Please remove it first"
+				"vcash-wallet.toml already exists in the target directory. Please remove it first"
 					.to_owned(),
 			))?;
 		}
@@ -90,7 +90,7 @@ mod wallet_tests {
 		current_dir.push(wallet_name);
 		let _ = fs::create_dir_all(current_dir.clone());
 		let mut config_file_name = current_dir.clone();
-		config_file_name.push("grin-wallet.toml");
+		config_file_name.push("vcash-wallet.toml");
 		GlobalWalletConfig::new(config_file_name.to_str().unwrap())
 			.unwrap()
 			.members

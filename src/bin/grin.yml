@@ -1,7 +1,7 @@
-name: grin
+name: vcash
 version: "1.0.2"
 about: Lightweight implementation of the MimbleWimble protocol.
-author: The Grin Team
+author: The Vcash Team
 
 args:
   - floonet:
@@ -17,7 +17,7 @@ subcommands:
       about: Control the Grin server
       args:
         - config_file:
-            help: Path to a grin-server.toml configuration file
+            help: Path to a vcash-server.toml configuration file
             short: c
             long: config_file
             takes_value: true
@@ -43,7 +43,7 @@ subcommands:
             takes_value: true
       subcommands:
         - config:
-            about: Generate a configuration grin-server.toml file in the current directory
+            about: Generate a configuration vcash-server.toml file in the current directory
         - run:
             about: Run the Grin server in this console
   - client:
@@ -57,7 +57,7 @@ subcommands:
             about: Ban peer
             args:
               - peer:
-                  help: Peer ip and port (e.g. 10.12.12.13:13414)
+                  help: Peer ip and port (e.g. 10.12.12.13:13514)
                   short: p
                   long: peer
                   required: true
@@ -66,7 +66,7 @@ subcommands:
             about: Unban peer
             args:
               - peer:
-                  help: Peer ip and port (e.g. 10.12.12.13:13414)
+                  help: Peer ip and port (e.g. 10.12.12.13:13514)
                   short: p
                   long: peer
                   required: true
@@ -146,7 +146,7 @@ subcommands:
                   help: Minimum number of confirmations required for an output to be spendable
                   short: c
                   long: min_conf
-                  default_value: "10"
+                  default_value: "1"
                   takes_value: true
               - selection_strategy:
                   help: Coin/Output selection strategy.
@@ -269,7 +269,7 @@ subcommands:
                   help: Minimum number of confirmations required for an output to be spendable
                   short: c
                   long: min_conf
-                  default_value: "10"
+                  default_value: "1"
                   takes_value: true
         - init:
             about: Initialize a new wallet seed file and database

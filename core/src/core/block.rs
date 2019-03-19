@@ -33,8 +33,22 @@ use crate::core::{
 use crate::global;
 use crate::keychain::{self, BlindingFactor};
 use crate::pow::{Difficulty, Proof, ProofOfWork};
-use crate::ser::{self, FixedLength, PMMRable, Readable, Reader, Writeable, Writer};
+use crate::ser::{self, read_multi, FixedLength, PMMRable, Readable, Reader, Writeable, Writer};
+use crate::util;
 use crate::util::{secp, static_secp_instance};
+
+/// Get Magic data in coinbase
+pub fn get_grin_magic_data_str(header_hash: Hash) -> String {
+	// 0x6a: OP_RETURN
+	// 0x24: length, 36_bytes = 4_bytes + 32_bytes
+	// magic number: 4 bytes
+	// commitment: 32 bytes
+	let mut head = util::to_hex(vec![0x6a, 0x24]);
+	head.insert_str(head.len(), "b9e11b6d");
+	let grin_header_vec = util::to_hex(header_hash.to_vec());
+	head.insert_str(head.len(), grin_header_vec.as_str());
+	head
+}
 
 /// Errors thrown by Block validation
 #[derive(Debug, Clone, Eq, PartialEq, Fail)]
@@ -165,6 +179,10 @@ impl Hashed for HeaderEntry {
 	fn hash(&self) -> Hash {
 		self.hash
 	}
+
+	fn dhash(&self) -> Hash {
+		self.hash
+	}
 }
 
 /// Block header, fairly standard compared to other blockchains.
@@ -194,6 +212,8 @@ pub struct BlockHeader {
 	pub output_mmr_size: u64,
 	/// Total size of the kernel MMR after applying this block
 	pub kernel_mmr_size: u64,
+	/// mergemining diff
+	pub bits: u32,
 	/// Proof of work and related
 	pub pow: ProofOfWork,
 }
@@ -213,6 +233,7 @@ impl Default for BlockHeader {
 			total_kernel_offset: BlindingFactor::zero(),
 			output_mmr_size: 0,
 			kernel_mmr_size: 0,
+			bits: 0,
 			pow: ProofOfWork::default(),
 		}
 	}
@@ -254,6 +275,7 @@ impl Readable for BlockHeader {
 		let kernel_root = Hash::read(reader)?;
 		let total_kernel_offset = BlindingFactor::read(reader)?;
 		let (output_mmr_size, kernel_mmr_size) = ser_multiread!(reader, read_u64, read_u64);
+		let bits = reader.read_u32()?;
 		let pow = ProofOfWork::read(version, reader)?;
 
 		if timestamp > MAX_DATE.and_hms(0, 0, 0).timestamp()
@@ -274,6 +296,7 @@ impl Readable for BlockHeader {
 			total_kernel_offset,
 			output_mmr_size,
 			kernel_mmr_size,
+			bits,
 			pow,
 		})
 	}
@@ -294,7 +317,8 @@ impl BlockHeader {
 			[write_fixed_bytes, &self.kernel_root],
 			[write_fixed_bytes, &self.total_kernel_offset],
 			[write_u64, self.output_mmr_size],
-			[write_u64, self.kernel_mmr_size]
+			[write_u64, self.kernel_mmr_size],
+			[write_u32, self.bits]
 		);
 		Ok(())
 	}
@@ -342,6 +366,121 @@ impl BlockHeader {
 	}
 }
 
+/// bit header data
+#[derive(Debug, Clone, Default)]
+pub struct AuxBitHeader {
+	/// btc version
+	pub version: i32,
+	/// btc prev header hash
+	pub prev_hash: Hash,
+	/// btc merkle root
+	pub merkle_root: Hash,
+	/// btc mining time
+	pub mine_time: u32,
+	/// btc nbits
+	pub nbits: u32,
+	/// btc nbits
+	pub nonce: u32,
+}
+
+impl DefaultHashable for AuxBitHeader {}
+
+impl AuxBitHeader {
+	/// Serialize the AuxBitHeader as a hex string (for api json endpoints)
+	pub fn to_hex(&self) -> String {
+		let mut vec = Vec::new();
+		ser::serialize(&mut vec, &self).expect("serialization failed");
+		util::to_hex(vec)
+	}
+
+	/// Convert hex string representation back to a Merkle proof instance
+	pub fn from_hex(hex: &str) -> Result<AuxBitHeader, String> {
+		let bytes = util::from_hex(hex.to_string()).unwrap();
+		let res = ser::deserialize(&mut &bytes[..])
+			.map_err(|_| "failed to deserialize a AuxBitHeader".to_string())?;
+		Ok(res)
+	}
+}
+
+/// Serialization of a block header
+impl Writeable for AuxBitHeader {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		ser_multiwrite!(
+			writer,
+			[write_i32_le, self.version],
+			[write_fixed_bytes, &self.prev_hash],
+			[write_fixed_bytes, &self.merkle_root],
+			[write_u32_le, self.mine_time],
+			[write_u32_le, self.nbits],
+			[write_u32_le, self.nonce]
+		);
+		Ok(())
+	}
+}
+
+/// Deserialization of a block header
+impl Readable for AuxBitHeader {
+	fn read(reader: &mut dyn Reader) -> Result<AuxBitHeader, ser::Error> {
+		let version = reader.read_i32_le()?;
+		let prev_hash = Hash::read(reader)?;
+		let merkle_root = Hash::read(reader)?;
+		let (mine_time, nbits, nonce) =
+			ser_multiread!(reader, read_u32_le, read_u32_le, read_u32_le);
+
+		Ok(AuxBitHeader {
+			version,
+			prev_hash,
+			merkle_root,
+			mine_time,
+			nbits,
+			nonce,
+		})
+	}
+}
+
+/// bit proof data
+#[derive(Debug, Clone, Default)]
+pub struct BlockAuxData {
+	/// btc header
+	pub aux_header: AuxBitHeader,
+	/// btc merkle branch
+	pub merkle_branch: Vec<Hash>,
+	/// btc coinbase
+	pub coinbase_tx: Vec<u8>,
+}
+
+impl Writeable for BlockAuxData {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		self.aux_header.write(writer)?;
+		writer.write_u32(self.merkle_branch.len() as u32)?;
+		for i in &self.merkle_branch {
+			writer.write_fixed_bytes(i)?;
+		}
+		writer.write_u32(self.coinbase_tx.len() as u32)?;
+		for i in &self.coinbase_tx {
+			writer.write_u8(*i)?;
+		}
+		Ok(())
+	}
+}
+
+impl Readable for BlockAuxData {
+	fn read(reader: &mut dyn Reader) -> Result<BlockAuxData, ser::Error> {
+		let header = AuxBitHeader::read(reader)?;
+
+		let merkle_branch_length = reader.read_u32()?;
+		let merkle_brance = read_multi(reader, merkle_branch_length as u64)?;
+		let coin_base_length = reader.read_u32()?;
+		let coin_base = read_multi(reader, coin_base_length as u64)?;
+
+		Ok(BlockAuxData {
+			aux_header: header,
+			merkle_branch: merkle_brance,
+			coinbase_tx: coin_base,
+		})
+	}
+}
+
 /// A block as expressed in the MimbleWimble protocol. The reward is
 /// non-explicit, assumed to be deducible from block height (similar to
 /// bitcoin's schedule) and expressed as a global transaction fee (added v.H),
@@ -350,6 +489,8 @@ impl BlockHeader {
 pub struct Block {
 	/// The header with metadata and commitments to the rest of the data
 	pub header: BlockHeader,
+	/// Aux data for verify diffcuilty
+	pub aux_data: BlockAuxData,
 	/// The body - inputs/outputs/kernels
 	body: TransactionBody,
 }
@@ -358,6 +499,11 @@ impl Hashed for Block {
 	/// The hash of the underlying block.
 	fn hash(&self) -> Hash {
 		self.header.hash()
+	}
+
+	/// The hash of the underlying block.
+	fn dhash(&self) -> Hash {
+		self.header.dhash()
 	}
 }
 
@@ -369,6 +515,7 @@ impl Writeable for Block {
 		self.header.write(writer)?;
 
 		if writer.serialization_mode() != ser::SerializationMode::Hash {
+			self.aux_data.write(writer)?;
 			self.body.write(writer)?;
 		}
 		Ok(())
@@ -381,6 +528,8 @@ impl Readable for Block {
 	fn read(reader: &mut dyn Reader) -> Result<Block, ser::Error> {
 		let header = BlockHeader::read(reader)?;
 
+		let aux_data = BlockAuxData::read(reader)?;
+
 		let body = TransactionBody::read(reader)?;
 
 		// Now "lightweight" validation of the block.
@@ -390,7 +539,11 @@ impl Readable for Block {
 		body.validate_read(Weighting::AsBlock)
 			.map_err(|_| ser::Error::CorruptedData)?;
 
-		Ok(Block { header, body })
+		Ok(Block {
+			header,
+			aux_data,
+			body,
+		})
 	}
 }
 
@@ -415,6 +568,7 @@ impl Default for Block {
 	fn default() -> Block {
 		Block {
 			header: Default::default(),
+			aux_data: Default::default(),
 			body: Default::default(),
 		}
 	}
@@ -454,6 +608,7 @@ impl Block {
 		trace!("block: hydrate_from: {}, {} txs", cb.hash(), txs.len(),);
 
 		let header = cb.header.clone();
+		let aux_data = cb.aux_data.clone();
 
 		let mut all_inputs = HashSet::new();
 		let mut all_outputs = HashSet::new();
@@ -485,7 +640,12 @@ impl Block {
 		// Finally return the full block.
 		// Note: we have not actually validated the block here,
 		// caller must validate the block.
-		Block { header, body }.cut_through()
+		Block {
+			header,
+			aux_data,
+			body,
+		}
+		.cut_through()
 	}
 
 	/// Build a new empty block from a specified header
@@ -535,6 +695,7 @@ impl Block {
 				},
 				..Default::default()
 			},
+			aux_data: Default::default(),
 			body: agg_tx.into(),
 		}
 		.cut_through()
@@ -602,6 +763,7 @@ impl Block {
 
 		Ok(Block {
 			header: self.header,
+			aux_data: self.aux_data,
 			body,
 		})
 	}
@@ -679,7 +841,7 @@ impl Block {
 		{
 			let secp = static_secp_instance();
 			let secp = secp.lock();
-			let over_commit = secp.commit_value(reward(self.total_fees()))?;
+			let over_commit = secp.commit_value(reward(self.header.height, self.total_fees()))?;
 
 			let out_adjust_sum =
 				secp.commit_sum(map_vec!(cb_outs, |x| x.commitment()), vec![over_commit])?;

@@ -27,6 +27,8 @@ use crate::blake2::blake2b::Blake2b;
 
 use crate::ser::{self, AsFixedBytes, Error, FixedLength, Readable, Reader, Writeable, Writer};
 use crate::util;
+use digest::Digest;
+use sha2::Sha256;
 
 /// A hash consisting of all zeroes, used as a sentinel. No known preimage.
 pub const ZERO_HASH: Hash = Hash([0; 32]);
@@ -41,6 +43,16 @@ impl DefaultHashable for Hash {}
 impl Hash {
 	fn hash_with<T: Writeable>(&self, other: T) -> Hash {
 		let mut hasher = HashWriter::default();
+		ser::Writeable::write(self, &mut hasher).unwrap();
+		ser::Writeable::write(&other, &mut hasher).unwrap();
+		let mut ret = [0; 32];
+		hasher.finalize(&mut ret);
+		Hash(ret)
+	}
+
+	/// compute double sha256 hash of Hash with other one
+	pub fn dhash_with<T: Writeable>(&self, other: T) -> Hash {
+		let mut hasher = DHashWriter::default();
 		ser::Writeable::write(self, &mut hasher).unwrap();
 		ser::Writeable::write(&other, &mut hasher).unwrap();
 		let mut ret = [0; 32];
@@ -181,6 +193,41 @@ impl Default for Hash {
 	}
 }
 
+/// Serializer that outputs a double sha256 hash of the serialized object
+pub struct DHashWriter {
+	state: Vec<u8>,
+}
+
+impl DHashWriter {
+	/// Consume the `BitHashWriter`, outputting its current hash into a 32-byte
+	/// array
+	pub fn finalize(self, output: &mut [u8]) {
+		let mut sha2 = Sha256::new();
+		sha2.input(self.state.as_slice());
+		output.copy_from_slice(sha2.result().as_slice());
+		sha2 = Sha256::new();
+		sha2.input(&output);
+		output.copy_from_slice(sha2.result().as_slice());
+	}
+}
+
+impl Default for DHashWriter {
+	fn default() -> DHashWriter {
+		DHashWriter { state: Vec::new() }
+	}
+}
+
+impl ser::Writer for DHashWriter {
+	fn serialization_mode(&self) -> ser::SerializationMode {
+		ser::SerializationMode::Hash
+	}
+
+	fn write_fixed_bytes<T: AsFixedBytes>(&mut self, b32: &T) -> Result<(), ser::Error> {
+		self.state.extend_from_slice(b32.as_ref());
+		Ok(())
+	}
+}
+
 /// Serializer that outputs a hash of the serialized object
 pub struct HashWriter {
 	state: Blake2b,
@@ -225,6 +272,9 @@ impl ser::Writer for HashWriter {
 pub trait Hashed {
 	/// Obtain the hash of the object
 	fn hash(&self) -> Hash;
+
+	/// Obtain the double sha256 hash of the object
+	fn dhash(&self) -> Hash;
 }
 
 /// Implementing this trait enables the default
@@ -234,6 +284,14 @@ impl<D: DefaultHashable> Hashed for D {
 	fn hash(&self) -> Hash {
 		let mut hasher = HashWriter::default();
 		Writeable::write(self, &mut hasher).unwrap();
+		let mut ret = [0; 32];
+		hasher.finalize(&mut ret);
+		Hash(ret)
+	}
+
+	fn dhash(&self) -> Hash {
+		let mut hasher = DHashWriter::default();
+		ser::Writeable::write(self, &mut hasher).unwrap();
 		let mut ret = [0; 32];
 		hasher.finalize(&mut ret);
 		Hash(ret)
@@ -248,3 +306,38 @@ impl<D: DefaultHashable, E: DefaultHashable, F: DefaultHashable> DefaultHashable
 impl DefaultHashable for crate::util::secp::pedersen::RangeProof {}
 impl DefaultHashable for Vec<u8> {}
 impl DefaultHashable for u64 {}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn dsha256_test() {
+		let hex0 =
+			Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
+				.unwrap();
+		let result0 = hex0.dhash();
+		assert_eq!(
+			result0.to_hex(),
+			"2b32db6c2c0a6235fb1397e8225ea85e0f0e6e8c7b126d0016ccbde0e667151e"
+		);
+
+		let hex1 =
+			Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")
+				.unwrap();
+		let result1 = hex1.dhash();
+		assert_eq!(
+			result1.to_hex(),
+			"59420d36b80353ed5a5822ca464cc9bffb8abe9cd63959651d3cd85a8252d83f"
+		);
+
+		let hex3 =
+			Hash::from_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+				.unwrap();
+		let result3 = hex3.dhash();
+		assert_eq!(
+			result3.to_hex(),
+			"71ca5049661b67d2babaf306cd9bc8090a93324c2d4ff1bb12a371a02cc23eb8"
+		);
+	}
+}

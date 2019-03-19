@@ -17,6 +17,7 @@ use self::core::core::{OutputFeatures, OutputIdentifier, Transaction};
 use self::core::{consensus, global, pow, ser};
 use self::util::secp::pedersen;
 use self::util::Mutex;
+use crate::core::core::hash::Hashed;
 use crate::libwallet::api::APIOwner;
 use crate::libwallet::types::{BlockFees, CbData, NodeClient, WalletInfo, WalletInst};
 use crate::lmdb_wallet::LMDBBackend;
@@ -95,6 +96,8 @@ pub fn add_block_with_reward(chain: &Chain, txs: Vec<&Transaction>, reward: CbDa
 		(output, kernel),
 	)
 	.unwrap();
+
+	b.header.bits = 0x2100ffff;
 	b.header.timestamp = prev.timestamp + Duration::seconds(60);
 	b.header.pow.secondary_scaling = next_header_info.secondary_scaling;
 	chain.set_txhashset_roots(&mut b).unwrap();
@@ -105,6 +108,12 @@ pub fn add_block_with_reward(chain: &Chain, txs: Vec<&Transaction>, reward: CbDa
 		global::min_edge_bits(),
 	)
 	.unwrap();
+
+	let coin_base_str = core::core::get_grin_magic_data_str(b.header.hash());
+	b.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+	b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
+	b.aux_data.aux_header.nbits = b.header.bits;
+
 	chain.process_block(b, chain::Options::MINE).unwrap();
 	chain.validate(false).unwrap();
 }

@@ -22,6 +22,7 @@ use std::cmp::{max, min};
 
 use crate::global;
 use crate::pow::Difficulty;
+use crate::pow::{biguint_to_compact, compact_to_biguint};
 
 /// A grin is divisible to 10^9, following the SI prefixes
 pub const GRIN_BASE: u64 = 1_000_000_000;
@@ -36,14 +37,23 @@ pub const NANO_GRIN: u64 = 1;
 /// that we may reduce this value in the future as we get more data on mining
 /// with Cuckoo Cycle, networks improve and block propagation is optimized
 /// (adjusting the reward accordingly).
-pub const BLOCK_TIME_SEC: u64 = 60;
+pub const BLOCK_TIME_SEC: u64 = 600;
 
 /// The block subsidy amount, one grin per second on average
-pub const REWARD: u64 = BLOCK_TIME_SEC * GRIN_BASE;
+pub const REWARD: u64 = 50 * GRIN_BASE;
+
+/// Subsidy amount half height
+pub const HALVINGINTERVAL: u64 = 210000;
 
 /// Actual block reward for a given total fee amount
-pub fn reward(fee: u64) -> u64 {
-	REWARD.saturating_add(fee)
+pub fn reward(height: u64, fee: u64) -> u64 {
+	let halvings = height / HALVINGINTERVAL;
+	let cur_reward = if halvings >= 64 {
+		0_u64
+	} else {
+		REWARD >> halvings
+	};
+	cur_reward.saturating_add(fee)
 }
 
 /// Nominal height for standard time intervals, hour is 60 blocks
@@ -128,25 +138,26 @@ pub const HARD_FORK_INTERVAL: u64 = YEAR_HEIGHT / 2;
 
 /// Check whether the block version is valid at a given height, implements
 /// 6 months interval scheduled hard forks for the first 2 years.
-pub fn valid_header_version(height: u64, version: u16) -> bool {
+pub fn valid_header_version(_height: u64, version: u16) -> bool {
+	version == 1
 	// uncomment below as we go from hard fork to hard fork
-	if height < HARD_FORK_INTERVAL {
-		version == 1
-	/* } else if height < 2 * HARD_FORK_INTERVAL {
-		version == 2
-	} else if height < 3 * HARD_FORK_INTERVAL {
-		version == 3
-	} else if height < 4 * HARD_FORK_INTERVAL {
-		version == 4
-	} else if height >= 5 * HARD_FORK_INTERVAL {
-		version > 4 */
-	} else {
-		false
-	}
+	//	if height < HARD_FORK_INTERVAL {
+	//		version == 1
+	//	/* } else if height < 2 * HARD_FORK_INTERVAL {
+	//		version == 2
+	//	} else if height < 3 * HARD_FORK_INTERVAL {
+	//		version == 3
+	//	} else if height < 4 * HARD_FORK_INTERVAL {
+	//		version == 4
+	//	} else if height >= 5 * HARD_FORK_INTERVAL {
+	//		version > 4 */
+	//	} else {
+	//		false
+	//	}
 }
 
 /// Number of blocks used to calculate difficulty adjustments
-pub const DIFFICULTY_ADJUST_WINDOW: u64 = HOUR_HEIGHT;
+pub const DIFFICULTY_ADJUST_WINDOW: u64 = WEEK_HEIGHT * 2;
 
 /// Average time span of the difficulty adjustment window
 pub const BLOCK_TIME_WINDOW: u64 = DIFFICULTY_ADJUST_WINDOW * BLOCK_TIME_SEC;
@@ -164,21 +175,22 @@ pub const AR_SCALE_DAMP_FACTOR: u64 = 13;
 /// Compute weight of a graph as number of siphash bits defining the graph
 /// Must be made dependent on height to phase out smaller size over the years
 /// This can wait until end of 2019 at latest
-pub fn graph_weight(height: u64, edge_bits: u8) -> u64 {
-	let mut xpr_edge_bits = edge_bits as u64;
-
-	let bits_over_min = edge_bits.saturating_sub(global::min_edge_bits());
-	let expiry_height = (1 << bits_over_min) * YEAR_HEIGHT;
-	if height >= expiry_height {
-		xpr_edge_bits = xpr_edge_bits.saturating_sub(1 + (height - expiry_height) / WEEK_HEIGHT);
-	}
-
-	(2 << (edge_bits - global::base_edge_bits()) as u64) * xpr_edge_bits
+pub fn graph_weight(_height: u64, _edge_bits: u8) -> u64 {
+	1
+	//	let mut xpr_edge_bits = edge_bits as u64;
+	//
+	//	let bits_over_min = edge_bits.saturating_sub(global::min_edge_bits());
+	//	let expiry_height = (1 << bits_over_min) * YEAR_HEIGHT;
+	//	if height >= expiry_height {
+	//		xpr_edge_bits = xpr_edge_bits.saturating_sub(1 + (height - expiry_height) / WEEK_HEIGHT);
+	//	}
+	//
+	//	(2 << (edge_bits - global::base_edge_bits()) as u64) * xpr_edge_bits
 }
 
 /// Minimum difficulty, enforced in diff retargetting
 /// avoids getting stuck when trying to increase difficulty subject to dampening
-pub const MIN_DIFFICULTY: u64 = DIFFICULTY_DAMP_FACTOR;
+pub const MIN_DIFFICULTY: u64 = 1;
 
 /// Minimum scaling factor for AR pow, enforced in diff retargetting
 /// avoids getting stuck when trying to increase ar_scale subject to dampening
@@ -271,7 +283,7 @@ pub fn clamp(actual: u64, goal: u64, clamp_factor: u64) -> u64 {
 ///
 /// The secondary proof-of-work factor is calculated along the same lines, as
 /// an adjustment on the deviation against the ideal value.
-pub fn next_difficulty<T>(height: u64, cursor: T) -> HeaderInfo
+pub fn next_difficulty<T>(_height: u64, _cursor: T) -> HeaderInfo
 where
 	T: IntoIterator<Item = HeaderInfo>,
 {
@@ -279,32 +291,67 @@ where
 	// to latest, and pad with simulated pre-genesis data to allow earlier
 	// adjustment if there isn't enough window data length will be
 	// DIFFICULTY_ADJUST_WINDOW + 1 (for initial block time bound)
-	let diff_data = global::difficulty_data_to_vector(cursor);
+	//let diff_data = global::difficulty_data_to_vector(cursor);
 
 	// First, get the ratio of secondary PoW vs primary, skipping initial header
-	let sec_pow_scaling = secondary_pow_scaling(height, &diff_data[1..]);
+	//let sec_pow_scaling = secondary_pow_scaling(height, &diff_data[1..]);
 
 	// Get the timestamp delta across the window
-	let ts_delta: u64 =
-		diff_data[DIFFICULTY_ADJUST_WINDOW as usize].timestamp - diff_data[0].timestamp;
-
-	// Get the difficulty sum of the last DIFFICULTY_ADJUST_WINDOW elements
-	let diff_sum: u64 = diff_data
-		.iter()
-		.skip(1)
-		.map(|dd| dd.difficulty.to_num())
-		.sum();
-
-	// adjust time delta toward goal subject to dampening and clamping
-	let adj_ts = clamp(
-		damp(ts_delta, BLOCK_TIME_WINDOW, DIFFICULTY_DAMP_FACTOR),
-		BLOCK_TIME_WINDOW,
-		CLAMP_FACTOR,
-	);
-	// minimum difficulty avoids getting stuck due to dampening
-	let difficulty = max(MIN_DIFFICULTY, diff_sum * BLOCK_TIME_SEC / adj_ts);
+	//	let ts_delta: u64 =
+	//		diff_data[DIFFICULTY_ADJUST_WINDOW as usize].timestamp - diff_data[0].timestamp;
+	//
+	//	// Get the difficulty sum of the last DIFFICULTY_ADJUST_WINDOW elements
+	//	let diff_sum: u64 = diff_data
+	//		.iter()
+	//		.skip(1)
+	//		.map(|dd| dd.difficulty.to_num())
+	//		.sum();
+	//
+	//	// adjust time delta toward goal subject to dampening and clamping
+	//	let adj_ts = clamp(
+	//		damp(ts_delta, BLOCK_TIME_WINDOW, DIFFICULTY_DAMP_FACTOR),
+	//		BLOCK_TIME_WINDOW,
+	//		CLAMP_FACTOR,
+	//	);
+	//	// minimum difficulty avoids getting stuck due to dampening
+	//	let difficulty = max(MIN_DIFFICULTY, diff_sum * BLOCK_TIME_SEC / adj_ts);
+	let difficulty = global::TESTING_INITIAL_DIFFICULTY;
+	let sec_pow_scaling = 1;
 
 	HeaderInfo::from_diff_scaling(Difficulty::from_num(difficulty), sec_pow_scaling)
+}
+
+/// Computes next bit difficulty
+pub fn next_bit_difficulty(
+	cur_height: u64,
+	cur_bits: u32,
+	cur_block_time: i64,
+	first_block_time: i64,
+) -> u32 {
+	// Only change once per difficulty adjustment interval
+	let target_height = cur_height + 1;
+	if target_height % DIFFICULTY_ADJUST_WINDOW != 0 {
+		return cur_bits;
+	}
+
+	// Get the timestamp delta across the window
+	let ts_delta = (cur_block_time - first_block_time) as u64;
+
+	let adj_ts = if ts_delta > BLOCK_TIME_WINDOW * 4 {
+		BLOCK_TIME_WINDOW * 4
+	} else if ts_delta < BLOCK_TIME_WINDOW / 4 {
+		BLOCK_TIME_WINDOW / 4
+	} else {
+		ts_delta
+	};
+
+	let mut next_bits = compact_to_biguint(cur_bits).unwrap();
+	next_bits *= adj_ts;
+	next_bits /= BLOCK_TIME_WINDOW;
+
+	let compact = biguint_to_compact(next_bits, false);
+	let ret_com = min(global::min_bit_diff(), compact);
+	return ret_com;
 }
 
 /// Count, in units of 1/100 (a percent), the number of "secondary" (AR) blocks in the provided window of blocks.
@@ -341,8 +388,12 @@ pub fn secondary_pow_scaling(height: u64, diff_data: &[HeaderInfo]) -> u32 {
 #[cfg(test)]
 mod test {
 	use super::*;
+	use crate::global::ChainTypes;
+	use crate::pow::compact_to_diff;
+	use chrono::prelude::{TimeZone, Utc};
 
 	#[test]
+	#[ignore]
 	fn test_graph_weight() {
 		// initial weights
 		assert_eq!(graph_weight(1, 31), 256 * 31);
@@ -379,5 +430,41 @@ mod test {
 		assert_eq!(graph_weight(4 * YEAR_HEIGHT, 31), 0);
 		assert_eq!(graph_weight(4 * YEAR_HEIGHT, 32), 0);
 		assert_eq!(graph_weight(4 * YEAR_HEIGHT, 33), 1024 * 32);
+	}
+
+	#[test]
+	fn test_next_bit_difficulty() {
+		global::set_mining_mode(ChainTypes::AutomatedTesting);
+		let compact0 = next_bit_difficulty(
+			2016,
+			0x1d00ffff,
+			Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+			Utc.ymd(2019, 1, 1).and_hms(0, 0, 0).timestamp(),
+		);
+		assert_eq!(compact_to_diff(compact0), 1_u64);
+
+		let compact1 = next_bit_difficulty(
+			2015,
+			0x1d00ffff,
+			Utc.ymd(2019, 3, 2).and_hms(0, 0, 0).timestamp(),
+			Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+		);
+		assert_eq!(compact_to_diff(compact1), 4_u64);
+
+		let compact2 = next_bit_difficulty(
+			2015,
+			0x1d00ffff,
+			Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+			Utc.ymd(2018, 3, 1).and_hms(0, 0, 0).timestamp(),
+		);
+		assert_eq!(compact_to_diff(compact2), 0_u64);
+
+		let compact3 = next_bit_difficulty(
+			2015,
+			0x1c3fffc0,
+			Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+			Utc.ymd(2018, 3, 1).and_hms(0, 0, 0).timestamp(),
+		);
+		assert_eq!(compact_to_diff(compact3), 1_u64);
 	}
 }

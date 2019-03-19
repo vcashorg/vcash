@@ -22,6 +22,7 @@ use self::core::pow::{self, Difficulty};
 use self::core::{consensus, genesis};
 use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
 use self::util::{Mutex, RwLock, StopState};
+use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
 use chrono::Duration;
 use grin_chain as chain;
 use grin_core as core;
@@ -83,7 +84,7 @@ fn data_files() {
 			let prev = chain.head_header().unwrap();
 			let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 			let pk = ExtKeychainPath::new(1, n as u32, 0, 0, 0).to_identifier();
-			let reward = libtx::reward::output(&keychain, &pk, 0).unwrap();
+			let reward = libtx::reward::output(&keychain, &pk, prev.height + 1, 0).unwrap();
 			let mut b =
 				core::core::Block::new(&prev, vec![], next_header_info.clone().difficulty, reward)
 					.unwrap();
@@ -92,6 +93,7 @@ fn data_files() {
 
 			chain.set_txhashset_roots(&mut b).unwrap();
 
+			b.header.bits = 0x2100ffff;
 			pow::pow_size(
 				&mut b.header,
 				next_header_info.difficulty,
@@ -99,6 +101,11 @@ fn data_files() {
 				global::min_edge_bits(),
 			)
 			.unwrap();
+
+			let coin_base_str = core::core::get_grin_magic_data_str(b.header.hash());
+			b.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+			b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
+			b.aux_data.aux_header.nbits = b.header.bits;
 
 			chain
 				.process_block(b.clone(), chain::Options::MINE)
@@ -159,7 +166,7 @@ fn _prepare_block_nosum(
 	let key_id = ExtKeychainPath::new(1, diff as u32, 0, 0, 0).to_identifier();
 
 	let fees = txs.iter().map(|tx| tx.fee()).sum();
-	let reward = libtx::reward::output(kc, &key_id, fees).unwrap();
+	let reward = libtx::reward::output(kc, &key_id, prev.height + 1, fees).unwrap();
 	let mut b = match core::core::Block::new(
 		prev,
 		txs.into_iter().cloned().collect(),

@@ -37,12 +37,12 @@ use crate::wallet::WalletConfig;
 
 /// The default file name to use when trying to derive
 /// the node config file location
-pub const SERVER_CONFIG_FILE_NAME: &'static str = "grin-server.toml";
+pub const SERVER_CONFIG_FILE_NAME: &'static str = "vcash-server.toml";
 /// And a wallet configuration file name
-pub const WALLET_CONFIG_FILE_NAME: &'static str = "grin-wallet.toml";
-const SERVER_LOG_FILE_NAME: &'static str = "grin-server.log";
-const WALLET_LOG_FILE_NAME: &'static str = "grin-wallet.log";
-const GRIN_HOME: &'static str = ".grin";
+pub const WALLET_CONFIG_FILE_NAME: &'static str = "vcash-wallet.toml";
+const SERVER_LOG_FILE_NAME: &'static str = "vcash-server.log";
+const WALLET_LOG_FILE_NAME: &'static str = "vcash-wallet.log";
+const GRIN_HOME: &'static str = ".vcash";
 const GRIN_CHAIN_DIR: &'static str = "chain_data";
 /// Wallet data directory
 pub const GRIN_WALLET_DIR: &'static str = "wallet_data";
@@ -217,33 +217,39 @@ impl GlobalConfig {
 		match *chain_type {
 			global::ChainTypes::Mainnet => {}
 			global::ChainTypes::Floonet => {
-				defaults.api_http_addr = "127.0.0.1:13413".to_owned();
-				defaults.p2p_config.port = 13414;
+				defaults.api_http_addr = "127.0.0.1:13513".to_owned();
+				defaults.pool_server_config.pool_server_addr = "127.0.0.1:13517".to_owned();
+				defaults.pool_server_config.wallet_listener_url =
+					Some("127.0.0.1:13515".to_owned());
+				defaults.p2p_config.port = 13514;
 				defaults
 					.stratum_mining_config
 					.as_mut()
 					.unwrap()
-					.stratum_server_addr = Some("127.0.0.1:13416".to_owned());
+					.stratum_server_addr = Some("127.0.0.1:13516".to_owned());
 				defaults
 					.stratum_mining_config
 					.as_mut()
 					.unwrap()
-					.wallet_listener_url = "http://127.0.0.1:13415".to_owned();
+					.wallet_listener_url = "http://127.0.0.1:13515".to_owned();
 			}
 			global::ChainTypes::UserTesting => {
-				defaults.api_http_addr = "127.0.0.1:23413".to_owned();
-				defaults.p2p_config.port = 23414;
+				defaults.api_http_addr = "127.0.0.1:23513".to_owned();
+				defaults.pool_server_config.pool_server_addr = "127.0.0.1:23517".to_owned();
+				defaults.pool_server_config.wallet_listener_url =
+					Some("127.0.0.1:23515".to_owned());
+				defaults.p2p_config.port = 23514;
 				defaults.p2p_config.seeding_type = p2p::Seeding::None;
 				defaults
 					.stratum_mining_config
 					.as_mut()
 					.unwrap()
-					.stratum_server_addr = Some("127.0.0.1:23416".to_owned());
+					.stratum_server_addr = Some("127.0.0.1:23516".to_owned());
 				defaults
 					.stratum_mining_config
 					.as_mut()
 					.unwrap()
-					.wallet_listener_url = "http://127.0.0.1:23415".to_owned();
+					.wallet_listener_url = "http://127.0.0.1:23515".to_owned();
 			}
 			global::ChainTypes::AutomatedTesting => {
 				panic!("Can't run automated testing directly");
@@ -369,12 +375,12 @@ impl GlobalWalletConfig {
 		match *chain_type {
 			global::ChainTypes::Mainnet => {}
 			global::ChainTypes::Floonet => {
-				defaults.api_listen_port = 13415;
-				defaults.check_node_api_http_addr = "http://127.0.0.1:13413".to_owned();
+				defaults.api_listen_port = 13515;
+				defaults.check_node_api_http_addr = "http://127.0.0.1:13513".to_owned();
 			}
 			global::ChainTypes::UserTesting => {
-				defaults.api_listen_port = 23415;
-				defaults.check_node_api_http_addr = "http://127.0.0.1:23413".to_owned();
+				defaults.api_listen_port = 23515;
+				defaults.check_node_api_http_addr = "http://127.0.0.1:23513".to_owned();
 			}
 			global::ChainTypes::AutomatedTesting => {
 				panic!("Can't run automated testing directly");

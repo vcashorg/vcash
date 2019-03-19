@@ -85,6 +85,47 @@ pub fn get_block(
 	return result.unwrap();
 }
 
+pub fn get_grin_solution(b: &mut core::Block, head: &core::BlockHeader) -> bool {
+	let deadline = Utc::now().timestamp_millis() + 10_i64 * 1000;
+
+	debug!(
+		"PoolCenter Mining Cuckoo{} for max 3s on {} @ {}.",
+		global::min_edge_bits(),
+		b.header.total_difficulty(),
+		b.header.height
+	);
+	let mut iter_count = 0;
+
+	while Utc::now().timestamp() < deadline {
+		let mut ctx = global::create_pow_context::<u32>(
+			head.height,
+			global::min_edge_bits(),
+			global::proofsize(),
+			10,
+		)
+		.unwrap();
+		ctx.set_header_nonce(b.header.pre_pow(), None, true)
+			.unwrap();
+		if let Ok(proofs) = ctx.find_cycles() {
+			b.header.pow.proof = proofs[0].clone();
+			let proof_diff = b.header.pow.to_difficulty(b.header.height);
+			if proof_diff >= (b.header.total_difficulty() - head.total_difficulty()) {
+				debug!(
+					"PoolCenter found solution for height = {} before deadline in {}, iter_count = {}",b.header.height,
+					deadline - Utc::now().timestamp_millis(), iter_count,
+				);
+				return true;
+			}
+		}
+
+		b.header.pow.nonce += 1;
+		iter_count += 1;
+	}
+
+	debug!("PoolCenter No solution found in 3s",);
+	false
+}
+
 /// Builds a new block with the chain head as previous and eligible
 /// transactions from the pool.
 fn build_block(
@@ -106,6 +147,22 @@ fn build_block(
 	// Determine the difficulty our block should be at.
 	// Note: do not keep the difficulty_iter in scope (it has an active batch).
 	let difficulty = consensus::next_difficulty(head.height + 1, chain.difficulty_iter()?);
+	let nbits = if (head.height + 1) % consensus::DIFFICULTY_ADJUST_WINDOW != 0 {
+		head.bits
+	} else {
+		let start_height = if head.height >= (consensus::DIFFICULTY_ADJUST_WINDOW - 1) {
+			head.height - (consensus::DIFFICULTY_ADJUST_WINDOW - 1)
+		} else {
+			0
+		};
+		let first_head = chain.get_header_by_height(start_height)?;
+		consensus::next_bit_difficulty(
+			head.height,
+			head.bits,
+			head.timestamp.timestamp(),
+			first_head.timestamp.timestamp(),
+		)
+	};
 
 	// Extract current "mineable" transactions from the pool.
 	// If this fails for *any* reason then fallback to an empty vec of txs.
@@ -138,6 +195,7 @@ fn build_block(
 	// making sure we're not spending time mining a useless block
 	b.validate(&head.total_kernel_offset, verifier_cache)?;
 
+	b.header.bits = nbits;
 	b.header.pow.nonce = thread_rng().gen();
 	b.header.pow.secondary_scaling = difficulty.secondary_scaling;
 	b.header.timestamp = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(now_sec, 0), Utc);
@@ -182,7 +240,8 @@ fn burn_reward(block_fees: BlockFees) -> Result<(core::Output, core::TxKernel, B
 	let keychain = ExtKeychain::from_random_seed(global::is_floonet()).unwrap();
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 	let (out, kernel) =
-		crate::core::libtx::reward::output(&keychain, &key_id, block_fees.fees).unwrap();
+		crate::core::libtx::reward::output(&keychain, &key_id, block_fees.height, block_fees.fees)
+			.unwrap();
 	Ok((out, kernel, block_fees))
 }
 

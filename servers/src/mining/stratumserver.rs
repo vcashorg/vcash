@@ -19,74 +19,76 @@ use chrono::prelude::Utc;
 use serde;
 use serde_json;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, SystemTime};
-use std::{cmp, thread};
 
 use crate::chain;
 use crate::common::stats::{StratumStats, WorkerStats};
 use crate::common::types::{StratumServerConfig, SyncState};
-use crate::core::core::hash::Hashed;
+use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
 use crate::core::core::verifier_cache::VerifierCache;
-use crate::core::core::Block;
-use crate::core::{pow, ser};
+use crate::core::core::{get_grin_magic_data_str, Block};
+use crate::core::pow::{compact_to_biguint, compact_to_diff, hash_to_biguint};
 use crate::keychain;
 use crate::mining::mine_block;
 use crate::pool;
 use crate::util;
+use crate::wallet::BlockFees;
 
 // ----------------------------------------
 // http://www.jsonrpc.org/specification
 // RPC Methods
 
+const COIN_BASE_PART1: &'static str = "00";
+const COIN_BASE_EXTRA_NOUNCE1: &'static str = "00000000";
+
 #[derive(Serialize, Deserialize, Debug)]
 struct RpcRequest {
-	id: String,
-	jsonrpc: String,
+	id: Option<i32>,
 	method: String,
 	params: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct RpcResponse {
-	id: String,
-	jsonrpc: String,
-	method: String,
+	id: Option<i32>,
 	result: Option<Value>,
 	error: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct RpcError {
-	code: i32,
-	message: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct LoginParams {
-	login: String,
-	pass: String,
-	agent: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct SubmitParams {
-	height: u64,
-	job_id: u64,
-	nonce: u64,
-	edge_bits: u32,
-	pow: Vec<u64>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct JobTemplate {
-	height: u64,
-	job_id: u64,
-	difficulty: u64,
-	pre_pow: String,
+	job_id: String,
+	pre_hash: String,
+	coinbase1: String,
+	coinbase2: String,
+	merkle_branch: Vec<Hash>,
+	version: String,
+	bits: String,
+	timestamp: String,
+	is_clear: bool,
+}
+
+impl Default for JobTemplate {
+	fn default() -> JobTemplate {
+		JobTemplate {
+			job_id: String::default(),
+			pre_hash: "0000000000000000000000000000000000000000000000000000000000000000"
+				.to_string(),
+			coinbase1: COIN_BASE_PART1.to_string(),
+			coinbase2: String::default(),
+			merkle_branch: Vec::new(),
+			version: "00000000".to_string(),
+			bits: String::default(),
+			timestamp: String::default(),
+			is_clear: false,
+		}
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -148,12 +150,9 @@ fn accept_workers(
 
 pub struct Worker {
 	id: String,
-	agent: String,
-	login: Option<String>,
 	stream: BufStream<TcpStream>,
 	error: bool,
 	authenticated: bool,
-	buffer: String,
 }
 
 impl Worker {
@@ -161,23 +160,18 @@ impl Worker {
 	pub fn new(id: String, stream: BufStream<TcpStream>) -> Worker {
 		Worker {
 			id: id,
-			agent: String::from(""),
-			login: None,
 			stream: stream,
 			error: false,
 			authenticated: false,
-			buffer: String::with_capacity(4096),
 		}
 	}
 
 	// Get Message from the worker
-	fn read_message(&mut self) -> Option<String> {
+	fn read_message(&mut self, line: &mut String) -> Option<usize> {
 		// Read and return a single message or None
-		match self.stream.read_line(&mut self.buffer) {
-			Ok(_) => {
-				let res = self.buffer.clone();
-				self.buffer.clear();
-				return Some(res);
+		match self.stream.read_line(line) {
+			Ok(n) => {
+				return Some(n);
 			}
 			Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
 				// Not an error, just no messages ready
@@ -185,10 +179,9 @@ impl Worker {
 			}
 			Err(e) => {
 				warn!(
-					"(Server ID: {}) Error in connection with stratum client: {}",
+					"(Worker ID: {}) Error in connection with stratum client: {}",
 					self.id, e
 				);
-				self.buffer.clear();
 				self.error = true;
 				return None;
 			}
@@ -201,16 +194,13 @@ impl Worker {
 		if !message.ends_with("\n") {
 			message += "\n";
 		}
-		match util::read_write::write_all(
-			&mut self.stream,
-			message.as_bytes(),
-			Duration::from_secs(1),
-		) {
+		warn!("Worker ID: {}------write message:{}", self.id, message);
+		match self.stream.write(message.as_bytes()) {
 			Ok(_) => match self.stream.flush() {
 				Ok(_) => {}
 				Err(e) => {
 					warn!(
-						"(Server ID: {}) Error in connection with stratum client: {}",
+						"(Worker ID: {}) Error in connection with stratum client: {}",
 						self.id, e
 					);
 					self.error = true;
@@ -218,7 +208,7 @@ impl Worker {
 			},
 			Err(e) => {
 				warn!(
-					"(Server ID: {}) Error in connection with stratum client: {}",
+					"(Worker ID: {}) Error in connection with stratum client: {}",
 					self.id, e
 				);
 				self.error = true;
@@ -237,9 +227,9 @@ pub struct StratumServer {
 	chain: Arc<chain::Chain>,
 	tx_pool: Arc<RwLock<pool::TransactionPool>>,
 	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
-	current_block_versions: Vec<Block>,
-	current_difficulty: u64,
-	minimum_share_difficulty: u64,
+	current_block_versions: HashMap<Hash, (Block, String)>,
+	current_newest_block_hash: Hash,
+	current_difficulty: u32,
 	current_key_id: Option<keychain::Identifier>,
 	workers: Arc<Mutex<Vec<Worker>>>,
 	sync_state: Arc<SyncState>,
@@ -255,13 +245,13 @@ impl StratumServer {
 	) -> StratumServer {
 		StratumServer {
 			id: String::from("0"),
-			minimum_share_difficulty: config.minimum_share_difficulty,
 			config,
 			chain,
 			tx_pool,
 			verifier_cache,
-			current_block_versions: Vec::new(),
-			current_difficulty: <u64>::max_value(),
+			current_block_versions: HashMap::new(),
+			current_newest_block_hash: ZERO_HASH,
+			current_difficulty: 0,
 			current_key_id: None,
 			workers: Arc::new(Mutex::new(Vec::new())),
 			sync_state: Arc::new(SyncState::new()),
@@ -270,68 +260,101 @@ impl StratumServer {
 
 	// Build and return a JobTemplate for mining the current block
 	fn build_block_template(&self) -> JobTemplate {
-		let bh = self.current_block_versions.last().unwrap().header.clone();
-		// Serialize the block header into pre and post nonce strings
-		let mut header_buf = vec![];
-		{
-			let mut writer = ser::BinWriter::new(&mut header_buf);
-			bh.write_pre_pow(&mut writer).unwrap();
-			bh.pow.write_pre_pow(bh.version, &mut writer).unwrap();
+		let block_pair = self
+			.current_block_versions
+			.get(&self.current_newest_block_hash);
+		match block_pair {
+			Some((block, coinbase)) => {
+				let job_template = JobTemplate {
+					job_id: self.current_newest_block_hash.to_hex(),
+					coinbase2: coinbase.to_string(),
+					bits: format!("{:08x}", block.header.bits),
+					timestamp: format!("{:08x}", block.header.timestamp.timestamp()),
+					is_clear: true,
+					..Default::default()
+				};
+				job_template
+			}
+			_ => JobTemplate::default(),
 		}
-		let pre_pow = util::to_hex(header_buf);
-		let job_template = JobTemplate {
-			height: bh.height,
-			job_id: (self.current_block_versions.len() - 1) as u64,
-			difficulty: self.minimum_share_difficulty,
-			pre_pow,
-		};
-		return job_template;
 	}
 
 	// Handle an RPC request message from the worker(s)
 	fn handle_rpc_requests(&mut self, stratum_stats: &mut Arc<RwLock<StratumStats>>) {
 		let mut workers_l = self.workers.lock();
+		let mut the_message = String::with_capacity(4096);
 		for num in 0..workers_l.len() {
-			match workers_l[num].read_message() {
-				Some(the_message) => {
+			match workers_l[num].read_message(&mut the_message) {
+				Some(_) => {
 					// Decompose the request from the JSONRpc wrapper
+					debug!(
+						"(Worker ID: {})get request:{}",
+						workers_l[num].id,
+						the_message.as_str()
+					);
 					let request: RpcRequest = match serde_json::from_str(&the_message) {
 						Ok(request) => request,
 						Err(e) => {
 							// not a valid JSON RpcRequest - disconnect the worker
-							warn!(
+							info!(
 								"(Server ID: {}) Failed to parse JSONRpc: {} - {:?}",
 								self.id,
 								e.description(),
 								the_message.as_bytes(),
 							);
 							workers_l[num].error = true;
+							the_message.clear();
 							continue;
 						}
 					};
 
+					the_message.clear();
+
 					let mut stratum_stats = stratum_stats.write();
-					let worker_stats_id = match stratum_stats
+					let worker_stats_id = stratum_stats
 						.worker_stats
 						.iter()
 						.position(|r| r.id == workers_l[num].id)
-					{
-						Some(id) => id,
-						None => continue,
-					};
+						.unwrap();
 					stratum_stats.worker_stats[worker_stats_id].last_seen = SystemTime::now();
 
 					// Call the handler function for requested method
-					let response = match request.method.as_str() {
-						"login" => {
-							if self.current_block_versions.is_empty() {
-								continue;
-							}
+					let response: Result<Value, Value> = match request.method.as_str() {
+						"mining.subscribe" => {
 							stratum_stats.worker_stats[worker_stats_id].initial_block_height =
-								self.current_block_versions.last().unwrap().header.height;
-							self.handle_login(request.params, &mut workers_l[num])
+								if let Some((block, _)) = self
+									.current_block_versions
+									.get(&self.current_newest_block_hash)
+								{
+									block.header.height
+								} else {
+									0
+								};
+
+							let mut ret: Vec<Value> = Vec::new();
+							let mut temp_vec: Vec<Value> = Vec::new();
+							temp_vec.push(
+								serde_json::to_value(vec![
+									"mining.set_difficulty".to_string(),
+									"".to_string(),
+								])
+								.unwrap(),
+							);
+							temp_vec.push(
+								serde_json::to_value(vec![
+									"mining.notify".to_string(),
+									"".to_string(),
+								])
+								.unwrap(),
+							);
+							ret.push(serde_json::to_value(temp_vec).unwrap());
+							ret.push(
+								serde_json::to_value(COIN_BASE_EXTRA_NOUNCE1.to_string()).unwrap(),
+							);
+							ret.push(serde_json::to_value(4).unwrap());
+							Ok(serde_json::to_value(ret).unwrap())
 						}
-						"submit" => {
+						"mining.submit" => {
 							let res = self.handle_submit(
 								request.params,
 								&mut workers_l[num],
@@ -341,115 +364,46 @@ impl StratumServer {
 							if let Ok((_, true)) = res {
 								self.current_key_id = None;
 							}
-							res.map(|(v, _)| v)
+							Ok(serde_json::to_value(true).unwrap())
 						}
-						"keepalive" => self.handle_keepalive(),
-						"getjobtemplate" => {
-							if self.sync_state.is_syncing() {
-								let e = RpcError {
-									code: -32000,
-									message: "Node is syncing - Please wait".to_string(),
-								};
-								Err(serde_json::to_value(e).unwrap())
-							} else {
-								self.handle_getjobtemplate()
-							}
-						}
-						"status" => {
-							self.handle_status(&mut stratum_stats.worker_stats[worker_stats_id])
+						"mining.authorize" => {
+							workers_l[num].authenticated = true;
+							Ok(serde_json::to_value(true).unwrap())
 						}
 						_ => {
 							// Called undefined method
-							let e = RpcError {
-								code: -32601,
-								message: "Method not found".to_string(),
-							};
+							let e = "Method not found".to_string();
 							Err(serde_json::to_value(e).unwrap())
 						}
 					};
 
-					let id = request.id.clone();
 					// Package the reply as RpcResponse json
-					let resp = match response {
-						Err(response) => RpcResponse {
-							id: id,
-							jsonrpc: String::from("2.0"),
-							method: request.method,
-							result: None,
-							error: Some(response),
-						},
-						Ok(response) => RpcResponse {
-							id: id,
-							jsonrpc: String::from("2.0"),
-							method: request.method,
-							result: Some(response),
-							error: None,
-						},
-					};
-					if let Ok(rpc_response) = serde_json::to_string(&resp) {
-						// Send the reply
-						workers_l[num].write_message(rpc_response);
-					} else {
-						warn!("handle_rpc_requests: failed responding to {:?}", request.id);
-					};
+					let rpc_response: String;
+					match response {
+						Err(err) => {
+							let resp = RpcResponse {
+								id: request.id,
+								result: None,
+								error: Some(err),
+							};
+							rpc_response = serde_json::to_string(&resp).unwrap();
+						}
+						Ok(res) => {
+							let resp = RpcResponse {
+								id: request.id,
+								result: Some(res),
+								error: None,
+							};
+							rpc_response = serde_json::to_string(&resp).unwrap();
+						}
+					}
+
+					// Send the reply
+					workers_l[num].write_message(rpc_response);
 				}
 				None => {} // No message for us from this worker
 			}
 		}
-	}
-
-	// Handle STATUS message
-	fn handle_status(&self, worker_stats: &mut WorkerStats) -> Result<Value, Value> {
-		// Return worker status in json for use by a dashboard or healthcheck.
-		let status = WorkerStatus {
-			id: worker_stats.id.clone(),
-			height: self.current_block_versions.last().unwrap().header.height,
-			difficulty: worker_stats.pow_difficulty,
-			accepted: worker_stats.num_accepted,
-			rejected: worker_stats.num_rejected,
-			stale: worker_stats.num_stale,
-		};
-		if worker_stats.initial_block_height == 0 {
-			worker_stats.initial_block_height = status.height;
-		}
-		debug!("(Server ID: {}) Status of worker: {} - Share Accepted: {}, Rejected: {}, Stale: {}. Blocks Found: {}/{}",
-			self.id,
-			worker_stats.id,
-			worker_stats.num_accepted,
-			worker_stats.num_rejected,
-			worker_stats.num_stale,
-			worker_stats.num_blocks_found,
-			status.height - worker_stats.initial_block_height,
-		);
-		let response = serde_json::to_value(&status).unwrap();
-		return Ok(response);
-	}
-
-	// Handle GETJOBTEMPLATE message
-	fn handle_getjobtemplate(&self) -> Result<Value, Value> {
-		// Build a JobTemplate from a BlockHeader and return JSON
-		let job_template = self.build_block_template();
-		let response = serde_json::to_value(&job_template).unwrap();
-		debug!(
-			"(Server ID: {}) sending block {} with id {} to single worker",
-			self.id, job_template.height, job_template.job_id,
-		);
-		return Ok(response);
-	}
-
-	// Handle KEEPALIVE message
-	fn handle_keepalive(&self) -> Result<Value, Value> {
-		return Ok(serde_json::to_value("ok".to_string()).unwrap());
-	}
-
-	// Handle LOGIN message
-	fn handle_login(&self, params: Option<Value>, worker: &mut Worker) -> Result<Value, Value> {
-		let params: LoginParams = parse_params(params)?;
-		worker.login = Some(params.login);
-		// XXX TODO Future - Validate password?
-		worker.agent = params.agent;
-		worker.authenticated = true;
-		return Ok(serde_json::to_value("ok".to_string()).unwrap());
 	}
 
 	// Handle SUBMIT message
@@ -460,154 +414,106 @@ impl StratumServer {
 	fn handle_submit(
 		&self,
 		params: Option<Value>,
-		worker: &mut Worker,
+		_worker: &mut Worker,
 		worker_stats: &mut WorkerStats,
 	) -> Result<(Value, bool), Value> {
 		// Validate parameters
-		let params: SubmitParams = parse_params(params)?;
+		let params: Vec<String> = parse_params(params)?;
+
+		if params.len() != 5 {
+			return Err(serde_json::to_value(false).unwrap());
+		}
+
+		let job_id = params[1].clone();
+		let extra_nonce_2_str = params[2].clone();
+		let timestamp_str = params[3].clone();
+		let timestamp = u32::from_str_radix(&timestamp_str, 16).unwrap();
+		let nonce_str = params[4].clone();
+		let nounce = u32::from_str_radix(&nonce_str, 16).unwrap();
 
 		// Find the correct version of the block to match this header
-		let b: Option<&Block> = self.current_block_versions.get(params.job_id as usize);
-		if params.height != self.current_block_versions.last().unwrap().header.height || b.is_none()
+		let submit_hash = Hash::from_hex(&job_id);
+		if submit_hash.is_err()
+			|| self
+				.current_block_versions
+				.get(&submit_hash.clone().unwrap())
+				.is_none()
 		{
 			// Return error status
 			error!(
-				"(Server ID: {}) Share at height {}, edge_bits {}, nonce {}, job_id {} submitted too late",
-				self.id, params.height, params.edge_bits, params.nonce, params.job_id,
+				"(Server ID: {}) Share at job_id {} submitted too late",
+				self.id, job_id,
 			);
 			worker_stats.num_stale += 1;
-			let e = RpcError {
-				code: -32503,
-				message: "Solution submitted too late".to_string(),
-			};
-			return Err(serde_json::to_value(e).unwrap());
+			return Err(serde_json::to_value(false).unwrap());
 		}
 
-		let share_difficulty: u64;
-		let mut share_is_block = false;
-
-		let mut b: Block = b.unwrap().clone();
-		// Reconstruct the blocks header with this nonce and pow added
-		b.header.pow.proof.edge_bits = params.edge_bits as u8;
-		b.header.pow.nonce = params.nonce;
-		b.header.pow.proof.nonces = params.pow;
-
-		if !b.header.pow.is_primary() && !b.header.pow.is_secondary() {
-			// Return error status
-			error!(
-				"(Server ID: {}) Failed to validate solution at height {}, hash {}, edge_bits {}, nonce {}, job_id {}: cuckoo size too small",
-				self.id, params.height, b.hash(), params.edge_bits, params.nonce, params.job_id,
-			);
-			worker_stats.num_rejected += 1;
-			let e = RpcError {
-				code: -32502,
-				message: "Failed to validate solution".to_string(),
-			};
-			return Err(serde_json::to_value(e).unwrap());
-		}
-
-		// Get share difficulty
-		share_difficulty = b.header.pow.to_difficulty(b.header.height).to_num();
-		// If the difficulty is too low its an error
-		if share_difficulty < self.minimum_share_difficulty {
-			// Return error status
-			error!(
-				"(Server ID: {}) Share at height {}, hash {}, edge_bits {}, nonce {}, job_id {} rejected due to low difficulty: {}/{}",
-				self.id, params.height, b.hash(), params.edge_bits, params.nonce, params.job_id, share_difficulty, self.minimum_share_difficulty,
-			);
-			worker_stats.num_rejected += 1;
-			let e = RpcError {
-				code: -32501,
-				message: "Share rejected due to low difficulty".to_string(),
-			};
-			return Err(serde_json::to_value(e).unwrap());
-		}
-		// If the difficulty is high enough, submit it (which also validates it)
-		if share_difficulty >= self.current_difficulty {
-			// This is a full solution, submit it to the network
-			let res = self.chain.process_block(b.clone(), chain::Options::MINE);
-			if let Err(e) = res {
-				// Return error status
-				error!(
-					"(Server ID: {}) Failed to validate solution at height {}, hash {}, edge_bits {}, nonce {}, job_id {}, {}: {}",
-					self.id,
-					params.height,
-					b.hash(),
-					params.edge_bits,
-					params.nonce,
-					params.job_id,
-					e,
-					e.backtrace().unwrap(),
-				);
-				worker_stats.num_rejected += 1;
-				let e = RpcError {
-					code: -32502,
-					message: "Failed to validate solution".to_string(),
-				};
-				return Err(serde_json::to_value(e).unwrap());
-			}
-			share_is_block = true;
-			worker_stats.num_blocks_found += 1;
-			// Log message to make it obvious we found a block
-			warn!(
-				"(Server ID: {}) Solution Found for block {}, hash {} - Yay!!! Worker ID: {}, blocks found: {}, shares: {}",
-				self.id, params.height,
-				b.hash(),
-				worker_stats.id,
-				worker_stats.num_blocks_found,
-				worker_stats.num_accepted,
-			);
-		} else {
-			// Do some validation but dont submit
-			let res = pow::verify_size(&b.header);
-			if !res.is_ok() {
-				// Return error status
-				error!(
-					"(Server ID: {}) Failed to validate share at height {}, hash {}, edge_bits {}, nonce {}, job_id {}. {:?}",
-					self.id,
-					params.height,
-					b.hash(),
-					params.edge_bits,
-					b.header.pow.nonce,
-					params.job_id,
-					res,
-				);
-				worker_stats.num_rejected += 1;
-				let e = RpcError {
-					code: -32502,
-					message: "Failed to validate solution".to_string(),
-				};
-				return Err(serde_json::to_value(e).unwrap());
-			}
-		}
-		// Log this as a valid share
-		let submitted_by = match worker.login.clone() {
-			None => worker.id.to_string(),
-			Some(login) => login.clone(),
-		};
-		info!(
-			"(Server ID: {}) Got share at height {}, hash {}, edge_bits {}, nonce {}, job_id {}, difficulty {}/{}, submitted by {}",
-			self.id,
-			b.header.height,
-			b.hash(),
-			b.header.pow.proof.edge_bits,
-			b.header.pow.nonce,
-			params.job_id,
-			share_difficulty,
-			self.current_difficulty,
-			submitted_by,
+		let (block, coinbase2) = self
+			.current_block_versions
+			.get(&submit_hash.unwrap())
+			.unwrap();
+		let coin_base_str = format!(
+			"{}{}{}{}",
+			COIN_BASE_PART1, COIN_BASE_EXTRA_NOUNCE1, extra_nonce_2_str, coinbase2
 		);
-		worker_stats.num_accepted += 1;
-		let submit_response;
-		if share_is_block {
-			submit_response = format!("blockfound - {}", b.hash().to_hex());
-		} else {
-			submit_response = "ok".to_string();
+		trace!("build coin base:{}", coin_base_str);
+		let coin_base_data = util::from_hex(coin_base_str);
+		if coin_base_data.is_err() {
+			return Err(serde_json::to_value(false).unwrap());
 		}
-		return Ok((
-			serde_json::to_value(submit_response).unwrap(),
-			share_is_block,
-		));
+		let mut submit_block = block.clone();
+		submit_block.aux_data.coinbase_tx = coin_base_data.unwrap();
+		submit_block.aux_data.aux_header.version = 0;
+		submit_block.aux_data.aux_header.prev_hash = ZERO_HASH;
+		submit_block.aux_data.aux_header.merkle_root = submit_block.aux_data.coinbase_tx.dhash();
+		submit_block.aux_data.aux_header.mine_time = timestamp;
+		submit_block.aux_data.aux_header.nbits = block.header.bits;
+		submit_block.aux_data.aux_header.nonce = nounce;
+
+		let btc_header_hash = submit_block.aux_data.aux_header.dhash();
+		let cur_diff = hash_to_biguint(btc_header_hash);
+		let target_diff_option = compact_to_biguint(submit_block.header.bits);
+		if target_diff_option.is_none() {
+			return Err(serde_json::to_value(false).unwrap());
+		}
+
+		let target_diff = target_diff_option.unwrap();
+		if cur_diff > target_diff {
+			worker_stats.num_rejected += 1;
+			return Err(serde_json::to_value(false).unwrap());
+		}
+
+		let res = self
+			.chain
+			.process_block(submit_block.clone(), chain::Options::MINE);
+		if let Err(e) = res {
+			// Return error status
+			error!(
+				"(Server ID: {}) Failed to validate solution at height {}, hash {}, {}: {}",
+				self.id,
+				submit_block.header.height,
+				submit_block.hash(),
+				e,
+				e.backtrace().unwrap(),
+			);
+			worker_stats.num_rejected += 1;
+			return Err(serde_json::to_value(false).unwrap());
+		}
+		worker_stats.num_blocks_found += 1;
+		// Log message to make it obvious we found a block
+		warn!(
+			"(Server ID: {}) Solution Found for block {}, hash {} - Yay!!! Worker ID: {}, blocks found: {}, shares: {}",
+			self.id,
+			submit_block.header.height,
+			submit_block.hash(),
+			worker_stats.id,
+			worker_stats.num_blocks_found,
+			worker_stats.num_accepted,
+		);
+
+		worker_stats.num_accepted += 1;
+
+		return Ok((serde_json::to_value(true).unwrap(), true));
 	} // handle submit a solution
 
 	// Purge dead/sick workers - remove all workers marked in error state
@@ -645,29 +551,63 @@ impl StratumServer {
 
 	// Broadcast a jobtemplate RpcRequest to all connected workers - no response
 	// expected
-	fn broadcast_job(&mut self) {
+	fn broadcast_job(&mut self, clear_job: bool) {
 		// Package new block into RpcRequest
 		let job_template = self.build_block_template();
-		let job_template_json = serde_json::to_string(&job_template).unwrap();
-		// Issue #1159 - use a serde_json Value type to avoid extra quoting
-		let job_template_value: Value = serde_json::from_str(&job_template_json).unwrap();
+
+		let mut ret: Vec<Value> = Vec::new();
+		let merkle_branch: Vec<String> = Vec::new();
+		ret.push(serde_json::to_value(job_template.job_id.clone()).unwrap());
+		ret.push(serde_json::to_value(job_template.pre_hash).unwrap());
+		ret.push(serde_json::to_value(job_template.coinbase1).unwrap());
+		ret.push(serde_json::to_value(job_template.coinbase2).unwrap());
+		ret.push(serde_json::to_value(merkle_branch).unwrap());
+		ret.push(serde_json::to_value(job_template.version).unwrap());
+		ret.push(serde_json::to_value(job_template.bits).unwrap());
+		ret.push(serde_json::to_value(job_template.timestamp).unwrap());
+		ret.push(serde_json::to_value(clear_job).unwrap());
+
+		let response = serde_json::to_value(ret).unwrap();
 		let job_request = RpcRequest {
-			id: String::from("Stratum"),
-			jsonrpc: String::from("2.0"),
-			method: String::from("job"),
-			params: Some(job_template_value),
+			id: None,
+			method: String::from("mining.notify"),
+			params: Some(response),
 		};
+
 		let job_request_json = serde_json::to_string(&job_request).unwrap();
 		debug!(
-			"(Server ID: {}) sending block {} with id {} to stratum clients",
-			self.id, job_template.height, job_template.job_id,
+			"(Server ID: {}) sending block with id {} to stratum clients",
+			self.id, job_template.job_id,
 		);
 		// Push the new block to all connected clients
 		// NOTE: We do not give a unique nonce (should we?) so miners need
 		//       to choose one for themselves
 		let mut workers_l = self.workers.lock();
 		for num in 0..workers_l.len() {
-			workers_l[num].write_message(job_request_json.clone());
+			if workers_l[num].authenticated {
+				workers_l[num].write_message(job_request_json.clone());
+			}
+		}
+	}
+
+	fn broadcast_difficulty(&mut self) {
+		let diff = compact_to_diff(self.current_difficulty);
+		let response = serde_json::to_value(vec![diff]).unwrap();
+		let diff_request = RpcRequest {
+			id: None,
+			method: String::from("mining.set_difficulty"),
+			params: Some(response),
+		};
+
+		let diff_json = serde_json::to_string(&diff_request).unwrap();
+		// Push the new block to all connected clients
+		// NOTE: We do not give a unique nonce (should we?) so miners need
+		//       to choose one for themselves
+		let mut workers_l = self.workers.lock();
+		for num in 0..workers_l.len() {
+			if workers_l[num].authenticated {
+				workers_l[num].write_message(diff_json.clone());
+			}
 		}
 	}
 
@@ -680,13 +620,10 @@ impl StratumServer {
 		&mut self,
 		stratum_stats: Arc<RwLock<StratumStats>>,
 		edge_bits: u32,
-		proof_size: usize,
+		_proof_size: usize,
 		sync_state: Arc<SyncState>,
 	) {
-		info!(
-			"(Server ID: {}) Starting stratum server with edge_bits = {}, proof_size = {}",
-			self.id, edge_bits, proof_size
-		);
+		info!("(Server ID: {}) Starting stratum server", self.id,);
 
 		self.sync_state = sync_state;
 
@@ -702,7 +639,8 @@ impl StratumServer {
 		let mut current_hash = head.prev_block_h;
 		let mut latest_hash;
 		let listen_addr = self.config.stratum_server_addr.clone().unwrap();
-		self.current_block_versions.push(Block::default());
+		self.current_block_versions
+			.insert(ZERO_HASH, (Block::default(), String::default()));
 
 		// Start a thread to accept new worker connections
 		let mut workers_th = self.workers.clone();
@@ -731,7 +669,8 @@ impl StratumServer {
 			// Handle any messages from the workers
 			self.handle_rpc_requests(&mut stratum_stats.clone());
 
-			thread::sleep(Duration::from_millis(50));
+			warn!("Stratum server wating for node syncing...");
+			thread::sleep(Duration::from_secs(2));
 		}
 
 		// Main Loop
@@ -755,26 +694,45 @@ impl StratumServer {
 					wallet_listener_url = Some(self.config.wallet_listener_url.clone());
 				}
 				// If this is a new block, clear the current_block version history
+				let mut clear_prev_job = false;
 				if current_hash != latest_hash {
 					self.current_block_versions.clear();
+					clear_prev_job = true;
 				}
-				// Build the new block (version)
-				let (new_block, block_fees) = mine_block::get_block(
-					&self.chain,
-					&self.tx_pool,
-					self.verifier_cache.clone(),
-					self.current_key_id.clone(),
-					wallet_listener_url,
-				);
-				self.current_difficulty =
-					(new_block.header.total_difficulty() - head.total_difficulty).to_num();
+
+				let mut block_pair: Option<(Block, BlockFees)> = None;
+				let mut solve = false;
+				while !solve {
+					// Build the new block (version)
+					let (mut new_block, block_fees) = mine_block::get_block(
+						&self.chain,
+						&self.tx_pool,
+						self.verifier_cache.clone(),
+						self.current_key_id.clone(),
+						wallet_listener_url.clone(),
+					);
+
+					let head = self.chain.head_header().unwrap();
+					solve = mine_block::get_grin_solution(&mut new_block, &head);
+					if solve {
+						block_pair = Some((new_block, block_fees));
+					}
+				}
+				let (new_block, block_fees) = block_pair.unwrap();
+
+				self.current_newest_block_hash = new_block.header.hash();
+				self.current_difficulty = new_block.header.bits;
 				self.current_key_id = block_fees.key_id();
-				current_hash = latest_hash;
-				// set the minimum acceptable share difficulty for this block
-				self.minimum_share_difficulty = cmp::min(
-					self.config.minimum_share_difficulty,
-					self.current_difficulty,
+				// Add this new block version to our current block map
+				self.current_block_versions.insert(
+					self.current_newest_block_hash,
+					(
+						new_block.clone(),
+						get_grin_magic_data_str(self.current_newest_block_hash),
+					),
 				);
+
+				current_hash = latest_hash;
 				// set a new deadline for rebuilding with fresh transactions
 				deadline = Utc::now().timestamp() + attempt_time_per_block as i64;
 
@@ -783,10 +741,10 @@ impl StratumServer {
 					stratum_stats.block_height = new_block.header.height;
 					stratum_stats.network_difficulty = self.current_difficulty;
 				}
-				// Add this new block version to our current block map
-				self.current_block_versions.push(new_block);
+
 				// Send this job to all connected workers
-				self.broadcast_job();
+				self.broadcast_job(clear_prev_job);
+				self.broadcast_difficulty();
 			}
 
 			// Handle any messages from the workers
@@ -807,10 +765,7 @@ where
 	params
 		.and_then(|v| serde_json::from_value(v).ok())
 		.ok_or_else(|| {
-			let e = RpcError {
-				code: -32600,
-				message: "Invalid Request".to_string(),
-			};
+			let e = "Invalid Request".to_string();
 			serde_json::to_value(e).unwrap()
 		})
 }

@@ -32,7 +32,9 @@ use crate::common::adapters::{
 	ChainToPoolAndNetAdapter, NetToChainAdapter, PoolToChainAdapter, PoolToNetAdapter,
 };
 use crate::common::stats::{DiffBlock, DiffStats, PeerStats, ServerStateInfo, ServerStats};
-use crate::common::types::{Error, ServerConfig, StratumServerConfig, SyncState, SyncStatus};
+use crate::common::types::{
+	Error, PoolServerConfig, ServerConfig, StratumServerConfig, SyncState, SyncStatus,
+};
 use crate::core::core::hash::{Hashed, ZERO_HASH};
 use crate::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
 use crate::core::{consensus, genesis, global, pow};
@@ -42,6 +44,7 @@ use crate::mining::test_miner::Miner;
 use crate::p2p;
 use crate::p2p::types::PeerAddr;
 use crate::pool;
+use crate::poolserver;
 use crate::store;
 use crate::util::file::get_first_line;
 use crate::util::{Mutex, RwLock, StopState};
@@ -80,6 +83,7 @@ impl Server {
 		let mining_config = config.stratum_mining_config.clone();
 		let enable_test_miner = config.run_test_miner;
 		let test_miner_wallet_url = config.test_miner_wallet_url.clone();
+		let pool_server_config = config.pool_server_config.clone();
 		let serv = Arc::new(Server::new(config)?);
 
 		if let Some(c) = mining_config {
@@ -99,6 +103,10 @@ impl Server {
 			if s {
 				serv.start_test_miner(test_miner_wallet_url, serv.stop_state.clone());
 			}
+		}
+
+		if pool_server_config.enable_pool_server {
+			serv.start_pool_server(pool_server_config);
 		}
 
 		info_callback(serv.clone());
@@ -323,6 +331,31 @@ impl Server {
 		self.p2p.peers.peer_count()
 	}
 
+	/// Start a pool server on a separate thread
+	pub fn start_pool_server(&self, config: PoolServerConfig) {
+		let sync_state = self.sync_state.clone();
+		let chain = self.chain.clone();
+		let tx_pool = self.tx_pool.clone();
+		let verifier_cache = self.verifier_cache.clone();
+		let stop_state = self.stop_state.clone();
+		let _ = thread::Builder::new().spawn(move || {
+			// TODO push this down in the run loop so miner gets paused anytime we
+			// decide to sync again
+			let secs_2 = time::Duration::from_secs(2);
+			while sync_state.is_syncing() {
+				warn!("Pool server wating for node syncing...");
+				thread::sleep(secs_2);
+			}
+			poolserver::start_poolserver_service(
+				chain,
+				tx_pool,
+				verifier_cache,
+				config,
+				stop_state,
+			);
+		});
+	}
+
 	/// Start a minimal "stratum" mining service on a separate thread
 	pub fn start_stratum_server(&self, config: StratumServerConfig) {
 		let edge_bits = global::min_edge_bits();
@@ -355,7 +388,7 @@ impl Server {
 		let sync_state = self.sync_state.clone();
 		let config_wallet_url = match wallet_listener_url.clone() {
 			Some(u) => u,
-			None => String::from("http://127.0.0.1:13415"),
+			None => String::from("http://127.0.0.1:13515"),
 		};
 
 		let config = StratumServerConfig {

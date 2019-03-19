@@ -88,7 +88,7 @@ impl UI {
 
 		let mut title_string = StyledString::new();
 		title_string.append(StyledString::styled(
-			format!("Grin Version {}", built_info::PKG_VERSION),
+			format!("Vcash Version {}", built_info::PKG_VERSION),
 			Color::Dark(BaseColor::Green),
 		));
 

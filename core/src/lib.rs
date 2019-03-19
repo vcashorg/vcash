@@ -21,6 +21,7 @@
 #![deny(unused_mut)]
 #![warn(missing_docs)]
 
+extern crate num_bigint;
 use blake2_rfc as blake2;
 #[macro_use]
 extern crate enum_primitive;

@@ -165,6 +165,9 @@ pub struct ServerConfig {
 	/// Test miner wallet URL
 	pub test_miner_wallet_url: Option<String>,
 
+	/// Configuration for pool server
+	pub pool_server_config: PoolServerConfig,
+
 	/// Configuration for the peer-to-peer server
 	pub p2p_config: p2p::P2PConfig,
 
@@ -185,10 +188,11 @@ impl Default for ServerConfig {
 	fn default() -> ServerConfig {
 		ServerConfig {
 			db_root: "grin_chain".to_string(),
-			api_http_addr: "127.0.0.1:3413".to_string(),
+			api_http_addr: "127.0.0.1:3513".to_string(),
 			api_secret_path: Some(".api_secret".to_string()),
 			tls_certificate_file: None,
 			tls_certificate_key: None,
+			pool_server_config: PoolServerConfig::default(),
 			p2p_config: p2p::P2PConfig::default(),
 			dandelion_config: pool::DandelionConfig::default(),
 			stratum_mining_config: Some(StratumServerConfig::default()),
@@ -233,12 +237,40 @@ pub struct StratumServerConfig {
 impl Default for StratumServerConfig {
 	fn default() -> StratumServerConfig {
 		StratumServerConfig {
-			wallet_listener_url: "http://127.0.0.1:3415".to_string(),
+			wallet_listener_url: "http://127.0.0.1:3515".to_string(),
 			burn_reward: false,
 			attempt_time_per_block: 15,
 			minimum_share_difficulty: 1,
 			enable_stratum_server: Some(false),
-			stratum_server_addr: Some("127.0.0.1:3416".to_string()),
+			stratum_server_addr: Some("127.0.0.1:3516".to_string()),
+		}
+	}
+}
+
+/// Pool server configuration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PoolServerConfig {
+	/// Run a stratum mining server (the only way to communicate to mine this
+	/// node via grin-miner
+	pub enable_pool_server: bool,
+
+	/// If enabled, the address and port to listen on
+	pub pool_server_addr: String,
+
+	/// Base address to the HTTP wallet receiver
+	pub wallet_listener_url: Option<String>,
+
+	/// Address which pool server will post new mine block param when chain height grows
+	pub chain_notify_url: Vec<String>,
+}
+
+impl Default for PoolServerConfig {
+	fn default() -> PoolServerConfig {
+		PoolServerConfig {
+			enable_pool_server: false,
+			pool_server_addr: "127.0.0.1:3517".to_string(),
+			wallet_listener_url: Some("http://127.0.0.1:3515".to_string()),
+			chain_notify_url: Vec::new(),
 		}
 	}
 }

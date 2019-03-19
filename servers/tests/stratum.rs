@@ -49,7 +49,7 @@ fn basic_stratum_server() {
 	// Get mining config with stratumserver enabled
 	let mut stratum_cfg = stratum_config();
 	stratum_cfg.burn_reward = true;
-	stratum_cfg.attempt_time_per_block = 999;
+	stratum_cfg.attempt_time_per_block = 10;
 	stratum_cfg.enable_stratum_server = Some(true);
 	stratum_cfg.stratum_server_addr = Some(String::from("127.0.0.1:11101"));
 
@@ -72,8 +72,6 @@ fn basic_stratum_server() {
 	let mut workers = vec![];
 	for _n in 0..5 {
 		let w = TcpStream::connect("127.0.0.1:11101").unwrap();
-		w.set_nonblocking(true)
-			.expect("Failed to set TcpStream to non-blocking");
 		let stream = BufStream::new(w);
 		workers.push(stream);
 	}
@@ -83,17 +81,10 @@ fn basic_stratum_server() {
 	// Simulate a worker lost connection
 	workers.remove(4);
 
-	// Swallow the genesis block
-	thread::sleep(time::Duration::from_secs(5)); // Wait for the server to broadcast
-	let mut response = String::new();
-	for n in 0..workers.len() {
-		let _result = workers[n].read_line(&mut response);
-	}
-
 	// Verify a few stratum JSONRpc commands
-	// getjobtemplate - expected block template result
+	// mining.subscribe
 	let mut response = String::new();
-	let job_req = "{\"id\": \"Stratum\", \"jsonrpc\": \"2.0\", \"method\": \"getjobtemplate\"}\n";
+	let job_req = "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": []}\n";
 	workers[2].write(job_req.as_bytes()).unwrap();
 	workers[2].flush().unwrap();
 	thread::sleep(time::Duration::from_secs(1)); // Wait for the server to reply
@@ -101,7 +92,6 @@ fn basic_stratum_server() {
 		Ok(_) => {
 			let r: Value = serde_json::from_str(&response).unwrap();
 			assert_eq!(r["error"], serde_json::Value::Null);
-			assert_ne!(r["result"], serde_json::Value::Null);
 		}
 		Err(_e) => {
 			assert!(false);
@@ -109,27 +99,53 @@ fn basic_stratum_server() {
 	}
 	info!("a few stratum JSONRpc commands verification ok");
 
-	// keepalive - expected "ok" result
+	// mining.authorize
 	let mut response = String::new();
-	let job_req = "{\"id\":\"3\",\"jsonrpc\":\"2.0\",\"method\":\"keepalive\"}\n";
-	let ok_resp = "{\"id\":\"3\",\"jsonrpc\":\"2.0\",\"method\":\"keepalive\",\"result\":\"ok\",\"error\":null}\n";
+	let job_req = "{\"params\": [\"slush.miner1\", \"password\"], \"id\": 2, \"method\": \"mining.authorize\"}\n";
+	let ok_resp = "{\"error\": null, \"id\": 2, \"result\": true}\n";
 	workers[2].write(job_req.as_bytes()).unwrap();
 	workers[2].flush().unwrap();
 	thread::sleep(time::Duration::from_secs(1)); // Wait for the server to reply
-	let _st = workers[2].read_line(&mut response);
-	assert_eq!(response.as_str(), ok_resp);
-	info!("keepalive test ok");
+	match workers[2].read_line(&mut response) {
+		Ok(_) => {
+			let r: Value = serde_json::from_str(&response).unwrap();
+			assert_eq!(r["error"], serde_json::Value::Null);
+		}
+		Err(_e) => {
+			assert!(false);
+		}
+	}
+	info!("mining.authorize test ok");
 
-	// "doesnotexist" - error expected
-	let mut response = String::new();
-	let job_req = "{\"id\":\"4\",\"jsonrpc\":\"2.0\",\"method\":\"doesnotexist\"}\n";
-	let ok_resp = "{\"id\":\"4\",\"jsonrpc\":\"2.0\",\"method\":\"doesnotexist\",\"result\":null,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n";
-	workers[3].write(job_req.as_bytes()).unwrap();
-	workers[3].flush().unwrap();
-	thread::sleep(time::Duration::from_secs(1)); // Wait for the server to reply
-	let _st = workers[3].read_line(&mut response);
-	assert_eq!(response.as_str(), ok_resp);
-	info!("worker doesnotexist test ok");
+	{
+		let mut res = String::new();
+		let notify = String::from("mining.notify");
+		match workers[2].read_line(&mut res) {
+			Ok(_) => {
+				let r: Value = serde_json::from_str(&res).unwrap();
+				assert_eq!(r["method"], notify);
+			}
+			Err(_e) => {
+				assert!(false);
+			}
+		}
+		info!("mining.notify broadcasting to workers test ok");
+	}
+
+	{
+		let mut res = String::new();
+		let expected = String::from("mining.set_difficulty");
+		match workers[2].read_line(&mut res) {
+			Ok(_) => {
+				let r: Value = serde_json::from_str(&res).unwrap();
+				assert_eq!(r["method"], expected);
+			}
+			Err(_e) => {
+				assert!(false);
+			}
+		}
+		info!("mining.set_difficulty broadcasting to workers test ok");
+	}
 
 	// Verify stratum server and worker stats
 	let stats = s.get_server_stats().unwrap();
@@ -154,24 +170,41 @@ fn basic_stratum_server() {
 	});
 
 	// Simulate a worker lost connection
-	workers.remove(1);
+	//workers.remove(1);
 
 	// Wait for a few mined blocks
 	thread::sleep(time::Duration::from_secs(3));
 	s.stop_test_miner(stop);
 
-	// Verify blocks are being broadcast to workers
-	let expected = String::from("job");
-	let mut jobtemplate = String::new();
-	let _st = workers[2].read_line(&mut jobtemplate);
-	let job_template: Value = serde_json::from_str(&jobtemplate).unwrap();
-	assert_eq!(job_template["method"], expected);
-	info!("blocks broadcasting to workers test ok");
+	{
+		let mut res = String::new();
+		let expected = String::from("mining.notify");
+		match workers[2].read_line(&mut res) {
+			Ok(_) => {
+				let r: Value = serde_json::from_str(&res).unwrap();
+				assert_eq!(r["method"], expected);
+			}
+			Err(_e) => {
+				assert!(false);
+			}
+		}
+		info!("mining.notify broadcasting to workers test ok");
+	}
 
-	// Verify stratum server and worker stats
-	let stats = s.get_server_stats().unwrap();
-	assert_eq!(stats.stratum_stats.num_workers, 3); // 5 - 2 = 3
-	assert_eq!(stats.stratum_stats.worker_stats[2].is_connected, false); // worker was removed
-	assert_ne!(stats.stratum_stats.block_height, 1);
+	{
+		let mut res = String::new();
+		let expected = String::from("mining.set_difficulty");
+		match workers[2].read_line(&mut res) {
+			Ok(_) => {
+				let r: Value = serde_json::from_str(&res).unwrap();
+				assert_eq!(r["method"], expected);
+			}
+			Err(_e) => {
+				assert!(false);
+			}
+		}
+		info!("mining.set_difficulty broadcasting to workers test ok");
+	}
+
 	info!("basic_stratum_server test done and ok.");
 }

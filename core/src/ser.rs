@@ -21,13 +21,14 @@
 
 use crate::core::hash::{DefaultHashable, Hash, Hashed};
 use crate::keychain::{BlindingFactor, Identifier, IDENTIFIER_SIZE};
+use crate::num_bigint::BigUint;
 use crate::util::read_write::read_exact;
 use crate::util::secp::constants::{
 	AGG_SIGNATURE_SIZE, MAX_PROOF_SIZE, PEDERSEN_COMMITMENT_SIZE, SECRET_KEY_SIZE,
 };
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::secp::Signature;
-use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
+use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt};
 use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::marker;
@@ -133,10 +134,23 @@ pub trait Writer {
 		self.write_fixed_bytes(&bytes)
 	}
 
+	/// Writes a u16 as bytes
+	fn write_u16_le(&mut self, n: u16) -> Result<(), Error> {
+		let mut bytes = [0; 2];
+		LittleEndian::write_u16(&mut bytes, n);
+		self.write_fixed_bytes(&bytes)
+	}
+
 	/// Writes a u32 as bytes
 	fn write_u32(&mut self, n: u32) -> Result<(), Error> {
 		let mut bytes = [0; 4];
 		BigEndian::write_u32(&mut bytes, n);
+		self.write_fixed_bytes(&bytes)
+	}
+	/// Writes a u32 as bytes with little endian
+	fn write_u32_le(&mut self, n: u32) -> Result<(), Error> {
+		let mut bytes = [0; 4];
+		LittleEndian::write_u32(&mut bytes, n);
 		self.write_fixed_bytes(&bytes)
 	}
 
@@ -147,6 +161,13 @@ pub trait Writer {
 		self.write_fixed_bytes(&bytes)
 	}
 
+	/// Writes a i32 as bytes with little endian
+	fn write_i32_le(&mut self, n: i32) -> Result<(), Error> {
+		let mut bytes = [0; 4];
+		LittleEndian::write_i32(&mut bytes, n);
+		self.write_fixed_bytes(&bytes)
+	}
+
 	/// Writes a u64 as bytes
 	fn write_u64(&mut self, n: u64) -> Result<(), Error> {
 		let mut bytes = [0; 8];
@@ -154,10 +175,24 @@ pub trait Writer {
 		self.write_fixed_bytes(&bytes)
 	}
 
+	/// Writes a u64 as bytes with little endian
+	fn write_u64_le(&mut self, n: u64) -> Result<(), Error> {
+		let mut bytes = [0; 8];
+		LittleEndian::write_u64(&mut bytes, n);
+		self.write_fixed_bytes(&bytes)
+	}
+
 	/// Writes a i64 as bytes
 	fn write_i64(&mut self, n: i64) -> Result<(), Error> {
 		let mut bytes = [0; 8];
 		BigEndian::write_i64(&mut bytes, n);
+		self.write_fixed_bytes(&bytes)
+	}
+
+	/// Writes a i64 as bytes with little endian
+	fn write_i64_le(&mut self, n: i64) -> Result<(), Error> {
+		let mut bytes = [0; 8];
+		LittleEndian::write_i64(&mut bytes, n);
 		self.write_fixed_bytes(&bytes)
 	}
 
@@ -180,14 +215,24 @@ pub trait Reader {
 	fn read_u8(&mut self) -> Result<u8, Error>;
 	/// Read a u16 from the underlying Read
 	fn read_u16(&mut self) -> Result<u16, Error>;
+	/// Read a u16 from the underlying Read with litten endian
+	fn read_u16_le(&mut self) -> Result<u16, Error>;
 	/// Read a u32 from the underlying Read
 	fn read_u32(&mut self) -> Result<u32, Error>;
+	/// Read a u32 from the underlying Read with litten endian
+	fn read_u32_le(&mut self) -> Result<u32, Error>;
 	/// Read a u64 from the underlying Read
 	fn read_u64(&mut self) -> Result<u64, Error>;
+	/// Read a u64 from the underlying Read with litten endian
+	fn read_u64_le(&mut self) -> Result<u64, Error>;
 	/// Read a i32 from the underlying Read
 	fn read_i32(&mut self) -> Result<i32, Error>;
+	/// Read a i32 from the underlying Read with litten endian
+	fn read_i32_le(&mut self) -> Result<i32, Error>;
 	/// Read a i64 from the underlying Read
 	fn read_i64(&mut self) -> Result<i64, Error>;
+	/// Read a i64 from the underlying Read with litten endian
+	fn read_i64_le(&mut self) -> Result<i64, Error>;
 	/// Read a u64 len prefix followed by that number of exact bytes.
 	fn read_bytes_len_prefix(&mut self) -> Result<Vec<u8>, Error>;
 	/// Read a fixed number of bytes from the underlying reader.
@@ -310,17 +355,32 @@ impl<'a> Reader for BinReader<'a> {
 	fn read_u16(&mut self) -> Result<u16, Error> {
 		self.source.read_u16::<BigEndian>().map_err(map_io_err)
 	}
+	fn read_u16_le(&mut self) -> Result<u16, Error> {
+		self.source.read_u16::<LittleEndian>().map_err(map_io_err)
+	}
 	fn read_u32(&mut self) -> Result<u32, Error> {
 		self.source.read_u32::<BigEndian>().map_err(map_io_err)
+	}
+	fn read_u32_le(&mut self) -> Result<u32, Error> {
+		self.source.read_u32::<LittleEndian>().map_err(map_io_err)
 	}
 	fn read_i32(&mut self) -> Result<i32, Error> {
 		self.source.read_i32::<BigEndian>().map_err(map_io_err)
 	}
+	fn read_i32_le(&mut self) -> Result<i32, Error> {
+		self.source.read_i32::<LittleEndian>().map_err(map_io_err)
+	}
 	fn read_u64(&mut self) -> Result<u64, Error> {
 		self.source.read_u64::<BigEndian>().map_err(map_io_err)
 	}
+	fn read_u64_le(&mut self) -> Result<u64, Error> {
+		self.source.read_u64::<LittleEndian>().map_err(map_io_err)
+	}
 	fn read_i64(&mut self) -> Result<i64, Error> {
 		self.source.read_i64::<BigEndian>().map_err(map_io_err)
+	}
+	fn read_i64_le(&mut self) -> Result<i64, Error> {
+		self.source.read_i64::<LittleEndian>().map_err(map_io_err)
 	}
 	/// Read a variable size vector from the underlying Read. Expects a usize
 	fn read_bytes_len_prefix(&mut self) -> Result<Vec<u8>, Error> {
@@ -389,8 +449,16 @@ impl<'a> Reader for StreamingReader<'a> {
 		let buf = self.read_fixed_bytes(2)?;
 		deserialize(&mut &buf[..])
 	}
+	fn read_u16_le(&mut self) -> Result<u16, Error> {
+		let buf = self.read_fixed_bytes(2)?;
+		deserialize(&mut &buf[..])
+	}
 
 	fn read_u32(&mut self) -> Result<u32, Error> {
+		let buf = self.read_fixed_bytes(4)?;
+		deserialize(&mut &buf[..])
+	}
+	fn read_u32_le(&mut self) -> Result<u32, Error> {
 		let buf = self.read_fixed_bytes(4)?;
 		deserialize(&mut &buf[..])
 	}
@@ -399,13 +467,25 @@ impl<'a> Reader for StreamingReader<'a> {
 		let buf = self.read_fixed_bytes(4)?;
 		deserialize(&mut &buf[..])
 	}
+	fn read_i32_le(&mut self) -> Result<i32, Error> {
+		let buf = self.read_fixed_bytes(4)?;
+		deserialize(&mut &buf[..])
+	}
 
 	fn read_u64(&mut self) -> Result<u64, Error> {
 		let buf = self.read_fixed_bytes(8)?;
 		deserialize(&mut &buf[..])
 	}
+	fn read_u64_le(&mut self) -> Result<u64, Error> {
+		let buf = self.read_fixed_bytes(8)?;
+		deserialize(&mut &buf[..])
+	}
 
 	fn read_i64(&mut self) -> Result<i64, Error> {
+		let buf = self.read_fixed_bytes(8)?;
+		deserialize(&mut &buf[..])
+	}
+	fn read_i64_le(&mut self) -> Result<i64, Error> {
 		let buf = self.read_fixed_bytes(8)?;
 		deserialize(&mut &buf[..])
 	}
@@ -435,6 +515,25 @@ impl<'a> Reader for StreamingReader<'a> {
 				received: vec![b],
 			})
 		}
+	}
+}
+
+impl Readable for BigUint {
+	fn read(reader: &mut dyn Reader) -> Result<BigUint, Error> {
+		let length = reader.read_u32()?;
+		let data = read_multi(reader, length as u64)?;
+		Ok(BigUint::from_bytes_be(&data))
+	}
+}
+
+impl Writeable for BigUint {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+		let data = self.to_bytes_be();
+		writer.write_u32(data.len() as u32)?;
+		for i in data {
+			writer.write_u8(i)?;
+		}
+		Ok(())
 	}
 }
 

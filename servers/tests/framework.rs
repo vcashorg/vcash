@@ -106,10 +106,10 @@ impl Default for LocalServerContainerConfig {
 		LocalServerContainerConfig {
 			name: String::from("test_host"),
 			base_addr: String::from("127.0.0.1"),
-			api_server_port: 13413,
-			p2p_server_port: 13414,
-			wallet_port: 13415,
-			owner_port: 13420,
+			api_server_port: 13513,
+			p2p_server_port: 13514,
+			wallet_port: 13515,
+			owner_port: 13520,
 			owner_api_include_foreign: false,
 			seed_addr: String::from(""),
 			is_seeding: false,
@@ -665,10 +665,21 @@ pub fn config(n: u16, test_name_dir: &str, seed_n: u16) -> servers::ServerConfig
 pub fn stratum_config() -> servers::common::types::StratumServerConfig {
 	servers::common::types::StratumServerConfig {
 		enable_stratum_server: Some(true),
-		stratum_server_addr: Some(String::from("127.0.0.1:13416")),
+		stratum_server_addr: Some(String::from("127.0.0.1:13516")),
 		attempt_time_per_block: 60,
 		minimum_share_difficulty: 1,
-		wallet_listener_url: String::from("http://127.0.0.1:13415"),
+		wallet_listener_url: String::from("http://127.0.0.1:13515"),
 		burn_reward: false,
+	}
+}
+
+/// return pool server config
+#[allow(dead_code)]
+pub fn pool_server_config() -> servers::common::types::PoolServerConfig {
+	servers::common::types::PoolServerConfig {
+		enable_pool_server: true,
+		pool_server_addr: String::from("127.0.0.1:13517"),
+		wallet_listener_url: None,
+		chain_notify_url: vec![String::from("10.0.0.137:13530/test")],
 	}
 }

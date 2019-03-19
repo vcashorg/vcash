@@ -27,6 +27,8 @@ siphasher = "0.2"
 uuid = { version = "0.6", features = ["serde", "v4"] }
 log = "0.4"
 chrono = "0.4.4"
+digest = "0.7"
+sha2 = "0.7"
 
 grin_keychain = { path = "../keychain", version = "1.0.2" }
 grin_util = { path = "../util", version = "1.0.2" }

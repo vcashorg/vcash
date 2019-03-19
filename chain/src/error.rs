@@ -53,6 +53,15 @@ pub enum ErrorKind {
 	/// The proof of work is invalid
 	#[fail(display = "Invalid PoW")]
 	InvalidPow,
+	/// The proof of work is invalid, coinbase should contains grin head hash
+	#[fail(display = "Invalid bitcoin PoW for Invalid coinbase")]
+	InvalidCoinbase,
+	/// The proof of work is invalid, Merklebranch is not match
+	#[fail(display = "Invalid bitcoin PoW for Invalid Merklebranch")]
+	InvalidMerklebranch,
+	/// The proof of work is invalid, nbits is bad
+	#[fail(display = "Invalid bitcoin PoW for bad-diffbits")]
+	BadBitDiffbits,
 	/// Peer abusively sending us an old block we already have
 	#[fail(display = "Old Block")]
 	OldBlock,

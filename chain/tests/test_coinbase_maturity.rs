@@ -21,6 +21,7 @@ use self::core::pow::Difficulty;
 use self::core::{consensus, pow};
 use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
 use self::util::{Mutex, RwLock, StopState};
+use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
 use chrono::Duration;
 use env_logger;
 use grin_chain as chain;
@@ -67,13 +68,14 @@ fn test_coinbase_maturity() {
 	let key_id4 = ExtKeychainPath::new(1, 4, 0, 0, 0).to_identifier();
 
 	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
-	let reward = libtx::reward::output(&keychain, &key_id1, 0).unwrap();
+	let reward = libtx::reward::output(&keychain, &key_id1, prev.height + 1, 0).unwrap();
 	let mut block = core::core::Block::new(&prev, vec![], Difficulty::min(), reward).unwrap();
 	block.header.timestamp = prev.timestamp + Duration::seconds(60);
 	block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
 
 	chain.set_txhashset_roots(&mut block).unwrap();
 
+	block.header.bits = 0x2100ffff;
 	pow::pow_size(
 		&mut block.header,
 		next_header_info.difficulty,
@@ -85,6 +87,11 @@ fn test_coinbase_maturity() {
 	assert_eq!(block.outputs().len(), 1);
 	let coinbase_output = block.outputs()[0];
 	assert!(coinbase_output.is_coinbase());
+
+	let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
+	block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+	block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
+	block.aux_data.aux_header.nbits = block.header.bits;
 
 	chain
 		.process_block(block.clone(), chain::Options::MINE)
@@ -111,7 +118,7 @@ fn test_coinbase_maturity() {
 
 	let txs = vec![coinbase_txn.clone()];
 	let fees = txs.iter().map(|tx| tx.fee()).sum();
-	let reward = libtx::reward::output(&keychain, &key_id3, fees).unwrap();
+	let reward = libtx::reward::output(&keychain, &key_id3, prev.height + 1, fees).unwrap();
 	let mut block = core::core::Block::new(&prev, txs, Difficulty::min(), reward).unwrap();
 	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 	block.header.timestamp = prev.timestamp + Duration::seconds(60);
@@ -145,7 +152,7 @@ fn test_coinbase_maturity() {
 		let keychain = ExtKeychain::from_random_seed(false).unwrap();
 		let pk = ExtKeychainPath::new(1, 1, 0, 0, 0).to_identifier();
 
-		let reward = libtx::reward::output(&keychain, &pk, 0).unwrap();
+		let reward = libtx::reward::output(&keychain, &pk, prev.height + 1, 0).unwrap();
 		let mut block = core::core::Block::new(&prev, vec![], Difficulty::min(), reward).unwrap();
 		let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 		block.header.timestamp = prev.timestamp + Duration::seconds(60);
@@ -153,6 +160,7 @@ fn test_coinbase_maturity() {
 
 		chain.set_txhashset_roots(&mut block).unwrap();
 
+		block.header.bits = 0x2100ffff;
 		pow::pow_size(
 			&mut block.header,
 			next_header_info.difficulty,
@@ -160,6 +168,11 @@ fn test_coinbase_maturity() {
 			global::min_edge_bits(),
 		)
 		.unwrap();
+
+		let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
+		block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+		block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
+		block.aux_data.aux_header.nbits = block.header.bits;
 
 		chain.process_block(block, chain::Options::MINE).unwrap();
 	}
@@ -173,7 +186,7 @@ fn test_coinbase_maturity() {
 	let txs = vec![coinbase_txn];
 	let fees = txs.iter().map(|tx| tx.fee()).sum();
 	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
-	let reward = libtx::reward::output(&keychain, &key_id4, fees).unwrap();
+	let reward = libtx::reward::output(&keychain, &key_id4, prev.height + 1, fees).unwrap();
 	let mut block = core::core::Block::new(&prev, txs, Difficulty::min(), reward).unwrap();
 
 	block.header.timestamp = prev.timestamp + Duration::seconds(60);
@@ -181,6 +194,7 @@ fn test_coinbase_maturity() {
 
 	chain.set_txhashset_roots(&mut block).unwrap();
 
+	block.header.bits = 0x2100ffff;
 	pow::pow_size(
 		&mut block.header,
 		next_header_info.difficulty,
@@ -188,6 +202,11 @@ fn test_coinbase_maturity() {
 		global::min_edge_bits(),
 	)
 	.unwrap();
+
+	let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
+	block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+	block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
+	block.aux_data.aux_header.nbits = block.header.bits;
 
 	let result = chain.process_block(block, chain::Options::MINE);
 	match result {

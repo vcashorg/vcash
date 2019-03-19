@@ -1,7 +1,7 @@
 [package]
-name = "grin"
+name = "vcash"
 version = "1.0.2"
-authors = ["Grin Developers <mimblewimble@lists.launchpad.net>"]
+authors = ["Vcash Developers <mimblewimble@lists.launchpad.net>"]
 description = "Simple, private and scalable cryptocurrency implementation based on the MimbleWimble chain format."
 license = "Apache-2.0"
 repository = "https://github.com/mimblewimble/grin"
@@ -16,7 +16,7 @@ members = ["api", "chain", "config", "core", "keychain", "p2p", "servers", "stor
 exclude = ["etc/gen_gen"]
 
 [[bin]]
-name = "grin"
+name = "vcash"
 path = "src/bin/grin.rs"
 
 [dependencies]

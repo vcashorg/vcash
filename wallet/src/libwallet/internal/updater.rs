@@ -482,7 +482,7 @@ where
 
 	{
 		// Now acquire the wallet lock and write the new output.
-		let amount = reward(block_fees.fees);
+		let amount = reward(block_fees.height, block_fees.fees);
 		let commit = wallet.calc_commit_for_cache(amount, &key_id)?;
 		let mut batch = wallet.batch()?;
 		batch.save(OutputData {
@@ -512,7 +512,7 @@ where
 
 	debug!("receive_coinbase: {:?}", block_fees);
 
-	let (out, kern) = reward::output(wallet.keychain(), &key_id, block_fees.fees).unwrap();
+	let (out, kern) = reward::output(wallet.keychain(), &key_id, height, block_fees.fees).unwrap();
 	/* .context(ErrorKind::Keychain)?; */
 	Ok((out, kern, block_fees))
 }

@@ -16,7 +16,7 @@
 
 use rand::{thread_rng, Rng};
 
-use crate::core::block::{Block, BlockHeader, Error};
+use crate::core::block::{Block, BlockAuxData, BlockHeader, Error};
 use crate::core::hash::{DefaultHashable, Hashed};
 use crate::core::id::ShortIdentifiable;
 use crate::core::{Output, ShortId, TxKernel};
@@ -134,6 +134,7 @@ pub struct CompactBlock {
 	/// Nonce for connection specific short_ids
 	pub nonce: u64,
 	/// Container for out_full, kern_full and kern_ids in the compact block.
+	pub aux_data: BlockAuxData,
 	body: CompactBlockBody,
 }
 
@@ -165,6 +166,7 @@ impl CompactBlock {
 impl From<Block> for CompactBlock {
 	fn from(block: Block) -> Self {
 		let header = block.header.clone();
+		let aux_data = block.aux_data.clone();
 		let nonce = thread_rng().gen();
 
 		let out_full = block
@@ -192,6 +194,7 @@ impl From<Block> for CompactBlock {
 		CompactBlock {
 			header,
 			nonce,
+			aux_data,
 			body,
 		}
 	}
@@ -206,6 +209,7 @@ impl Writeable for CompactBlock {
 
 		if writer.serialization_mode() != ser::SerializationMode::Hash {
 			writer.write_u64(self.nonce)?;
+			self.aux_data.write(writer)?;
 			self.body.write(writer)?;
 		}
 
@@ -219,11 +223,13 @@ impl Readable for CompactBlock {
 	fn read(reader: &mut dyn Reader) -> Result<CompactBlock, ser::Error> {
 		let header = BlockHeader::read(reader)?;
 		let nonce = reader.read_u64()?;
+		let aux_data = BlockAuxData::read(reader)?;
 		let body = CompactBlockBody::read(reader)?;
 
 		let cb = CompactBlock {
 			header,
 			nonce,
+			aux_data,
 			body,
 		};
 

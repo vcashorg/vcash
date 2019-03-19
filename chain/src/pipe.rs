@@ -19,13 +19,14 @@ use crate::core::consensus;
 use crate::core::core::hash::Hashed;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::Committed;
-use crate::core::core::{Block, BlockHeader, BlockSums};
+use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader, BlockSums};
 use crate::core::global;
-use crate::core::pow;
+use crate::core::pow::{self, compact_to_biguint, hash_to_biguint};
 use crate::error::{Error, ErrorKind};
 use crate::store;
 use crate::txhashset;
 use crate::types::{Options, Tip};
+use crate::util;
 use crate::util::RwLock;
 use chrono::prelude::Utc;
 use chrono::Duration;
@@ -69,6 +70,72 @@ fn process_header_for_block(
 	validate_header(header, ctx)?;
 	add_block_header(header, &ctx.batch)?;
 	update_header_head(header, ctx)?;
+
+	Ok(())
+}
+
+fn validate_block_auxdata(b: &Block, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
+	//prevent dos attack
+	if b.header.bits > global::min_bit_diff() {
+		return Err(ErrorKind::DifficultyTooLow.into());
+	}
+
+	//1,btc_header difficulty is bigger enough
+	let btc_header_hash = b.aux_data.aux_header.dhash();
+	let cur_diff = hash_to_biguint(btc_header_hash);
+	let target_diff_option = compact_to_biguint(b.header.bits);
+	if target_diff_option.is_none() {
+		return Err(ErrorKind::DifficultyTooLow.into());
+	}
+
+	let target_diff = target_diff_option.unwrap();
+	if cur_diff > target_diff {
+		return Err(ErrorKind::DifficultyTooLow.into());
+	}
+
+	//2,grin_header_hash is in btc_coinbase
+	let coinbase_str = util::to_hex(b.aux_data.coinbase_tx.clone());
+	let target_str = get_grin_magic_data_str(b.header.hash());
+	if !coinbase_str.contains(target_str.as_str()) {
+		return Err(ErrorKind::InvalidCoinbase.into());
+	}
+
+	// 3,btc_merkle_branch is valid
+	let hash_vec = b.aux_data.merkle_branch.clone();
+	let mut hash_value = b.aux_data.coinbase_tx.clone().dhash();
+	for hashitem in hash_vec {
+		hash_value = hash_value.dhash_with(hashitem);
+	}
+	if !(hash_value == b.aux_data.aux_header.merkle_root) {
+		return Err(ErrorKind::InvalidMerklebranch.into());
+	}
+
+	// 4, diff context validate
+	let pre_header = prev_header_store(&b.header, &mut ctx.batch)?;
+	let nbits = if (pre_header.height + 1) % consensus::DIFFICULTY_ADJUST_WINDOW != 0 {
+		pre_header.bits
+	} else {
+		let start_height = if pre_header.height >= (consensus::DIFFICULTY_ADJUST_WINDOW - 1) {
+			pre_header.height - (consensus::DIFFICULTY_ADJUST_WINDOW - 1)
+		} else {
+			0
+		};
+		let start_hash = ctx
+			.txhashset
+			.get_header_hash_by_height(start_height)
+			.unwrap();
+		let start_head = ctx.batch.get_block_header(&start_hash).unwrap();
+		consensus::next_bit_difficulty(
+			pre_header.height,
+			pre_header.bits,
+			pre_header.timestamp.timestamp(),
+			start_head.timestamp.timestamp(),
+		)
+	};
+
+	if nbits != b.header.bits {
+		return Err(ErrorKind::BadBitDiffbits.into());
+	}
 
 	Ok(())
 }
@@ -118,6 +185,9 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	// This is a fork in the context of both header and block processing
 	// if this block does not immediately follow the chain head.
 	let is_fork = !is_next;
+
+	//Validate bitcoin header's diff is enough first
+	validate_block_auxdata(b, ctx)?;
 
 	// Check the header is valid before we proceed with the full block.
 	process_header_for_block(&b.header, is_fork, ctx)?;
