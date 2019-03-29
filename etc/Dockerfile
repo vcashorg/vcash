@@ -37,7 +37,7 @@ COPY --from=builder /usr/src/grin/target/release/grin /usr/local/bin/grin
 
 WORKDIR /root/.grin
 
-RUN grin server config && \
+RUN vcash server config && \
     sed -i -e 's/run_tui = true/run_tui = false/' vcash-server.toml
 
 VOLUME ["/root/.grin"]

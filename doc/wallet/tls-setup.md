@@ -64,7 +64,7 @@ Congratulations! Your certificate and chain have been saved at:
 ```
 
 ### Change permissions
-Now you have the certificate files but only root user can read it. We run grin as `ubuntu` user. There are different scenarios how to fix it, the simplest one is to create a group which will have access to `/etc/letsencrypt` directory and add our user to this group.
+Now you have the certificate files but only root user can read it. We run vcash as `ubuntu` user. There are different scenarios how to fix it, the simplest one is to create a group which will have access to `/etc/letsencrypt` directory and add our user to this group.
 
 ```sh
 sudo groupadd tls-cert

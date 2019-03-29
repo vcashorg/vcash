@@ -37,7 +37,7 @@ COPY --from=builder /usr/src/grin/target/release/grin /usr/local/bin/grin
 
 WORKDIR /root/.grin
 
-RUN grin --floonet server config && \
+RUN vcash --floonet server config && \
     sed -i -e 's/run_tui = true/run_tui = false/' vcash-server.toml
 
 VOLUME ["/root/.grin"]

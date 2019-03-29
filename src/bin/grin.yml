@@ -5,16 +5,16 @@ author: The Vcash Team
 
 args:
   - floonet:
-      help: Run grin against the Floonet (as opposed to mainnet)
+      help: Run vcash against the Floonet (as opposed to mainnet)
       long: floonet
       takes_value: false
   - usernet:
-      help: Run grin as a local-only network. Doesn't block peer connections but will not connect to any peer or seed
+      help: Run vcash as a local-only network. Doesn't block peer connections but will not connect to any peer or seed
       long: usernet
       takes_value: false
 subcommands:
   - server:
-      about: Control the Grin server
+      about: Control the Vcash server
       args:
         - config_file:
             help: Path to a vcash-server.toml configuration file
@@ -45,12 +45,12 @@ subcommands:
         - config:
             about: Generate a configuration vcash-server.toml file in the current directory
         - run:
-            about: Run the Grin server in this console
+            about: Run the Vcash server in this console
   - client:
-      about: Communicates with the Grin server
+      about: Communicates with the Vcash server
       subcommands:
         - status:
-            about: Current status of the Grin chain
+            about: Current status of the Vcash chain
         - listconnectedpeers:
             about: Print a list of currently connected peers
         - ban:
@@ -72,7 +72,7 @@ subcommands:
                   required: true
                   takes_value: true
   - wallet:
-      about: Wallet software for Grin
+      about: Wallet software for Vcash
       args:
         - pass:
             help: Wallet passphrase used to encrypt wallet seed
@@ -275,7 +275,7 @@ subcommands:
             about: Initialize a new wallet seed file and database
             args:
               - here:
-                  help: Create wallet files in the current directory instead of the default ~/.grin directory
+                  help: Create wallet files in the current directory instead of the default ~/.vcash directory
                   short: h
                   long: here
                   takes_value: false

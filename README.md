@@ -19,10 +19,6 @@ VCash adopts Merged Mining method to mine coins alongside Bitcoin, that is, VCas
 
 The goal of VCash is to be the most private and secure chain for storing values.
 
-## Status
-
-VCash is live with mainnet. Still, much is left to be done and [contributions](CONTRIBUTING.md) are welcome (see below). Check our [mailing list archives](https://lists.launchpad.net/mimblewimble/) for the latest status.
-
 ## Getting Started
 
 To learn more about the technology, read our [introduction](doc/intro.md).
