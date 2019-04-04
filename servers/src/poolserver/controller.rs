@@ -25,13 +25,6 @@ pub fn start_pool_server(
 	let api_handler = OwnerAPIHandler::new(handler.clone());
 
 	let mut router = Router::new();
-	//    if api_secret.is_some() {
-	//        let api_basic_auth =
-	//            "Basic ".to_string() + &to_base64(&("grin:".to_string() + &api_secret.unwrap()));
-	//        let basic_realm = "Basic realm=GrinOwnerAPI".to_string();
-	//        let basic_auth_middleware = Arc::new(BasicAuthMiddleware::new(api_basic_auth, basic_realm));
-	//        router.add_middleware(basic_auth_middleware);
-	//    }
 	router
 		.add_route("/v1/pool/**", Arc::new(api_handler))
 		.map_err(|e| format!("pool center add route failed,reason:{}", e).to_string())?;

@@ -21,7 +21,7 @@ fn comments() -> HashMap<String, String> {
 	retval.insert(
 		"[server]".to_string(),
 		"
-# Generated Server Configuration File for Grin
+# Generated Server Configuration File for Vcash
 #
 # When running the grin executable without specifying any command line
 # arguments, it will look for this file in two places, in the following
@@ -195,14 +195,6 @@ fn comments() -> HashMap<String, String> {
 		"pool_server_addr".to_string(),
 		"
 #the address on which pool server will listen
-"
-		.to_string(),
-	);
-
-	retval.insert(
-		"pool_server_wallet_url".to_string(),
-		"
-#pool server wallet URL
 "
 		.to_string(),
 	);
@@ -570,7 +562,7 @@ fn comments() -> HashMap<String, String> {
 }
 
 fn get_key(line: &str) -> String {
-	if line.contains("[") && line.contains("]") {
+	if line.contains("[") && line.contains("]") && !line.contains("=") {
 		return line.to_owned();
 	} else if line.contains("=") {
 		return line.split("=").collect::<Vec<&str>>()[0].trim().to_owned();
