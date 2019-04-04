@@ -8,7 +8,6 @@ use std::sync::Arc;
 mod controller;
 mod error;
 mod handle_block;
-mod types;
 
 pub use controller::SubmitInfo;
 pub use handle_block::JobInfo;

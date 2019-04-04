@@ -1,4 +1,4 @@
-use crate::poolserver::types::Error;
+use crate::common::types::Error;
 use crate::util::{Mutex, RwLock, StopState};
 use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 use rand::{thread_rng, Rng};
@@ -416,12 +416,20 @@ impl BlockHandler {
 			}
 			Some(wallet_listener_url) => {
 				let res = wallet::create_coinbase(&wallet_listener_url, &block_fees)?;
-				let out_bin = util::from_hex(res.output).unwrap();
-				let kern_bin = util::from_hex(res.kernel).unwrap();
-				let key_id_bin = util::from_hex(res.key_id).unwrap();
-				let output = ser::deserialize(&mut &out_bin[..]).unwrap();
-				let kernel = ser::deserialize(&mut &kern_bin[..]).unwrap();
-				let key_id = ser::deserialize(&mut &key_id_bin[..]).unwrap();
+				let out_bin = util::from_hex(res.output)
+					.map_err(|_| Error::General("failed to parse hex output".to_owned()))?;
+				let kern_bin = util::from_hex(res.kernel)
+					.map_err(|_| Error::General("failed to parse hex kernel".to_owned()))?;
+
+				let key_id_bin = util::from_hex(res.key_id)
+					.map_err(|_| Error::General("failed to parse hex key id".to_owned()))?;
+				let output = ser::deserialize(&mut &out_bin[..])
+					.map_err(|_| Error::General("failed to deserialize output".to_owned()))?;
+
+				let kernel = ser::deserialize(&mut &kern_bin[..])
+					.map_err(|_| Error::General("failed to deserialize kernel".to_owned()))?;
+				let key_id = ser::deserialize(&mut &key_id_bin[..])
+					.map_err(|_| Error::General("failed to deserialize key id".to_owned()))?;
 				let block_fees = BlockFees {
 					key_id: Some(key_id),
 					..block_fees
