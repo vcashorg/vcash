@@ -252,6 +252,7 @@ impl BlockHandler {
 						debug!(
                             "Duplicate commit for potential coinbase detected. Trying next derivation."
                         );
+						*self.key_id.write() = None;
 					}
 					_ => {
 						error!("Chain Error: {}", c);
