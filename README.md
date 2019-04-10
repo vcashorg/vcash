@@ -21,6 +21,8 @@ To learn more about the technology, read our [introduction](doc/intro.md).
 
 To build and try out Vcash, see the [build docs](doc/build.md).
 
+For Pool who wants to mine Vcash, see the [mergedmining docs](doc/pool_merge_mining.md).
+
 ## Credits
 
 Tom Elvis Jedusor for the first formulation of MimbleWimble.

@@ -132,3 +132,5 @@ troubleshooting, etc.
 
 For vcash-miner to be able to communicate with your vcash node, make sure that you have `enable_stratum_server = true`
 in your `vcash-server.toml` configuration file and you have a wallet listener running (`vcash wallet listen`).
+
+For pool, similarly, make sure you have `enable_pool_server = true` in your `vcash-server.toml` and a wallet listener running.
