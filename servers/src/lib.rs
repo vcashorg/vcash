@@ -45,6 +45,6 @@ mod webwallet;
 pub use crate::common::stats::{DiffBlock, PeerStats, ServerStats, StratumStats, WorkerStats};
 pub use crate::common::types::{ServerConfig, StratumServerConfig};
 pub use crate::grin::server::Server;
-pub use crate::poolserver::JobInfo;
-pub use crate::poolserver::SubmitInfo;
+pub use crate::poolserver::controller::SubmitInfo;
+pub use crate::poolserver::handle_block::JobInfo;
 pub use crate::webwallet::server::start_webwallet_server;

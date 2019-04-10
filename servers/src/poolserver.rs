@@ -5,12 +5,9 @@ use crate::pool;
 use crate::util::{Mutex, RwLock, StopState};
 use std::sync::Arc;
 
-mod controller;
+pub mod controller;
 mod error;
-mod handle_block;
-
-pub use controller::SubmitInfo;
-pub use handle_block::JobInfo;
+pub mod handle_block;
 
 pub fn start_poolserver_service(
 	chain: Arc<chain::Chain>,

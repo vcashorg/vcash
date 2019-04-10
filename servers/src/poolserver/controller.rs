@@ -105,7 +105,7 @@ impl OwnerAPIHandler {
 					parse_body(req)
 						.and_then(move |job_info: SubmitInfo| {
 							let header_hash_result = Hash::from_hex(job_info.header_hash.as_str());
-							let mut block_data_ref: Option<Block>;
+							let block_data_ref: Option<Block>;
 							match header_hash_result.clone() {
 								Ok(header_hash) => {
 									let result =

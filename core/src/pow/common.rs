@@ -218,7 +218,7 @@ pub fn biguint_to_hash(bignum: BigUint) -> BitHash {
 
 /// compact convert to biguint
 pub fn compact_to_biguint(nbits: u32) -> Option<BigUint> {
-	let mut bignum: Option<BigUint>;
+	let bignum: Option<BigUint>;
 	let size = nbits >> 24;
 	let mut word = nbits & 0x007fffff;
 	if size <= 3 {
