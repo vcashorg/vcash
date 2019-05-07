@@ -465,10 +465,11 @@ impl StratumServer {
 		submit_block.aux_data.coinbase_tx = coin_base_data.unwrap();
 		submit_block.aux_data.aux_header.version = 0;
 		submit_block.aux_data.aux_header.prev_hash = ZERO_HASH;
-		submit_block.aux_data.aux_header.merkle_root = submit_block.aux_data.coinbase_tx.dhash();
+		submit_block.aux_data.aux_header.merkle_root = submit_block.aux_data.coinbase_tx.dhash().dhash_with(ZERO_HASH);
 		submit_block.aux_data.aux_header.mine_time = timestamp;
 		submit_block.aux_data.aux_header.nbits = block.header.bits;
 		submit_block.aux_data.aux_header.nonce = nounce;
+		submit_block.aux_data.merkle_branch = vec![ZERO_HASH];
 
 		let btc_header_hash = submit_block.aux_data.aux_header.dhash();
 		let cur_diff = hash_to_biguint(btc_header_hash);
@@ -556,7 +557,7 @@ impl StratumServer {
 		let job_template = self.build_block_template();
 
 		let mut ret: Vec<Value> = Vec::new();
-		let merkle_branch: Vec<String> = Vec::new();
+		let merkle_branch: Vec<String> = vec![ZERO_HASH.to_hex()];
 		ret.push(serde_json::to_value(job_template.job_id.clone()).unwrap());
 		ret.push(serde_json::to_value(job_template.pre_hash).unwrap());
 		ret.push(serde_json::to_value(job_template.coinbase1).unwrap());
