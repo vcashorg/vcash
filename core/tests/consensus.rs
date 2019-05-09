@@ -15,6 +15,7 @@
 use grin_core as core;
 
 use self::core::consensus::*;
+use self::core::core::block::HeaderVersion;
 use self::core::global;
 use self::core::pow::Difficulty;
 use chrono::prelude::Utc;

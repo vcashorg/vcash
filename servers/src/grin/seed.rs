@@ -19,7 +19,8 @@
 
 use chrono::prelude::{DateTime, Utc};
 use chrono::{Duration, MIN_DATE};
-use rand::{thread_rng, Rng};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::{mpsc, Arc};
@@ -29,7 +30,6 @@ use crate::core::global;
 use crate::p2p;
 use crate::p2p::types::PeerAddr;
 use crate::p2p::ChainAdapter;
-use crate::pool::DandelionConfig;
 use crate::util::{Mutex, StopState};
 
 // DNS Seeds with contact email associated
@@ -49,7 +49,6 @@ const FLOONET_DNS_SEEDS: &'static [&'static str] = &[
 pub fn connect_and_monitor(
 	p2p_server: Arc<p2p::Server>,
 	capabilities: p2p::Capabilities,
-	dandelion_config: DandelionConfig,
 	seed_list: Box<dyn Fn() -> Vec<PeerAddr> + Send>,
 	preferred_peers: Option<Vec<PeerAddr>>,
 	stop_state: Arc<Mutex<StopState>>,
@@ -116,8 +115,6 @@ pub fn connect_and_monitor(
 						preferred_peers.clone(),
 					);
 
-					update_dandelion_relay(peers.clone(), dandelion_config.clone());
-
 					prev = Utc::now();
 					start_attempt = cmp::min(6, start_attempt + 1);
 				}
@@ -126,8 +123,12 @@ pub fn connect_and_monitor(
 				if Utc::now() - prev_ping > Duration::seconds(10) {
 					let total_diff = peers.total_difficulty();
 					let total_height = peers.total_height();
-					peers.check_all(total_diff, total_height);
-					prev_ping = Utc::now();
+					if total_diff.is_ok() && total_height.is_ok() {
+						peers.check_all(total_diff.unwrap(), total_height.unwrap());
+						prev_ping = Utc::now();
+					} else {
+						error!("failed to get peers difficulty and/or height");
+					}
 				}
 
 				thread::sleep(time::Duration::from_secs(1));
@@ -218,7 +219,7 @@ fn monitor_peers(
 	// take a random defunct peer and mark it healthy: over a long period any
 	// peer will see another as defunct eventually, gives us a chance to retry
 	if defuncts.len() > 0 {
-		thread_rng().shuffle(&mut defuncts);
+		defuncts.shuffle(&mut thread_rng());
 		let _ = peers.update_state(defuncts[0].addr, p2p::State::Healthy);
 	}
 
@@ -238,21 +239,6 @@ fn monitor_peers(
 			p.addr,
 		);
 		tx.send(p.addr).unwrap();
-	}
-}
-
-fn update_dandelion_relay(peers: Arc<p2p::Peers>, dandelion_config: DandelionConfig) {
-	// Dandelion Relay Updater
-	let dandelion_relay = peers.get_dandelion_relay();
-	if let Some((last_added, _)) = dandelion_relay {
-		let dandelion_interval = Utc::now().timestamp() - last_added;
-		if dandelion_interval >= dandelion_config.relay_secs() as i64 {
-			debug!("monitor_peers: updating expired dandelion relay");
-			peers.update_dandelion_relay();
-		}
-	} else {
-		debug!("monitor_peers: no dandelion relay updating");
-		peers.update_dandelion_relay();
 	}
 }
 

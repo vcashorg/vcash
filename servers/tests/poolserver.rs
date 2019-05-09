@@ -15,17 +15,15 @@
 #[macro_use]
 extern crate log;
 
-mod framework;
-
 use self::core::global::{self, ChainTypes};
 use crate::core::core::get_grin_magic_data_str;
 use crate::core::core::hash::{Hash, Hashed};
-use crate::framework::{config, pool_server_config};
 use crate::servers::JobInfo;
 use crate::servers::SubmitInfo;
 use bufstream::BufStream;
 use grin_api as api;
 use grin_core as core;
+use grin_p2p as p2p;
 use grin_core::core::{AuxBitHeader, BlockAuxData};
 use grin_servers as servers;
 use grin_util as util;
@@ -36,7 +34,50 @@ use std::io::prelude::{BufRead, Write};
 use std::net::TcpStream;
 use std::process;
 use std::sync::Arc;
-use std::{thread, time};
+use std::{fs, thread, time};
+use self::p2p::PeerAddr;
+
+
+/// return pool server config
+#[allow(dead_code)]
+pub fn pool_server_config() -> servers::common::types::PoolServerConfig {
+	servers::common::types::PoolServerConfig {
+		enable_pool_server: true,
+		pool_server_addr: String::from("127.0.0.1:13517"),
+		wallet_listener_url: None,
+		chain_notify_url: vec![String::from("10.0.0.137:13530/test")],
+	}
+}
+
+/// Just removes all results from previous runs
+pub fn clean_all_output(test_name_dir: &str) {
+	let target_dir = format!("target/tmp/{}", test_name_dir);
+	if let Err(e) = fs::remove_dir_all(target_dir) {
+		println!("can't remove output from previous test :{}, may be ok", e);
+	}
+}
+
+/// Create and return a ServerConfig
+#[allow(dead_code)]
+pub fn config(n: u16, test_name_dir: &str, seed_n: u16) -> servers::ServerConfig {
+	servers::ServerConfig {
+		api_http_addr: format!("127.0.0.1:{}", 20000 + n),
+		api_secret_path: None,
+		db_root: format!("target/tmp/{}/grin-sync-{}", test_name_dir, n),
+		p2p_config: p2p::P2PConfig {
+			port: 10000 + n,
+			seeding_type: p2p::Seeding::List,
+			seeds: Some(vec![PeerAddr(
+				format!("127.0.0.1:{}", 10000 + seed_n).parse().unwrap(),
+			)]),
+			..p2p::P2PConfig::default()
+		},
+		chain_type: core::global::ChainTypes::AutomatedTesting,
+		archive_mode: Some(true),
+		skip_sync_wait: Some(true),
+		..Default::default()
+	}
+}
 
 // Create a grin server, and a pool server.
 // Simulate a few JSONRpc requests and verify the results.
@@ -48,7 +89,7 @@ fn test_pool_server() {
 	global::set_mining_mode(ChainTypes::AutomatedTesting);
 
 	let test_name_dir = "pool_server";
-	framework::clean_all_output(test_name_dir);
+	clean_all_output(test_name_dir);
 
 	// Create a server
 	let s = servers::Server::new(config(4000, test_name_dir, 0)).unwrap();
