@@ -180,26 +180,26 @@ fn mine_forks() {
 		let chain = setup(".grin2", pow::mine_genesis_block().unwrap());
 		let kc = ExtKeychain::from_random_seed(false).unwrap();
 
-	    // add a first block to not fork genesis
-	    let prev = chain.head_header().unwrap();
-	    let mut b = prepare_block(&kc, &prev, &chain, 2);
-	    get_block_bit_diff(&mut b);
-	    chain.process_block(b, chain::Options::SKIP_POW).unwrap();
+		// add a first block to not fork genesis
+		let prev = chain.head_header().unwrap();
+		let mut b = prepare_block(&kc, &prev, &chain, 2);
+		get_block_bit_diff(&mut b);
+		chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 
 		// mine and add a few blocks
 
-	    for n in 1..4 {
-		    // first block for one branch
-		    let prev = chain.head_header().unwrap();
-		    let mut b1 = prepare_block(&kc, &prev, &chain, 3 * n);
+		for n in 1..4 {
+			// first block for one branch
+			let prev = chain.head_header().unwrap();
+			let mut b1 = prepare_block(&kc, &prev, &chain, 3 * n);
 
-		    // 2nd block with higher difficulty for other branch
-		    let mut b2 = prepare_block(&kc, &prev, &chain, 3 * n + 1);
+			// 2nd block with higher difficulty for other branch
+			let mut b2 = prepare_block(&kc, &prev, &chain, 3 * n + 1);
 
-		    // process the first block to extend the chain
-		    let bhash = b1.hash();
-		    get_block_bit_diff(&mut b1);
-		    chain.process_block(b1, chain::Options::SKIP_POW).unwrap();
+			// process the first block to extend the chain
+			let bhash = b1.hash();
+			get_block_bit_diff(&mut b1);
+			chain.process_block(b1, chain::Options::SKIP_POW).unwrap();
 
 			// checking our new head
 			let head = chain.head().unwrap();
@@ -207,10 +207,10 @@ fn mine_forks() {
 			assert_eq!(head.last_block_h, bhash);
 			assert_eq!(head.prev_block_h, prev.hash());
 
-		    // process the 2nd block to build a fork with more work
-		    let bhash = b2.hash();
-		    get_block_bit_diff(&mut b2);
-		    chain.process_block(b2, chain::Options::SKIP_POW).unwrap();
+			// process the 2nd block to build a fork with more work
+			let bhash = b2.hash();
+			get_block_bit_diff(&mut b2);
+			chain.process_block(b2, chain::Options::SKIP_POW).unwrap();
 
 			// checking head switch
 			let head = chain.head().unwrap();
@@ -235,25 +235,25 @@ fn mine_losing_fork() {
 		let mut b1 = prepare_block(&kc, &prev, &chain, 2);
 		let b1head = b1.header.clone();
 
-        get_block_bit_diff(&mut b1);
+		get_block_bit_diff(&mut b1);
 		chain.process_block(b1, chain::Options::SKIP_POW).unwrap();
 
 		// prepare the 2 successor, sibling blocks, one with lower diff
 		let mut b2 = prepare_block(&kc, &b1head, &chain, 4);
 		let b2head = b2.header.clone();
 		let mut bfork = prepare_block(&kc, &b1head, &chain, 3);
-        get_block_bit_diff(&mut bfork);
+		get_block_bit_diff(&mut bfork);
 
-	    get_block_bit_diff(&mut b2);
-	    // add higher difficulty first, prepare its successor, then fork
-	    // with lower diff
-	    chain.process_block(b2, chain::Options::SKIP_POW).unwrap();
-	    assert_eq!(chain.head_header().unwrap().hash(), b2head.hash());
-	    let mut b3 = prepare_block(&kc, &b2head, &chain, 5);
-	    get_block_bit_diff(&mut b3);
-	    chain
-		    .process_block(bfork, chain::Options::SKIP_POW)
-		    .unwrap();
+		get_block_bit_diff(&mut b2);
+		// add higher difficulty first, prepare its successor, then fork
+		// with lower diff
+		chain.process_block(b2, chain::Options::SKIP_POW).unwrap();
+		assert_eq!(chain.head_header().unwrap().hash(), b2head.hash());
+		let mut b3 = prepare_block(&kc, &b2head, &chain, 5);
+		get_block_bit_diff(&mut b3);
+		chain
+			.process_block(bfork, chain::Options::SKIP_POW)
+			.unwrap();
 
 		// adding the successor
 		let b3head = b3.header.clone();
@@ -281,7 +281,7 @@ fn longer_fork() {
 		for n in 0..10 {
 			let mut b = prepare_block(&kc, &prev, &chain, 2 * n + 2);
 			prev = b.header.clone();
-            get_block_bit_diff(&mut b);
+			get_block_bit_diff(&mut b);
 			chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 		}
 
@@ -295,7 +295,7 @@ fn longer_fork() {
 		for n in 0..7 {
 			let mut b = prepare_fork_block(&kc, &prev, &chain, 2 * n + 11);
 			prev = b.header.clone();
-            get_block_bit_diff(&mut b);
+			get_block_bit_diff(&mut b);
 			chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 		}
 
@@ -327,7 +327,7 @@ fn spend_in_fork_and_compact() {
 		let out_id = OutputIdentifier::from_output(&b.outputs()[0]);
 		assert!(out_id.features.is_coinbase());
 		fork_head = b.header.clone();
-        get_block_bit_diff(&mut b);
+		get_block_bit_diff(&mut b);
 		chain
 			.process_block(b.clone(), chain::Options::SKIP_POW)
 			.unwrap();
@@ -336,7 +336,7 @@ fn spend_in_fork_and_compact() {
 		for n in 3..6 {
 			let mut b = prepare_block(&kc, &fork_head, &chain, n);
 			fork_head = b.header.clone();
-            get_block_bit_diff(&mut b);
+			get_block_bit_diff(&mut b);
 			chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 		}
 
@@ -358,7 +358,7 @@ fn spend_in_fork_and_compact() {
 
 		let mut next = prepare_block_tx(&kc, &fork_head, &chain, 7, vec![&tx1]);
 		let prev_main = next.header.clone();
-        get_block_bit_diff(&mut next);
+		get_block_bit_diff(&mut next);
 		chain
 			.process_block(next.clone(), chain::Options::SKIP_POW)
 			.unwrap();
@@ -376,7 +376,7 @@ fn spend_in_fork_and_compact() {
 
 		let mut next = prepare_block_tx(&kc, &prev_main, &chain, 9, vec![&tx2]);
 		let prev_main = next.header.clone();
-        get_block_bit_diff(&mut next);
+		get_block_bit_diff(&mut next);
 		chain.process_block(next, chain::Options::SKIP_POW).unwrap();
 
 		// Full chain validation for completeness.
@@ -385,12 +385,12 @@ fn spend_in_fork_and_compact() {
 		// mine 2 forked blocks from the first
 		let mut fork = prepare_fork_block_tx(&kc, &fork_head, &chain, 6, vec![&tx1]);
 		let prev_fork = fork.header.clone();
-        get_block_bit_diff(&mut fork);
+		get_block_bit_diff(&mut fork);
 		chain.process_block(fork, chain::Options::SKIP_POW).unwrap();
 
 		let mut fork_next = prepare_fork_block_tx(&kc, &prev_fork, &chain, 8, vec![&tx2]);
 		let prev_fork = fork_next.header.clone();
-        get_block_bit_diff(&mut fork_next);
+		get_block_bit_diff(&mut fork_next);
 		chain
 			.process_block(fork_next, chain::Options::SKIP_POW)
 			.unwrap();
@@ -411,7 +411,7 @@ fn spend_in_fork_and_compact() {
 		// make the fork win
 		let mut fork_next = prepare_fork_block(&kc, &prev_fork, &chain, 10);
 		let prev_fork = fork_next.header.clone();
-        get_block_bit_diff(&mut fork_next);
+		get_block_bit_diff(&mut fork_next);
 		chain
 			.process_block(fork_next, chain::Options::SKIP_POW)
 			.unwrap();
@@ -433,7 +433,7 @@ fn spend_in_fork_and_compact() {
 		for n in 0..20 {
 			let mut next = prepare_block(&kc, &prev, &chain, 11 + n);
 			prev = next.header.clone();
-            get_block_bit_diff(&mut next);
+			get_block_bit_diff(&mut next);
 			chain.process_block(next, chain::Options::SKIP_POW).unwrap();
 		}
 
@@ -481,7 +481,7 @@ fn output_header_mappings() {
 				global::min_edge_bits()
 			};
 			b.header.pow.proof.edge_bits = edge_bits;
-            b.header.bits = 0x2100ffff;
+			b.header.bits = 0x2100ffff;
 			pow::pow_size(
 				&mut b.header,
 				next_header_info.difficulty,
@@ -491,10 +491,10 @@ fn output_header_mappings() {
 			.unwrap();
 			b.header.pow.proof.edge_bits = edge_bits;
 
-		    let coin_base_str = core::core::get_grin_magic_data_str(b.header.hash());
-		    b.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
-		    b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
-		    b.aux_data.aux_header.nbits = b.header.bits;
+			let coin_base_str = core::core::get_grin_magic_data_str(b.header.hash());
+			b.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+			b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
+			b.aux_data.aux_header.nbits = b.header.bits;
 
 			chain.process_block(b, chain::Options::MINE).unwrap();
 

@@ -84,7 +84,7 @@ impl Server {
 		let enable_test_miner = config.run_test_miner;
 		let test_miner_wallet_url = config.test_miner_wallet_url.clone();
 		let pool_server_config = config.pool_server_config.clone();
-        let serv = Server::new(config)?;
+		let serv = Server::new(config)?;
 
 		if let Some(c) = mining_config {
 			let enable_stratum_server = c.enable_stratum_server;
@@ -109,8 +109,8 @@ impl Server {
 			serv.start_pool_server(pool_server_config);
 		}
 
-        info_callback(serv);
-        Ok(())
+		info_callback(serv);
+		Ok(())
 	}
 
 	// Exclusive (advisory) lock_file to ensure we do not run multiple

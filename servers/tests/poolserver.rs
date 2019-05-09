@@ -16,6 +16,7 @@
 extern crate log;
 
 use self::core::global::{self, ChainTypes};
+use self::p2p::PeerAddr;
 use crate::core::core::get_grin_magic_data_str;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::servers::JobInfo;
@@ -23,8 +24,8 @@ use crate::servers::SubmitInfo;
 use bufstream::BufStream;
 use grin_api as api;
 use grin_core as core;
-use grin_p2p as p2p;
 use grin_core::core::{AuxBitHeader, BlockAuxData};
+use grin_p2p as p2p;
 use grin_servers as servers;
 use grin_util as util;
 use grin_util::{Mutex, StopState};
@@ -35,8 +36,6 @@ use std::net::TcpStream;
 use std::process;
 use std::sync::Arc;
 use std::{fs, thread, time};
-use self::p2p::PeerAddr;
-
 
 /// return pool server config
 #[allow(dead_code)]

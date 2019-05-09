@@ -40,14 +40,15 @@ fn test_transaction_pool_block_building() {
 
 		let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 
-	// Initialize the chain/txhashset with an initial block
-	// so we have a non-empty UTXO set.
-	let add_block = |prev_header: BlockHeader, txs: Vec<Transaction>, chain: &mut ChainAdapter| {
-		let height = prev_header.height + 1;
-		let key_id = ExtKeychain::derive_key_id(1, height as u32, 0, 0, 0);
-		let fee = txs.iter().map(|x| x.fee()).sum();
-		let reward = libtx::reward::output(&keychain, &key_id, height, fee, false).unwrap();
-		let mut block = Block::new(&prev_header, txs, Difficulty::min(), reward).unwrap();
+		// Initialize the chain/txhashset with an initial block
+		// so we have a non-empty UTXO set.
+		let add_block =
+			|prev_header: BlockHeader, txs: Vec<Transaction>, chain: &mut ChainAdapter| {
+				let height = prev_header.height + 1;
+				let key_id = ExtKeychain::derive_key_id(1, height as u32, 0, 0, 0);
+				let fee = txs.iter().map(|x| x.fee()).sum();
+				let reward = libtx::reward::output(&keychain, &key_id, height, fee, false).unwrap();
+				let mut block = Block::new(&prev_header, txs, Difficulty::min(), reward).unwrap();
 
 				// Set the prev_root to the prev hash for testing purposes (no MMR to obtain a root from).
 				block.header.prev_root = prev_header.hash();

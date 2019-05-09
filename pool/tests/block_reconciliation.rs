@@ -42,12 +42,12 @@ fn test_transaction_pool_block_reconciliation() {
 		// Initialize a new pool with our chain adapter.
 		let pool = RwLock::new(test_setup(chain.clone(), verifier_cache.clone()));
 
-	let header = {
-		let height = 1;
-		let key_id = ExtKeychain::derive_key_id(1, height as u32, 0, 0, 0);
-		let reward = libtx::reward::output(&keychain, &key_id, height, 0, false).unwrap();
-		let genesis = BlockHeader::default();
-		let mut block = Block::new(&genesis, vec![], Difficulty::min(), reward).unwrap();
+		let header = {
+			let height = 1;
+			let key_id = ExtKeychain::derive_key_id(1, height as u32, 0, 0, 0);
+			let reward = libtx::reward::output(&keychain, &key_id, height, 0, false).unwrap();
+			let genesis = BlockHeader::default();
+			let mut block = Block::new(&genesis, vec![], Difficulty::min(), reward).unwrap();
 
 			// Set the prev_root to the prev hash for testing purposes (no MMR to obtain a root from).
 			block.header.prev_root = genesis.hash();
@@ -62,11 +62,12 @@ fn test_transaction_pool_block_reconciliation() {
 		let initial_tx =
 			test_transaction_spending_coinbase(&keychain, &header, vec![10, 20, 30, 40]);
 
-	let block = {
-		let key_id = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
-		let fees = initial_tx.fee();
-		let reward = libtx::reward::output(&keychain, &key_id, 2, fees, false).unwrap();
-		let mut block = Block::new(&header, vec![initial_tx], Difficulty::min(), reward).unwrap();
+		let block = {
+			let key_id = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
+			let fees = initial_tx.fee();
+			let reward = libtx::reward::output(&keychain, &key_id, 2, fees, false).unwrap();
+			let mut block =
+				Block::new(&header, vec![initial_tx], Difficulty::min(), reward).unwrap();
 
 			// Set the prev_root to the prev hash for testing purposes (no MMR to obtain a root from).
 			block.header.prev_root = header.hash();
@@ -154,12 +155,12 @@ fn test_transaction_pool_block_reconciliation() {
 
 		let block_txs = vec![block_tx_1, block_tx_2, block_tx_3, block_tx_4];
 
-	// Now apply this block.
-	let block = {
-		let key_id = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
-		let fees = block_txs.iter().map(|tx| tx.fee()).sum();
-		let reward = libtx::reward::output(&keychain, &key_id, 3, fees, false).unwrap();
-		let mut block = Block::new(&header, block_txs, Difficulty::min(), reward).unwrap();
+		// Now apply this block.
+		let block = {
+			let key_id = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
+			let fees = block_txs.iter().map(|tx| tx.fee()).sum();
+			let reward = libtx::reward::output(&keychain, &key_id, 3, fees, false).unwrap();
+			let mut block = Block::new(&header, block_txs, Difficulty::min(), reward).unwrap();
 
 			// Set the prev_root to the prev hash for testing purposes (no MMR to obtain a root from).
 			block.header.prev_root = header.hash();

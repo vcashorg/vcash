@@ -13,11 +13,11 @@ use crate::core::consensus::reward;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{Block, BlockHeader};
+use crate::core::core::{Output, TxKernel};
+use crate::core::libtx::secp_ser;
 use crate::core::{consensus, core, global};
 use crate::keychain::{ExtKeychain, Identifier, Keychain};
 use crate::pool;
-use crate::core::libtx::secp_ser;
-use crate::core::core::{Output, TxKernel};
 
 /// Fees in block to use for coinbase amount calculation
 /// (Duplicated from Grin wallet project)
@@ -416,14 +416,22 @@ impl BlockHandler {
 	}
 
 	///
-    /// Probably only want to do this when testing.
-    ///
-	fn burn_reward(&self,block_fees: BlockFees) -> Result<(core::Output, core::TxKernel, BlockFees), Error> {
+	/// Probably only want to do this when testing.
+	///
+	fn burn_reward(
+		&self,
+		block_fees: BlockFees,
+	) -> Result<(core::Output, core::TxKernel, BlockFees), Error> {
 		warn!("Burning block fees: {:?}", block_fees);
 		let keychain = ExtKeychain::from_random_seed(global::is_floonet())?;
 		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-		let (out, kernel) =
-			crate::core::libtx::reward::output(&keychain, &key_id, block_fees.height, block_fees.fees, false)?;
+		let (out, kernel) = crate::core::libtx::reward::output(
+			&keychain,
+			&key_id,
+			block_fees.height,
+			block_fees.fees,
+			false,
+		)?;
 		Ok((out, kernel, block_fees))
 	}
 
@@ -456,7 +464,7 @@ impl BlockHandler {
 	}
 
 	/// Call the wallet API to create a coinbase output for the given block_fees.
-    /// Will retry based on default "retry forever with backoff" behavior.
+	/// Will retry based on default "retry forever with backoff" behavior.
 	fn create_coinbase(&self, dest: &str, block_fees: &BlockFees) -> Result<CbData, Error> {
 		let url = format!("{}/v1/wallet/foreign/build_coinbase", dest);
 		match api::client::post(&url, None, &block_fees) {

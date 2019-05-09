@@ -467,7 +467,11 @@ impl StratumServer {
 		submit_block.aux_data.coinbase_tx = coin_base_data.unwrap();
 		submit_block.aux_data.aux_header.version = 0;
 		submit_block.aux_data.aux_header.prev_hash = ZERO_HASH;
-		submit_block.aux_data.aux_header.merkle_root = submit_block.aux_data.coinbase_tx.dhash().dhash_with(ZERO_HASH);
+		submit_block.aux_data.aux_header.merkle_root = submit_block
+			.aux_data
+			.coinbase_tx
+			.dhash()
+			.dhash_with(ZERO_HASH);
 		submit_block.aux_data.aux_header.mine_time = timestamp;
 		submit_block.aux_data.aux_header.nbits = block.header.bits;
 		submit_block.aux_data.aux_header.nonce = nounce;
@@ -619,12 +623,7 @@ impl StratumServer {
 	/// existing chain anytime required and sending that to the connected
 	/// stratum miner, proxy, or pool, and accepts full solutions to
 	/// be submitted.
-	pub fn run_loop(
-		&mut self,
-		edge_bits: u32,
-		_proof_size: usize,
-		sync_state: Arc<SyncState>,
-	) {
+	pub fn run_loop(&mut self, edge_bits: u32, _proof_size: usize, sync_state: Arc<SyncState>) {
 		info!("(Server ID: {}) Starting stratum server", self.id,);
 
 		self.sync_state = sync_state;

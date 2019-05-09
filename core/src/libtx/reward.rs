@@ -26,7 +26,7 @@ use crate::util::{secp, static_secp_instance};
 pub fn output<K>(
 	keychain: &K,
 	key_id: &Identifier,
-    height: u64,
+	height: u64,
 	fees: u64,
 	test_mode: bool,
 ) -> Result<(Output, TxKernel), Error>
