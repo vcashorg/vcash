@@ -168,7 +168,7 @@ impl StateSync {
 				.get_block_header(&header_head.prev_block_h)
 				.map_err(|e| {
 					error!(
-						"chain error dirung getting a block header {}: {:?}",
+						"chain error during getting a block header {}: {:?}",
 						&header_head.prev_block_h, e
 					);
 					p2p::Error::Internal
@@ -179,7 +179,7 @@ impl StateSync {
 					.get_previous_header(&txhashset_head)
 					.map_err(|e| {
 						error!(
-							"chain error dirung getting a previous block header {}: {:?}",
+							"chain error during getting a previous block header {}: {:?}",
 							txhashset_head.hash(),
 							e
 						);

@@ -2,7 +2,7 @@ use crate::chain;
 use crate::common::types::PoolServerConfig;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::pool;
-use crate::util::{Mutex, RwLock, StopState};
+use crate::util::{RwLock, StopState};
 use std::sync::Arc;
 
 pub mod controller;
@@ -14,7 +14,7 @@ pub fn start_poolserver_service(
 	tx_pool: Arc<RwLock<pool::TransactionPool>>,
 	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 	pool_server_config: PoolServerConfig,
-	stop_state: Arc<Mutex<StopState>>,
+	stop_state: Arc<StopState>,
 ) {
 	let handler = handle_block::BlockHandler::new(
 		chain,

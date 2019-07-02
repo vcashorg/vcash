@@ -34,6 +34,7 @@ use num;
 #[macro_use]
 mod common;
 pub mod cuckaroo;
+pub mod cuckarood;
 pub mod cuckatoo;
 mod error;
 #[allow(dead_code)]
@@ -52,6 +53,7 @@ pub use crate::pow::common::{
 	compact_to_diff, biguint_to_compact, biguint_to_hash, compact_to_biguint, hash_to_biguint,
 };
 pub use crate::pow::cuckaroo::{new_cuckaroo_ctx, CuckarooContext};
+pub use crate::pow::cuckarood::{new_cuckarood_ctx, CuckaroodContext};
 pub use crate::pow::cuckatoo::{new_cuckatoo_ctx, CuckatooContext};
 pub use crate::pow::error::Error;
 

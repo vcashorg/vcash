@@ -37,6 +37,7 @@ extern crate log;
 use failure;
 #[macro_use]
 extern crate failure_derive;
+extern crate zeroize;
 #[macro_use]
 pub mod macros;
 

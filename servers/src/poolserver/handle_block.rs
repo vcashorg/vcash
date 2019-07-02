@@ -1,5 +1,5 @@
 use crate::common::types::Error;
-use crate::util::{Mutex, RwLock, StopState};
+use crate::util::{RwLock, StopState};
 use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
@@ -18,6 +18,7 @@ use crate::core::libtx::secp_ser;
 use crate::core::{consensus, core, global};
 use crate::keychain::{ExtKeychain, Identifier, Keychain};
 use crate::pool;
+use crate::core::libtx::ProofBuilder;
 
 /// Fees in block to use for coinbase amount calculation
 /// (Duplicated from Grin wallet project)
@@ -49,7 +50,7 @@ pub struct BlockHandler {
 	chain: Arc<chain::Chain>,
 	tx_pool: Arc<RwLock<pool::TransactionPool>>,
 	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
-	stop_state: Arc<Mutex<StopState>>,
+	stop_state: Arc<StopState>,
 	wallet_listener_url: Option<String>,
 	key_id: Arc<RwLock<Option<Identifier>>>,
 	waiting_bitming_block: Arc<RwLock<Option<(Block, u64)>>>,
@@ -62,7 +63,7 @@ impl BlockHandler {
 		chain: Arc<chain::Chain>,
 		tx_pool: Arc<RwLock<pool::TransactionPool>>,
 		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
-		stop_state: Arc<Mutex<StopState>>,
+		stop_state: Arc<StopState>,
 		wallet_listener_url: Option<String>,
 		notify_urls: Vec<String>,
 	) -> BlockHandler {
@@ -132,7 +133,7 @@ impl BlockHandler {
 		info!("(PoolCenter Starting miner loop.",);
 		let mut need_notify_pool = false;
 		loop {
-			if self.stop_state.lock().is_stopped() {
+			if self.stop_state.is_stopped() {
 				break;
 			}
 
@@ -427,6 +428,7 @@ impl BlockHandler {
 		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 		let (out, kernel) = crate::core::libtx::reward::output(
 			&keychain,
+			&ProofBuilder::new(&keychain),
 			&key_id,
 			block_fees.height,
 			block_fees.fees,

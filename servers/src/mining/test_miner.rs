@@ -30,14 +30,14 @@ use crate::core::global;
 use crate::mining::mine_block;
 use crate::pool;
 use crate::util;
-use crate::util::{Mutex, StopState};
+use crate::util::StopState;
 
 pub struct Miner {
 	config: StratumServerConfig,
 	chain: Arc<chain::Chain>,
 	tx_pool: Arc<RwLock<pool::TransactionPool>>,
 	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
-	stop_state: Arc<Mutex<StopState>>,
+	stop_state: Arc<StopState>,
 
 	// Just to hold the port we're on, so this miner can be identified
 	// while watching debug output
@@ -52,7 +52,7 @@ impl Miner {
 		chain: Arc<chain::Chain>,
 		tx_pool: Arc<RwLock<pool::TransactionPool>>,
 		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
-		stop_state: Arc<Mutex<StopState>>,
+		stop_state: Arc<StopState>,
 	) -> Miner {
 		Miner {
 			config,
@@ -137,7 +137,7 @@ impl Miner {
 		let mut key_id = None;
 
 		loop {
-			if self.stop_state.lock().is_stopped() {
+			if self.stop_state.is_stopped() {
 				break;
 			}
 

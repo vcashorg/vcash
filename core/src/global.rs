@@ -205,7 +205,7 @@ pub fn proofsize() -> usize {
 pub fn min_bit_diff() -> u32 {
 	let param_ref = CHAIN_TYPE.read();
 	match *param_ref {
-		ChainTypes::Floonet => 0x1a0c2a12,
+		ChainTypes::Floonet => 0x1b01cc26,
 		ChainTypes::Mainnet => 0x18120f14,
 		_ => 0x2100ffff,
 	}

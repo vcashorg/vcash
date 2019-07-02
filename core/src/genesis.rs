@@ -76,7 +76,7 @@ pub fn genesis_floo() -> core::Block {
 		.unwrap(),
 		output_mmr_size: 1,
 		kernel_mmr_size: 1,
-		bits: 0x1a0c2a12,
+		bits: 0x1b01cc26,
 		pow: ProofOfWork {
 			nonce: global::get_genesis_nonce(),
 			..Default::default()
