@@ -50,7 +50,7 @@ use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 pub use self::common::EdgeType;
 pub use self::types::*;
 pub use crate::pow::common::{
-	compact_to_diff, biguint_to_compact, biguint_to_hash, compact_to_biguint, hash_to_biguint,
+	biguint_to_compact, biguint_to_hash, compact_to_biguint, compact_to_diff, hash_to_biguint,
 };
 pub use crate::pow::cuckaroo::{new_cuckaroo_ctx, CuckarooContext};
 pub use crate::pow::cuckarood::{new_cuckarood_ctx, CuckaroodContext};

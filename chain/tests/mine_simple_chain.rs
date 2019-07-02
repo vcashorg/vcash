@@ -106,7 +106,15 @@ fn mine_genesis_reward_chain() {
 	let mut genesis = genesis::genesis_dev();
 	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
 	let key_id = keychain::ExtKeychain::derive_key_id(0, 1, 0, 0, 0);
-	let reward = reward::output(&keychain, &libtx::ProofBuilder::new(&keychain), &key_id, 0, 0, false).unwrap();
+	let reward = reward::output(
+		&keychain,
+		&libtx::ProofBuilder::new(&keychain),
+		&key_id,
+		0,
+		0,
+		false,
+	)
+	.unwrap();
 	genesis = genesis.with_reward(reward.0, reward.1);
 
 	let tmp_chain_dir = ".grin.tmp";
@@ -143,7 +151,15 @@ where
 		let prev = chain.head_header().unwrap();
 		let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 		let pk = ExtKeychainPath::new(1, n as u32, 0, 0, 0).to_identifier();
-		let reward = libtx::reward::output(keychain, &libtx::ProofBuilder::new(keychain), &pk, prev.height + 1, 0, false).unwrap();
+		let reward = libtx::reward::output(
+			keychain,
+			&libtx::ProofBuilder::new(keychain),
+			&pk,
+			prev.height + 1,
+			0,
+			false,
+		)
+		.unwrap();
 		let mut b =
 			core::core::Block::new(&prev, vec![], next_header_info.clone().difficulty, reward)
 				.unwrap();
@@ -575,7 +591,15 @@ fn output_header_mappings() {
 			let prev = chain.head_header().unwrap();
 			let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 			let pk = ExtKeychainPath::new(1, n as u32, 0, 0, 0).to_identifier();
-			let reward = libtx::reward::output(&keychain, &libtx::ProofBuilder::new(&keychain), &pk, prev.height + 1, 0, false).unwrap();
+			let reward = libtx::reward::output(
+				&keychain,
+				&libtx::ProofBuilder::new(&keychain),
+				&pk,
+				prev.height + 1,
+				0,
+				false,
+			)
+			.unwrap();
 			reward_outputs.push(reward.0.clone());
 			let mut b =
 				core::core::Block::new(&prev, vec![], next_header_info.clone().difficulty, reward)
@@ -684,7 +708,15 @@ where
 	let key_id = ExtKeychainPath::new(1, diff as u32, 0, 0, 0).to_identifier();
 
 	let fees = txs.iter().map(|tx| tx.fee()).sum();
-	let reward = libtx::reward::output(kc, &libtx::ProofBuilder::new(kc), &key_id, prev.height + 1, fees, false).unwrap();
+	let reward = libtx::reward::output(
+		kc,
+		&libtx::ProofBuilder::new(kc),
+		&key_id,
+		prev.height + 1,
+		fees,
+		false,
+	)
+	.unwrap();
 	let mut b = match core::core::Block::new(
 		prev,
 		txs.into_iter().cloned().collect(),

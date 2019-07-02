@@ -15,10 +15,10 @@ use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{Block, BlockHeader};
 use crate::core::core::{Output, TxKernel};
 use crate::core::libtx::secp_ser;
+use crate::core::libtx::ProofBuilder;
 use crate::core::{consensus, core, global};
 use crate::keychain::{ExtKeychain, Identifier, Keychain};
 use crate::pool;
-use crate::core::libtx::ProofBuilder;
 
 /// Fees in block to use for coinbase amount calculation
 /// (Duplicated from Grin wallet project)

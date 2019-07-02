@@ -77,7 +77,15 @@ fn data_files() {
 			let prev = chain.head_header().unwrap();
 			let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 			let pk = ExtKeychainPath::new(1, n as u32, 0, 0, 0).to_identifier();
-			let reward = libtx::reward::output(&keychain, &libtx::ProofBuilder::new(&keychain), &pk, prev.height + 1, 0, false).unwrap();
+			let reward = libtx::reward::output(
+				&keychain,
+				&libtx::ProofBuilder::new(&keychain),
+				&pk,
+				prev.height + 1,
+				0,
+				false,
+			)
+			.unwrap();
 			let mut b =
 				core::core::Block::new(&prev, vec![], next_header_info.clone().difficulty, reward)
 					.unwrap();
@@ -161,7 +169,15 @@ fn _prepare_block_nosum(
 	let key_id = ExtKeychainPath::new(1, diff as u32, 0, 0, 0).to_identifier();
 
 	let fees = txs.iter().map(|tx| tx.fee()).sum();
-	let reward = libtx::reward::output(kc, &libtx::ProofBuilder::new(kc), &key_id, prev.height + 1, fees, false).unwrap();
+	let reward = libtx::reward::output(
+		kc,
+		&libtx::ProofBuilder::new(kc),
+		&key_id,
+		prev.height + 1,
+		fees,
+		false,
+	)
+	.unwrap();
 	let mut b = match core::core::Block::new(
 		prev,
 		txs.into_iter().cloned().collect(),

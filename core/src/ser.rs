@@ -465,7 +465,7 @@ impl<'a> Reader for StreamingReader<'a> {
 	}
 	fn read_u16_le(&mut self) -> Result<u16, Error> {
 		let buf = self.read_fixed_bytes(2)?;
-        Ok(LittleEndian::read_u16(&buf[..]))
+		Ok(LittleEndian::read_u16(&buf[..]))
 	}
 
 	fn read_u32(&mut self) -> Result<u32, Error> {
@@ -474,7 +474,7 @@ impl<'a> Reader for StreamingReader<'a> {
 	}
 	fn read_u32_le(&mut self) -> Result<u32, Error> {
 		let buf = self.read_fixed_bytes(4)?;
-        Ok(LittleEndian::read_u32(&buf[..]))
+		Ok(LittleEndian::read_u32(&buf[..]))
 	}
 
 	fn read_i32(&mut self) -> Result<i32, Error> {
@@ -483,7 +483,7 @@ impl<'a> Reader for StreamingReader<'a> {
 	}
 	fn read_i32_le(&mut self) -> Result<i32, Error> {
 		let buf = self.read_fixed_bytes(4)?;
-        Ok(LittleEndian::read_i32(&buf[..]))
+		Ok(LittleEndian::read_i32(&buf[..]))
 	}
 
 	fn read_u64(&mut self) -> Result<u64, Error> {
@@ -492,7 +492,7 @@ impl<'a> Reader for StreamingReader<'a> {
 	}
 	fn read_u64_le(&mut self) -> Result<u64, Error> {
 		let buf = self.read_fixed_bytes(8)?;
-        Ok(LittleEndian::read_u64(&buf[..]))
+		Ok(LittleEndian::read_u64(&buf[..]))
 	}
 
 	fn read_i64(&mut self) -> Result<i64, Error> {
@@ -501,7 +501,7 @@ impl<'a> Reader for StreamingReader<'a> {
 	}
 	fn read_i64_le(&mut self) -> Result<i64, Error> {
 		let buf = self.read_fixed_bytes(8)?;
-        Ok(LittleEndian::read_i64(&buf[..]))
+		Ok(LittleEndian::read_i64(&buf[..]))
 	}
 
 	/// Read a variable size vector from the underlying stream. Expects a usize

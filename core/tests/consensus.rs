@@ -345,7 +345,6 @@ fn adjustment_scenarios() {
 	println!("*********************************************************");
 }
 
-
 /// Checks different next_target adjustments and difficulty boundaries
 #[test]
 #[ignore]
@@ -450,7 +449,6 @@ fn next_target_adjustment() {
 		Difficulty::min()
 	);
 }
-
 
 #[test]
 #[ignore]
