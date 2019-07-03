@@ -51,6 +51,7 @@ fn test_transaction_pool_block_building() {
 					&keychain,
 					&libtx::ProofBuilder::new(&keychain),
 					&key_id,
+					height,
 					fee,
 					false,
 				)

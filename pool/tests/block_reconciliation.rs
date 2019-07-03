@@ -49,6 +49,7 @@ fn test_transaction_pool_block_reconciliation() {
 				&keychain,
 				&libtx::ProofBuilder::new(&keychain),
 				&key_id,
+				height,
 				0,
 				false,
 			)
@@ -76,6 +77,7 @@ fn test_transaction_pool_block_reconciliation() {
 				&keychain,
 				&libtx::ProofBuilder::new(&keychain),
 				&key_id,
+				1,
 				fees,
 				false,
 			)
@@ -177,6 +179,7 @@ fn test_transaction_pool_block_reconciliation() {
 				&keychain,
 				&libtx::ProofBuilder::new(&keychain),
 				&key_id,
+				1,
 				fees,
 				false,
 			)

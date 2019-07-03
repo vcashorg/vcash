@@ -55,6 +55,7 @@ fn test_block_building_max_weight() {
 					&keychain,
 					&libtx::ProofBuilder::new(&keychain),
 					&key_id,
+					height,
 					fee,
 					false,
 				)

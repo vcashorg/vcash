@@ -260,8 +260,9 @@ fn mine_reorg() {
 		// Add blocks to main chain with gradually increasing difficulty
 		let mut prev = chain.head_header().unwrap();
 		for n in 1..=NUM_BLOCKS_MAIN {
-			let b = prepare_block(&kc, &prev, &chain, n);
+			let mut b = prepare_block(&kc, &prev, &chain, n);
 			prev = b.header.clone();
+			get_block_bit_diff(&mut b);
 			chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 		}
 
@@ -276,8 +277,9 @@ fn mine_reorg() {
 		let fork_head = chain
 			.get_header_by_height(NUM_BLOCKS_MAIN - REORG_DEPTH)
 			.unwrap();
-		let b = prepare_fork_block(&kc, &fork_head, &chain, reorg_difficulty);
+		let mut b = prepare_fork_block(&kc, &fork_head, &chain, reorg_difficulty);
 		let reorg_head = b.header.clone();
+		get_block_bit_diff(&mut b);
 		chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 
 		// Check that reorg is correctly reported in block status

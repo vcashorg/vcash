@@ -170,6 +170,7 @@ mod test {
 	];
 
 	#[test]
+	#[ignore]
 	fn cuckarood19_29_vectors() {
 		let mut ctx19 = new_impl::<u64>(19, 42);
 		ctx19.params.siphash_keys = V1_19_HASH.clone();

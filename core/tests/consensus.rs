@@ -619,8 +619,8 @@ fn test_secondary_pow_scale() {
 	}
 }
 
+/*
 #[test]
-#[ignore]
 fn hard_forks() {
 	// Tests for mainnet chain type.
 	{
@@ -693,4 +693,4 @@ fn hard_forks() {
 			HeaderVersion::new(2)
 		));
 	}
-}
+}*/
