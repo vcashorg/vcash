@@ -43,18 +43,33 @@ pub const BLOCK_TIME_SEC: u64 = 600;
 /// The block subsidy amount, one grin per second on average
 pub const REWARD: u64 = 50 * GRIN_BASE;
 
-/// Subsidy amount half height
-pub const HALVINGINTERVAL: u64 = 210000;
-
 /// Actual block reward for a given total fee amount
 pub fn reward(height: u64, fee: u64) -> u64 {
-	let halvings = height / HALVINGINTERVAL;
+	let halvings = height / global::halving_interval();
 	let cur_reward = if halvings >= 64 {
 		0_u64
 	} else {
 		REWARD >> halvings
 	};
 	cur_reward.saturating_add(fee)
+}
+
+/// Total block reward for a given height
+pub fn total_reward(height: u64, genesis_had_reward: bool) -> u64 {
+	let halvings = height / global::halving_interval();
+	let mut total = 0 as u64;
+	let mut i = 0;
+	while i < halvings {
+		total = total + global::halving_interval() * (REWARD >> i);
+		i = i + 1;
+	}
+	let remainder = height % global::halving_interval();
+	total = total + (REWARD >> halvings) * (remainder + 1);
+	if !genesis_had_reward {
+		total = total - REWARD;
+	}
+
+	total
 }
 
 /// Nominal height for standard time intervals, hour is 60 blocks

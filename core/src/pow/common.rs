@@ -303,6 +303,7 @@ mod test {
 		assert_eq!(test_hash2, ret_hash2);
 	}
 
+	#[test]
 	fn biguint_compact_test() {
 		let biguint0 = compact_to_biguint(0).unwrap();
 		let compact0 = biguint_to_compact(biguint0, false);

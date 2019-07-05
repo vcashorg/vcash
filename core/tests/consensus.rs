@@ -15,7 +15,7 @@
 use grin_core as core;
 
 use self::core::consensus::*;
-use self::core::core::block::HeaderVersion;
+//use self::core::core::block::HeaderVersion;
 use self::core::global;
 use self::core::pow::Difficulty;
 use chrono::prelude::Utc;
@@ -269,6 +269,40 @@ fn repeat_offs(from: u64, interval: u64, diff: u64, len: u64) -> Vec<HeaderInfo>
 		len,
 		Some(from),
 	)
+}
+
+#[test]
+fn test_total_reward() {
+	global::set_mining_mode(global::ChainTypes::Mainnet);
+	let total = 21000000 as f64;
+	assert_eq!(total_reward(0, true), 50 * GRIN_BASE as u64);
+	let first_half = total * 0.5;
+	let second_half = total * 0.75;
+	let third_half = total * 0.875;
+	assert_eq!(
+		total_reward(209999, true),
+		(first_half * GRIN_BASE as f64) as u64
+	);
+	assert_eq!(
+		total_reward(210000, true),
+		((first_half + 25 as f64) * GRIN_BASE as f64) as u64
+	);
+	assert_eq!(
+		total_reward(419999, true),
+		(second_half * GRIN_BASE as f64) as u64
+	);
+	assert_eq!(
+		total_reward(420000, true),
+		((second_half + 12.5) * GRIN_BASE as f64) as u64
+	);
+	assert_eq!(
+		total_reward(629999, true),
+		(third_half * GRIN_BASE as f64) as u64
+	);
+	assert_eq!(
+		total_reward(630000, true),
+		((third_half + 6.25) * GRIN_BASE as f64) as u64
+	);
 }
 
 /// Checks different next_target adjustments and difficulty boundaries

@@ -577,6 +577,28 @@ fn spend_in_fork_and_compact() {
 	clean_output_dir(".grin6");
 }
 
+#[test]
+fn test_block_subsidy_hlvings() {
+	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	util::init_test_logger();
+	{
+		let chain = setup(".grin7", pow::mine_genesis_block().unwrap());
+		let mut prev = chain.head_header().unwrap();
+		let kc = ExtKeychain::from_random_seed(false).unwrap();
+		let pb = ProofBuilder::new(&kc);
+
+		for n in 1..101 {
+			let mut b = prepare_block(&kc, &prev, &chain, n);
+			prev = b.header.clone();
+			get_block_bit_diff(&mut b);
+			chain.process_block(b, chain::Options::SKIP_POW).unwrap();
+		}
+		chain.validate(false).unwrap();
+	}
+	// Cleanup chain directory
+	clean_output_dir(".grin7");
+}
+
 /// Test ability to retrieve block headers for a given output
 #[test]
 fn output_header_mappings() {

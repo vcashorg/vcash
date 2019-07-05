@@ -81,6 +81,12 @@ pub const PEER_EXPIRATION_REMOVE_TIME: i64 = PEER_EXPIRATION_DAYS * 24 * 3600;
 /// For a node configured as "archival_mode = true" only the txhashset will be compacted.
 pub const COMPACTION_CHECK: u64 = DAY_HEIGHT;
 
+/// Subsidy amount half height
+pub const HALVINGINTERVAL: u64 = 210000;
+
+/// Testing Subsidy amount half height
+pub const AUTOTEST_HALVINGINTERVAL: u64 = 50;
+
 /// Types of chain a server can run with, dictates the genesis block and
 /// and mining parameters used.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -164,6 +170,15 @@ where
 	//		// Everything else is Cuckatoo only
 	//		_ => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
 	new_cuckatoo_ctx(edge_bits, proof_size, max_sols)
+}
+
+/// The havling interval
+pub fn halving_interval() -> u64 {
+	let param_ref = CHAIN_TYPE.read();
+	match *param_ref {
+		ChainTypes::AutomatedTesting => AUTOTEST_HALVINGINTERVAL,
+		_ => HALVINGINTERVAL,
+	}
 }
 
 /// The minimum acceptable edge_bits
