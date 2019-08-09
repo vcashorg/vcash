@@ -271,36 +271,38 @@ impl BlockHandler {
 		// get the latest chain state and build a block on top of it
 		let mut result = self.build_block();
 		while let Err(e) = result {
-			let mut new_key_id = self.key_id.write();
-			match e {
-				self::Error::Chain(c) => match c.kind() {
-					chain::ErrorKind::DuplicateCommitment(_) => {
-						debug!(
-							"Duplicate commit for potential coinbase detected. Trying next derivation."
+			{
+				let mut new_key_id = self.key_id.write();
+				match e {
+					self::Error::Chain(c) => match c.kind() {
+						chain::ErrorKind::DuplicateCommitment(_) => {
+							debug!(
+								"Duplicate commit for potential coinbase detected. Trying next derivation."
+							);
+							// use the next available key to generate a different coinbase commitment
+							*new_key_id = None;
+						}
+						_ => {
+							error!("Chain Error: {}", c);
+						}
+					},
+					self::Error::WalletComm(_) => {
+						error!(
+							"Error building new block: Can't connect to wallet listener at {:?}; will retry",
+							self.wallet_listener_url.as_ref().unwrap()
 						);
-						// use the next available key to generate a different coinbase commitment
-						*new_key_id = None;
+						thread::sleep(Duration::from_secs(wallet_retry_interval));
 					}
-					_ => {
-						error!("Chain Error: {}", c);
+					ae => {
+						warn!("Error building new block: {:?}. Retrying.", ae);
 					}
-				},
-				self::Error::WalletComm(_) => {
-					error!(
-						"Error building new block: Can't connect to wallet listener at {:?}; will retry",
-						self.wallet_listener_url.as_ref().unwrap()
-					);
-					thread::sleep(Duration::from_secs(wallet_retry_interval));
 				}
-				ae => {
-					warn!("Error building new block: {:?}. Retrying.", ae);
-				}
-			}
 
-			// only wait if we are still using the same key: a different coinbase commitment is unlikely
-			// to have duplication
-			if new_key_id.is_some() {
-				thread::sleep(Duration::from_millis(100));
+				// only wait if we are still using the same key: a different coinbase commitment is unlikely
+				// to have duplication
+				if new_key_id.is_some() {
+					thread::sleep(Duration::from_millis(100));
+				}
 			}
 
 			result = self.build_block();
