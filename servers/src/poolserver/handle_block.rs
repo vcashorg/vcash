@@ -117,7 +117,7 @@ impl BlockHandler {
 				"chain Failed to validate solution at height {}, grin header hash {} reason:{}",
 				block_data.header.height,
 				block_data.header.hash(),
-				e
+				e.kind()
 			));
 			error!("{}", err_reason);
 			return Err(err_reason);
