@@ -38,6 +38,9 @@ pub enum ErrorKind {
 	/// Special case of orphan blocks
 	#[fail(display = "Orphan")]
 	Orphan,
+	/// Bit Auxdata Difficulty is too low either compared to ours or the block PoW hash
+	#[fail(display = "Bit Auxdata Difficulty is too low compared to ours or the block PoW hash")]
+	BitDifficultyTooLow,
 	/// Difficulty is too low either compared to ours or the block PoW hash
 	#[fail(display = "Difficulty is too low compared to ours or the block PoW hash")]
 	DifficultyTooLow,
@@ -149,6 +152,9 @@ pub enum ErrorKind {
 	/// Internal Roaring Bitmap error
 	#[fail(display = "Roaring Bitmap error")]
 	Bitmap,
+	/// Block Aux data is invalid
+	#[fail(display = "Block Aux data error")]
+	BadAuxDataBlock,
 }
 
 impl Display for Error {

@@ -23,9 +23,14 @@ use std::sync::Arc;
 use std::{thread, time};
 
 use crate::core::core::hash::Hash;
+use crate::core::core::verifier_cache::LruVerifierCache;
+use crate::core::pow;
 use crate::core::pow::Difficulty;
 use crate::p2p::types::PeerAddr;
 use crate::p2p::Peer;
+use chain::types::NoopAdapter;
+use grin_chain as chain;
+use util::RwLock;
 
 fn open_port() -> u16 {
 	// use port 0 to allow the OS to assign an open port
@@ -49,6 +54,19 @@ fn peer_handshake() {
 		..p2p::P2PConfig::default()
 	};
 	let net_adapter = Arc::new(p2p::DummyAdapter {});
+	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
+	let genesis_block = pow::mine_genesis_block().unwrap();
+
+	let chain = chain::Chain::init(
+		"test".to_string(),
+		Arc::new(NoopAdapter {}),
+		genesis_block,
+		pow::verify_size,
+		verifier_cache,
+		false,
+	)
+	.unwrap();
+
 	let server = Arc::new(
 		p2p::Server::new(
 			".grin",
@@ -57,6 +75,7 @@ fn peer_handshake() {
 			net_adapter.clone(),
 			Hash::from_vec(&vec![]),
 			Arc::new(StopState::new()),
+			Arc::new(chain),
 		)
 		.unwrap(),
 	);

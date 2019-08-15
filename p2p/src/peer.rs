@@ -592,6 +592,10 @@ impl ChainAdapter for TrackingAdapter {
 	fn get_tmpfile_pathname(&self, tmpfile_name: String) -> PathBuf {
 		self.adapter.get_tmpfile_pathname(tmpfile_name)
 	}
+
+	fn is_chain_in_syncing(&self) -> bool {
+		self.adapter.is_chain_in_syncing()
+	}
 }
 
 impl NetAdapter for TrackingAdapter {

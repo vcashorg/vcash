@@ -214,6 +214,7 @@ impl Server {
 			net_adapter.clone(),
 			genesis.hash(),
 			stop_state.clone(),
+			shared_chain.clone(),
 		)?);
 
 		// Initialize various adapters with our dynamic set of connected peers.

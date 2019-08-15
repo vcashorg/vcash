@@ -77,7 +77,7 @@ fn process_header_for_block(
 fn validate_block_auxdata(b: &Block, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
 	//prevent dos attack
 	if b.header.bits > global::min_bit_diff() {
-		return Err(ErrorKind::DifficultyTooLow.into());
+		return Err(ErrorKind::BitDifficultyTooLow.into());
 	}
 
 	//1,btc_header difficulty is bigger enough
@@ -85,12 +85,12 @@ fn validate_block_auxdata(b: &Block, ctx: &mut BlockContext<'_>) -> Result<(), E
 	let cur_diff = hash_to_biguint(btc_header_hash);
 	let target_diff_option = compact_to_biguint(b.header.bits);
 	if target_diff_option.is_none() {
-		return Err(ErrorKind::DifficultyTooLow.into());
+		return Err(ErrorKind::BitDifficultyTooLow.into());
 	}
 
 	let target_diff = target_diff_option.unwrap();
 	if cur_diff > target_diff {
-		return Err(ErrorKind::DifficultyTooLow.into());
+		return Err(ErrorKind::BitDifficultyTooLow.into());
 	}
 
 	//2,grin_header_hash is in btc_coinbase

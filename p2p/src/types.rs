@@ -76,6 +76,7 @@ pub enum Error {
 	Send(String),
 	PeerException,
 	Internal,
+	FraudNode,
 }
 
 impl From<ser::Error> for Error {
@@ -567,6 +568,9 @@ pub trait ChainAdapter: Sync + Send {
 	/// Get a tmp file path in above specific tmp dir (create tmp dir if not exist)
 	/// Delete file if tmp file already exists
 	fn get_tmpfile_pathname(&self, tmpfile_name: String) -> PathBuf;
+
+	/// Check is current chain is in syncing state
+	fn is_chain_in_syncing(&self) -> bool;
 }
 
 /// Additional methods required by the protocol that don't need to be

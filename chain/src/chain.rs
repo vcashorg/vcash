@@ -238,6 +238,20 @@ impl Chain {
 		Ok(head)
 	}
 
+	/// Reset header_head to the current head of the body chain.
+	pub fn reset_header_head(&self) -> Result<(), Error> {
+		{
+			let mut txhashset = self.txhashset.write();
+			let batch = self.store.batch()?;
+			batch.reset_header_head()?;
+			batch.reset_sync_head()?;
+			batch.commit()?;
+			self.rebuild_header_mmr(&self.header_head()?, &mut txhashset)?;
+		}
+		self.rebuild_sync_mmr(&self.header_head()?)?;
+		Ok(())
+	}
+
 	/// Processes a single block, then checks for orphans, processing
 	/// those as well if they're found
 	pub fn process_block(&self, b: Block, opts: Options) -> Result<Option<Tip>, Error> {
@@ -335,6 +349,18 @@ impl Chain {
 						msg
 					);
 					Err(ErrorKind::Unfit(msg.clone()).into())
+				}
+				ErrorKind::BitDifficultyTooLow
+				| ErrorKind::BadBitDiffbits
+				| ErrorKind::InvalidCoinbase
+				| ErrorKind::InvalidMerklebranch => {
+					info!(
+						"Rejected block {} at {}: {:?}",
+						b.hash(),
+						b.header.height,
+						e
+					);
+					Err(ErrorKind::BadAuxDataBlock.into())
 				}
 				_ => {
 					info!(

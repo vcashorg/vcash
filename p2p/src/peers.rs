@@ -43,15 +43,22 @@ pub struct Peers {
 	store: PeerStore,
 	peers: RwLock<HashMap<PeerAddr, Arc<Peer>>>,
 	config: P2PConfig,
+	chain: Arc<chain::Chain>,
 }
 
 impl Peers {
-	pub fn new(store: PeerStore, adapter: Arc<dyn ChainAdapter>, config: P2PConfig) -> Peers {
+	pub fn new(
+		store: PeerStore,
+		adapter: Arc<dyn ChainAdapter>,
+		config: P2PConfig,
+		chain: Arc<chain::Chain>,
+	) -> Peers {
 		Peers {
 			adapter,
 			store,
 			config,
 			peers: RwLock::new(HashMap::new()),
+			chain,
 		}
 	}
 
@@ -593,11 +600,14 @@ impl ChainAdapter for Peers {
 		if !self.adapter.block_received(b, peer_info, was_requested)? {
 			// if the peer sent us a block that's intrinsically bad
 			// they are either mistaken or malevolent, both of which require a ban
-			debug!(
+			warn!(
 				"Received a bad block {} from  {}, the peer will be banned",
 				hash, peer_info.addr,
 			);
 			self.ban_peer(peer_info.addr, ReasonForBan::BadBlock);
+			if self.is_chain_in_syncing() {
+				self.chain.reset_header_head()?;
+			}
 			Ok(false)
 		} else {
 			Ok(true)
@@ -712,6 +722,10 @@ impl ChainAdapter for Peers {
 
 	fn get_tmpfile_pathname(&self, tmpfile_name: String) -> PathBuf {
 		self.adapter.get_tmpfile_pathname(tmpfile_name)
+	}
+
+	fn is_chain_in_syncing(&self) -> bool {
+		self.adapter.is_chain_in_syncing()
 	}
 }
 
