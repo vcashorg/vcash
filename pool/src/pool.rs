@@ -229,6 +229,8 @@ impl Pool {
 		// Check all outputs are unique in current UTXO set.
 		self.blockchain.validate_tx(tx)?;
 
+		self.apply_tx_to_block_token_sums(tx, header)?;
+
 		let new_sums = self.apply_tx_to_block_sums(tx, header)?;
 		Ok(new_sums)
 	}
@@ -281,6 +283,20 @@ impl Pool {
 			utxo_sum,
 			kernel_sum,
 		})
+	}
+
+	fn apply_tx_to_block_token_sums(
+		&self,
+		tx: &Transaction,
+		header: &BlockHeader,
+	) -> Result<(), PoolError> {
+		let block_token_sums = self.blockchain.get_block_token_sums(&header.hash())?;
+
+		// Verify the kernel sums for the block_sums with the new tx applied,
+		// accounting for overage and offset.
+		(block_token_sums, tx as &dyn Committed).verify_token_kernel_sum()?;
+
+		Ok(())
 	}
 
 	pub fn reconcile(

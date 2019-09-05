@@ -17,6 +17,7 @@
 use crate::util::RwLock;
 use chrono::naive::{MAX_DATE, MIN_DATE};
 use chrono::prelude::{DateTime, NaiveDateTime, Utc};
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::iter::FromIterator;
@@ -28,7 +29,8 @@ use crate::core::compact_block::{CompactBlock, CompactBlockBody};
 use crate::core::hash::{DefaultHashable, Hash, Hashed, ZERO_HASH};
 use crate::core::verifier_cache::VerifierCache;
 use crate::core::{
-	transaction, Commitment, Input, Output, Transaction, TransactionBody, TxKernel, Weighting,
+	transaction, Commitment, Input, Output, TokenInput, TokenKey, TokenOutput, TokenTxKernel,
+	Transaction, TransactionBody, TxKernel, Weighting,
 };
 use crate::global;
 use crate::keychain::{self, BlindingFactor};
@@ -249,6 +251,14 @@ pub struct BlockHeader {
 	pub range_proof_root: Hash,
 	/// Merklish root of all transaction kernels in the TxHashSet
 	pub kernel_root: Hash,
+	/// Merklish root of all the token output commitments in the TxHashSet
+	pub token_output_root: Hash,
+	/// Merklish root of all token output range proofs in the TxHashSet
+	pub token_range_proof_root: Hash,
+	/// Merklish root of all token_issue_proof in the TxHashSet
+	pub token_issue_proof_root: Hash,
+	/// Merklish root of all token transaction kernels in the TxHashSet
+	pub token_kernel_root: Hash,
 	/// Total accumulated sum of kernel offsets since genesis block.
 	/// We can derive the kernel offset sum for *this* block from
 	/// the total kernel offset of the previous block header.
@@ -257,6 +267,12 @@ pub struct BlockHeader {
 	pub output_mmr_size: u64,
 	/// Total size of the kernel MMR after applying this block
 	pub kernel_mmr_size: u64,
+	/// Total size of the token output MMR after applying this block
+	pub token_output_mmr_size: u64,
+	/// Total size of the token_issue_proof MMR after applying this block
+	pub token_issue_proof_mmr_size: u64,
+	/// Total size of the token kernel MMR after applying this block
+	pub token_kernel_mmr_size: u64,
 	/// mergemining diff
 	pub bits: u32,
 	/// Proof of work and related
@@ -275,9 +291,16 @@ impl Default for BlockHeader {
 			output_root: ZERO_HASH,
 			range_proof_root: ZERO_HASH,
 			kernel_root: ZERO_HASH,
+			token_output_root: ZERO_HASH,
+			token_range_proof_root: ZERO_HASH,
+			token_issue_proof_root: ZERO_HASH,
+			token_kernel_root: ZERO_HASH,
 			total_kernel_offset: BlindingFactor::zero(),
 			output_mmr_size: 0,
 			kernel_mmr_size: 0,
+			token_output_mmr_size: 0,
+			token_issue_proof_mmr_size: 0,
+			token_kernel_mmr_size: 0,
 			bits: 0,
 			pow: ProofOfWork::default(),
 		}
@@ -319,8 +342,18 @@ impl Readable for BlockHeader {
 		let output_root = Hash::read(reader)?;
 		let range_proof_root = Hash::read(reader)?;
 		let kernel_root = Hash::read(reader)?;
+		let token_output_root = Hash::read(reader)?;
+		let token_range_proof_root = Hash::read(reader)?;
+		let token_issue_proof_root = Hash::read(reader)?;
+		let token_kernel_root = Hash::read(reader)?;
 		let total_kernel_offset = BlindingFactor::read(reader)?;
-		let (output_mmr_size, kernel_mmr_size) = ser_multiread!(reader, read_u64, read_u64);
+		let (
+			output_mmr_size,
+			kernel_mmr_size,
+			token_output_mmr_size,
+			token_issue_proof_mmr_size,
+			token_kernel_mmr_size,
+		) = ser_multiread!(reader, read_u64, read_u64, read_u64, read_u64, read_u64);
 		let bits = reader.read_u32()?;
 		let pow = ProofOfWork::read(reader)?;
 
@@ -347,9 +380,16 @@ impl Readable for BlockHeader {
 			output_root,
 			range_proof_root,
 			kernel_root,
+			token_output_root,
+			token_range_proof_root,
+			token_issue_proof_root,
+			token_kernel_root,
 			total_kernel_offset,
 			output_mmr_size,
 			kernel_mmr_size,
+			token_output_mmr_size,
+			token_issue_proof_mmr_size,
+			token_kernel_mmr_size,
 			bits,
 			pow,
 		})
@@ -369,9 +409,16 @@ impl BlockHeader {
 			[write_fixed_bytes, &self.output_root],
 			[write_fixed_bytes, &self.range_proof_root],
 			[write_fixed_bytes, &self.kernel_root],
+			[write_fixed_bytes, &self.token_output_root],
+			[write_fixed_bytes, &self.token_range_proof_root],
+			[write_fixed_bytes, &self.token_issue_proof_root],
+			[write_fixed_bytes, &self.token_kernel_root],
 			[write_fixed_bytes, &self.total_kernel_offset],
 			[write_u64, self.output_mmr_size],
 			[write_u64, self.kernel_mmr_size],
+			[write_u64, self.token_output_mmr_size],
+			[write_u64, self.token_issue_proof_mmr_size],
+			[write_u64, self.token_kernel_mmr_size],
 			[write_u32, self.bits]
 		);
 		Ok(())
@@ -612,6 +659,18 @@ impl Committed for Block {
 	fn kernels_committed(&self) -> Vec<Commitment> {
 		self.body.kernels_committed()
 	}
+
+	fn token_inputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		self.body.token_inputs_committed()
+	}
+
+	fn token_outputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		self.body.token_outputs_committed()
+	}
+
+	fn token_kernels_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		self.body.token_kernels_committed()
+	}
 }
 
 /// Default properties for a block, everything zeroed out and empty vectors.
@@ -664,6 +723,9 @@ impl Block {
 		let mut all_inputs = HashSet::new();
 		let mut all_outputs = HashSet::new();
 		let mut all_kernels = HashSet::new();
+		let mut all_token_inputs = HashSet::new();
+		let mut all_token_outputs = HashSet::new();
+		let mut all_token_kernels = HashSet::new();
 
 		// collect all the inputs, outputs and kernels from the txs
 		for tx in txs {
@@ -671,6 +733,9 @@ impl Block {
 			all_inputs.extend(tb.inputs);
 			all_outputs.extend(tb.outputs);
 			all_kernels.extend(tb.kernels);
+			all_token_inputs.extend(tb.token_inputs);
+			all_token_outputs.extend(tb.token_outputs);
+			all_token_kernels.extend(tb.token_kernels);
 		}
 
 		// include the coinbase output(s) and kernel(s) from the compact_block
@@ -684,9 +749,20 @@ impl Block {
 		let all_inputs = Vec::from_iter(all_inputs);
 		let all_outputs = Vec::from_iter(all_outputs);
 		let all_kernels = Vec::from_iter(all_kernels);
+		let all_token_inputs = Vec::from_iter(all_token_inputs);
+		let all_token_outputs = Vec::from_iter(all_token_outputs);
+		let all_token_kernels = Vec::from_iter(all_token_kernels);
 
 		// Initialize a tx body and sort everything.
-		let body = TransactionBody::init(all_inputs, all_outputs, all_kernels, false)?;
+		let body = TransactionBody::init(
+			all_inputs,
+			all_outputs,
+			all_token_inputs,
+			all_token_outputs,
+			all_kernels,
+			all_token_kernels,
+			false,
+		)?;
 
 		// Finally return the full block.
 		// Note: we have not actually validated the block here,
@@ -790,6 +866,26 @@ impl Block {
 		&mut self.body.outputs
 	}
 
+	/// Get token inputs
+	pub fn token_inputs(&self) -> &Vec<TokenInput> {
+		&self.body.token_inputs
+	}
+
+	/// Get inputs mutable
+	pub fn token_inputs_mut(&mut self) -> &mut Vec<TokenInput> {
+		&mut self.body.token_inputs
+	}
+
+	/// Get token outputs
+	pub fn token_outputs(&self) -> &Vec<TokenOutput> {
+		&self.body.token_outputs
+	}
+
+	/// Get token outputs mutable
+	pub fn token_outputs_mut(&mut self) -> &mut Vec<TokenOutput> {
+		&mut self.body.token_outputs
+	}
+
 	/// Get kernels
 	pub fn kernels(&self) -> &Vec<TxKernel> {
 		&self.body.kernels
@@ -798,6 +894,16 @@ impl Block {
 	/// Get kernels mut
 	pub fn kernels_mut(&mut self) -> &mut Vec<TxKernel> {
 		&mut self.body.kernels
+	}
+
+	/// Get token kernels
+	pub fn token_kernels(&self) -> &Vec<TokenTxKernel> {
+		&self.body.token_kernels
+	}
+
+	/// Get token kernels mut
+	pub fn token_kernels_mut(&mut self) -> &mut Vec<TokenTxKernel> {
+		&mut self.body.token_kernels
 	}
 
 	/// Sum of all fees (inputs less outputs) in the block
@@ -815,12 +921,28 @@ impl Block {
 	pub fn cut_through(self) -> Result<Block, Error> {
 		let mut inputs = self.inputs().clone();
 		let mut outputs = self.outputs().clone();
-		transaction::cut_through(&mut inputs, &mut outputs)?;
+		let mut tokeninputs = self.token_inputs().clone();
+		let mut tokenoutputs = self.token_outputs().clone();
+		transaction::cut_through(
+			&mut inputs,
+			&mut outputs,
+			&mut tokeninputs,
+			&mut tokenoutputs,
+		)?;
 
 		let kernels = self.kernels().clone();
+		let token_kernels = self.token_kernels().clone();
 
 		// Initialize tx body and sort everything.
-		let body = TransactionBody::init(inputs, outputs, kernels, false)?;
+		let body = TransactionBody::init(
+			inputs,
+			outputs,
+			tokeninputs,
+			tokenoutputs,
+			kernels,
+			token_kernels,
+			false,
+		)?;
 
 		Ok(Block {
 			header: self.header,
@@ -870,6 +992,7 @@ impl Block {
 
 		self.verify_kernel_lock_heights()?;
 		self.verify_coinbase()?;
+		self.verify_token_kernel_sum()?;
 
 		// take the kernel offset for this block (block offset minus previous) and
 		// verify.body.outputs and kernel sums
@@ -920,6 +1043,13 @@ impl Block {
 
 	fn verify_kernel_lock_heights(&self) -> Result<(), Error> {
 		for k in &self.body.kernels {
+			// check we have no kernels with lock_heights greater than current height
+			// no tx can be included in a block earlier than its lock_height
+			if k.lock_height > self.header.height {
+				return Err(Error::KernelLockHeight(k.lock_height));
+			}
+		}
+		for k in &self.body.token_kernels {
 			// check we have no kernels with lock_heights greater than current height
 			// no tx can be included in a block earlier than its lock_height
 			if k.lock_height > self.header.height {

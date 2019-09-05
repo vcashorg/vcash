@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::chain;
-use crate::core::core::{OutputFeatures, OutputIdentifier};
+use crate::core::core::{OutputFeatures, OutputIdentifier, TokenKey, TokenOutputIdentifier};
 use crate::rest::*;
 use crate::types::*;
 use crate::util;
@@ -60,6 +60,45 @@ pub fn get_output(
 			.height;
 		let output_pos = chain.get_output_pos(&x.commit).unwrap_or(0);
 		return Ok((Output::new(&commit, block_height, output_pos), x.clone()));
+	}
+	Err(ErrorKind::NotFound)?
+}
+
+/// Retrieves an token output from the chain given a commit id (a tiny bit iteratively)
+pub fn get_token_output(
+	chain: &Weak<chain::Chain>,
+	id: &str,
+	token_type: TokenKey,
+) -> Result<(TokenOutput, TokenOutputIdentifier), Error> {
+	let c = util::from_hex(String::from(id)).context(ErrorKind::Argument(format!(
+		"Not a valid commitment: {}",
+		id
+	)))?;
+	let commit = Commitment::from_vec(c);
+
+	// We need the features here to be able to generate the necessary hash
+	// to compare against the hash in the output MMR.
+	// For now we can just try both (but this probably needs to be part of the api
+	// params)
+	let outputs = [
+		TokenOutputIdentifier::new(OutputFeatures::TokenIssue, token_type, &commit),
+		TokenOutputIdentifier::new(OutputFeatures::Token, token_type, &commit),
+	];
+
+	let chain = w(chain)?;
+
+	for x in outputs.iter().filter(|x| chain.is_token_unspent(x).is_ok()) {
+		let block_height = chain
+			.get_header_for_token_output(&x)
+			.context(ErrorKind::Internal(
+				"Can't get header for output".to_owned(),
+			))?
+			.height;
+		let output_pos = chain.get_output_pos(&x.commit).unwrap_or(0);
+		return Ok((
+			TokenOutput::new(&commit, token_type, block_height, output_pos),
+			x.clone(),
+		));
 	}
 	Err(ErrorKind::NotFound)?
 }

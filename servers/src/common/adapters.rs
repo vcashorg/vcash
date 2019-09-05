@@ -31,7 +31,7 @@ use crate::common::types::{
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::transaction::Transaction;
 use crate::core::core::verifier_cache::VerifierCache;
-use crate::core::core::{BlockHeader, BlockSums, CompactBlock};
+use crate::core::core::{BlockHeader, BlockSums, BlockTokenSums, CompactBlock};
 use crate::core::pow::Difficulty;
 use crate::core::{core, global};
 use crate::p2p;
@@ -127,13 +127,16 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 		was_requested: bool,
 	) -> Result<bool, chain::Error> {
 		debug!(
-			"Received block {} at {} from {} [in/out/kern: {}/{}/{}] going to process.",
+			"Received block {} at {} from {} [in/out/kern: {}/{}/{}] token [in/out/kern: {}/{}/{}] going to process.",
 			b.hash(),
 			b.header.height,
 			peer_info.addr,
 			b.inputs().len(),
 			b.outputs().len(),
 			b.kernels().len(),
+			b.token_inputs().len(),
+			b.token_outputs().len(),
+			b.token_kernels().len(),
 		);
 		self.process_block(b, peer_info, was_requested)
 	}
@@ -360,11 +363,15 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 	/// at the provided block hash.
 	fn txhashset_read(&self, h: Hash) -> Option<p2p::TxHashSetRead> {
 		match self.chain().txhashset_read(h.clone()) {
-			Ok((out_index, kernel_index, read)) => Some(p2p::TxHashSetRead {
-				output_index: out_index,
-				kernel_index: kernel_index,
-				reader: read,
-			}),
+			Ok((output_index, kernel_index, token_out_index, token_issue_index, read)) => {
+				Some(p2p::TxHashSetRead {
+					output_index,
+					kernel_index,
+					token_out_index,
+					token_issue_index,
+					reader: read,
+				})
+			}
 			Err(e) => {
 				warn!("Couldn't produce txhashset data for block {}: {:?}", h, e);
 				None
@@ -911,6 +918,12 @@ impl pool::BlockChain for PoolToChainAdapter {
 		self.chain()
 			.get_block_sums(hash)
 			.map_err(|_| pool::PoolError::Other(format!("failed to get block_sums")))
+	}
+
+	fn get_block_token_sums(&self, hash: &Hash) -> Result<BlockTokenSums, pool::PoolError> {
+		self.chain()
+			.get_block_token_sums(hash)
+			.map_err(|_| pool::PoolError::Other(format!("failed to get block_token_sums")))
 	}
 
 	fn validate_tx(&self, tx: &Transaction) -> Result<(), pool::PoolError> {

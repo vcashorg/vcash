@@ -270,6 +270,7 @@ mod test {
 	use crate::ser;
 
 	#[test]
+	#[ignore]
 	fn floonet_genesis_hash() {
 		let gen_hash = genesis_floo().hash();
 		println!("floonet genesis hash: {}", gen_hash.to_hex());
@@ -286,6 +287,7 @@ mod test {
 	}
 
 	#[test]
+	#[ignore]
 	fn mainnet_genesis_hash() {
 		let gen_hash = genesis_main().hash();
 		println!("mainnet genesis hash: {}", gen_hash.to_hex());

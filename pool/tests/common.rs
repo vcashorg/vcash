@@ -18,7 +18,9 @@ use self::chain::store::ChainStore;
 use self::chain::types::Tip;
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::verifier_cache::VerifierCache;
-use self::core::core::{Block, BlockHeader, BlockSums, Committed, Transaction};
+use self::core::core::{
+	Block, BlockHeader, BlockSums, BlockTokenSums, Committed, TokenKey, Transaction,
+};
 use self::core::libtx;
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::types::*;
@@ -85,6 +87,26 @@ impl ChainAdapter {
 		};
 		batch.save_block_sums(&header.hash(), &block_sums).unwrap();
 
+		let prev_token_sums =
+			if let Ok(prev_token_sums) = batch.get_block_token_sums(&tip.prev_block_h) {
+				prev_token_sums
+			} else {
+				BlockTokenSums::default()
+			};
+
+		// Verify the kernel sums for the block_sums with the new block applied.
+		let token_kernel_sum = (prev_token_sums, block as &dyn Committed)
+			.verify_token_kernel_sum()
+			.unwrap();
+
+		let block_sums = BlockSums {
+			utxo_sum,
+			kernel_sum,
+		};
+		batch
+			.save_block_token_sums(&header.hash(), &token_kernel_sum)
+			.unwrap();
+
 		batch.commit().unwrap();
 
 		{
@@ -116,6 +138,12 @@ impl BlockChain for ChainAdapter {
 		let s = self.store.read();
 		s.get_block_sums(hash)
 			.map_err(|_| PoolError::Other(format!("failed to get block sums")))
+	}
+
+	fn get_block_token_sums(&self, hash: &Hash) -> Result<BlockTokenSums, PoolError> {
+		let s = self.store.read();
+		s.get_block_token_sums(hash)
+			.map_err(|_| PoolError::Other(format!("failed to get block token sums")))
 	}
 
 	fn validate_tx(&self, tx: &Transaction) -> Result<(), pool::PoolError> {
@@ -224,6 +252,86 @@ where
 		tx_elements.push(libtx::build::output(output_value, key_id));
 	}
 	tx_elements.push(libtx::build::with_fee(fees as u64));
+
+	libtx::build::transaction(tx_elements, keychain, &libtx::ProofBuilder::new(keychain)).unwrap()
+}
+
+pub fn test_issue_token_transaction<K>(
+	keychain: &K,
+	input_value: u64,
+	output_value: u64,
+	token_type: TokenKey,
+	amount: u64,
+) -> Transaction
+where
+	K: Keychain,
+{
+	let fees: i64 = (input_value - output_value) as i64;
+	assert!(fees >= 0);
+
+	let mut tx_elements = Vec::new();
+
+	let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::input(input_value, key_id));
+
+	let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::output(output_value, key_id));
+
+	tx_elements.push(libtx::build::with_fee(fees as u64));
+
+	let key_id = ExtKeychain::derive_key_id(1, amount as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::token_output(
+		output_value,
+		token_type,
+		true,
+		key_id,
+	));
+
+	libtx::build::transaction(tx_elements, keychain, &libtx::ProofBuilder::new(keychain)).unwrap()
+}
+
+pub fn test_token_transaction<K>(
+	keychain: &K,
+	input_value: u64,
+	output_value: u64,
+	token_type: TokenKey,
+	token_input_values: Vec<u64>,
+	token_output_values: Vec<u64>,
+) -> Transaction
+where
+	K: Keychain,
+{
+	let fees: i64 = (input_value - output_value) as i64;
+	assert!(fees >= 0);
+
+	let mut tx_elements = Vec::new();
+
+	let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::input(input_value, key_id));
+
+	let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::output(output_value, key_id));
+
+	tx_elements.push(libtx::build::with_fee(fees as u64));
+
+	for token_input_value in token_input_values {
+		let key_id = ExtKeychain::derive_key_id(1, token_input_value as u32, 0, 0, 0);
+		tx_elements.push(libtx::build::token_input(
+			token_input_value,
+			token_type,
+			key_id,
+		));
+	}
+
+	for token_output_value in token_output_values {
+		let key_id = ExtKeychain::derive_key_id(1, token_output_value as u32, 0, 0, 0);
+		tx_elements.push(libtx::build::token_output(
+			token_output_value,
+			token_type,
+			false,
+			key_id,
+		));
+	}
 
 	libtx::build::transaction(tx_elements, keychain, &libtx::ProofBuilder::new(keychain)).unwrap()
 }

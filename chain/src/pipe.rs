@@ -157,12 +157,15 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	// spend resources reading the full block when its header is invalid
 
 	debug!(
-		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}]",
+		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}] token [in/out/kern: {}/{}/{}]",
 		b.hash(),
 		b.header.height,
 		b.inputs().len(),
 		b.outputs().len(),
 		b.kernels().len(),
+		b.token_inputs().len(),
+		b.token_outputs().len(),
+		b.token_kernels().len(),
 	);
 
 	// Check if we have already processed this block previously.
@@ -217,6 +220,8 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 		// accounting for inputs/outputs/kernels in this new block.
 		// We know there are no double-spends etc. if this verifies successfully.
 		verify_block_sums(b, &mut extension)?;
+
+		verify_block_token_sums(b, &mut extension)?;
 
 		// Apply the block to the txhashset state.
 		// Validate the txhashset roots and sizes against the block header.
@@ -548,6 +553,22 @@ fn verify_block_sums(b: &Block, ext: &mut txhashset::Extension<'_>) -> Result<()
 	Ok(())
 }
 
+fn verify_block_token_sums(b: &Block, ext: &mut txhashset::Extension<'_>) -> Result<(), Error> {
+	// TODO - this is 2 db calls, can we optimize this?
+	// Retrieve the block_token_sums for the previous block.
+	let prev = ext.batch.get_previous_header(&b.header)?;
+	let block_token_sums = ext.batch.get_block_token_sums(&prev.hash())?;
+
+	// Verify the kernel sums for the block_sums with the new block applied.
+	let block_token_sums = (block_token_sums, b as &dyn Committed).verify_token_kernel_sum()?;
+
+	// Save the new block_sums for the new block to the db via the batch.
+	ext.batch
+		.save_block_token_sums(&b.header.hash(), &block_token_sums)?;
+
+	Ok(())
+}
+
 /// Fully validate the block by applying it to the txhashset extension.
 /// Check both the txhashset roots and sizes are correct after applying the block.
 fn apply_block_to_txhashset(
@@ -710,6 +731,8 @@ pub fn rewind_and_apply_fork(b: &Block, ext: &mut txhashset::Extension<'_>) -> R
 		validate_utxo(&fb, ext)?;
 		// Re-verify block_sums to set the block_sums up on this fork correctly.
 		verify_block_sums(&fb, ext)?;
+
+		verify_block_token_sums(&fb, ext)?;
 		// Re-apply the blocks.
 		apply_block_to_txhashset(&fb, ext)?;
 	}

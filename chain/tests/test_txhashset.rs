@@ -137,6 +137,9 @@ fn txhashset_contains_expected_files(dirname: String, path_buf: PathBuf) -> bool
 		"output".to_string(),
 		"rangeproof".to_string(),
 		"kernel".to_string(),
+		"tokenoutput".to_string(),
+		"tokenrangeproof".to_string(),
+		"tokenissueproof".to_string(),
 		"pmmr_hash.bin".to_string(),
 		"pmmr_data.bin".to_string(),
 	];

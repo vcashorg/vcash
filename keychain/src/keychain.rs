@@ -170,6 +170,10 @@ impl Keychain for ExtKeychain {
 			.collect::<Vec<SecretKey>>();
 		neg_keys.extend(keys);
 
+		if pos_keys.len() == 0 && neg_keys.len() == 0 {
+			return Ok(BlindingFactor::zero());
+		}
+
 		let sum = self.secp.blind_sum(pos_keys, neg_keys)?;
 		Ok(BlindingFactor::from_secret_key(sum))
 	}

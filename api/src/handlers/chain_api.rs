@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::utils::{get_output, w};
+use super::utils::{get_output, get_token_output, w};
 use crate::chain;
 use crate::core::core::hash::Hashed;
+use crate::core::core::TokenKey;
 use crate::rest::*;
 use crate::router::{Handler, ResponseFuture};
 use crate::types::*;
@@ -193,6 +194,146 @@ impl Handler for OutputHandler {
 		match right_path_element!(req) {
 			"byids" => result_to_response(self.outputs_by_ids(&req)),
 			"byheight" => result_to_response(self.outputs_block_batch(&req)),
+			_ => response(StatusCode::BAD_REQUEST, ""),
+		}
+	}
+}
+
+// Supports retrieval of multiple outputs in a single request -
+// GET /v1/chain/tokenoutputs/byids?token_type=***&id=xxx,yyy,zzz
+// GET /v1/chain/tokenoutputs/byids?token_type=***&id=xxx&id=yyy&id=zzz
+// GET /v1/chain/tokenoutputs/byheight?token_type=***&start_height=101&end_height=200
+pub struct TokenOutputHandler {
+	pub chain: Weak<chain::Chain>,
+}
+
+impl TokenOutputHandler {
+	fn get_token_output(&self, id: &str, token_type: TokenKey) -> Result<TokenOutput, Error> {
+		let res = get_token_output(&self.chain, id, token_type)?;
+		Ok(res.0)
+	}
+
+	fn token_outputs_by_ids(&self, req: &Request<Body>) -> Result<Vec<TokenOutput>, Error> {
+		let mut commitments: Vec<String> = vec![];
+
+		let query = must_get_query!(req);
+		let params = QueryParams::from(query);
+		params.process_multival_param("id", |id| commitments.push(id.to_owned()));
+
+		let token_type = self.parse_token_type(&params)?;
+
+		let mut outputs: Vec<TokenOutput> = vec![];
+		for x in commitments {
+			match self.get_token_output(&x, token_type) {
+				Ok(output) => outputs.push(output),
+				Err(e) => error!(
+					"Failure to get output for commitment {} with error {}",
+					x, e
+				),
+			};
+		}
+		Ok(outputs)
+	}
+
+	fn token_outputs_at_height(
+		&self,
+		token_type: TokenKey,
+		block_height: u64,
+		commitments: Vec<Commitment>,
+		include_proof: bool,
+	) -> Result<BlockOutputs, Error> {
+		let header = w(&self.chain)?
+			.get_header_by_height(block_height)
+			.map_err(|_| ErrorKind::NotFound)?;
+
+		// TODO - possible to compact away blocks we care about
+		// in the period between accepting the block and refreshing the wallet
+		let chain = w(&self.chain)?;
+		let block = chain
+			.get_block(&header.hash())
+			.map_err(|_| ErrorKind::NotFound)?;
+		let outputs = block
+			.token_outputs()
+			.iter()
+			.filter(|output| {
+				(commitments.is_empty() || commitments.contains(&output.commit))
+					&& (output.token_type == token_type)
+			})
+			.map(|output| {
+				OutputPrintable::from_token_output(
+					output,
+					chain.clone(),
+					Some(&header),
+					include_proof,
+					true,
+				)
+			})
+			.collect::<Result<Vec<_>, _>>()
+			.context(ErrorKind::Internal("chain error".to_owned()))?;
+
+		Ok(BlockOutputs {
+			header: BlockHeaderInfo::from_header(&header),
+			outputs: outputs,
+		})
+	}
+
+	// returns outputs for a specified range of blocks
+	fn token_outputs_block_batch(&self, req: &Request<Body>) -> Result<Vec<BlockOutputs>, Error> {
+		let mut commitments: Vec<Commitment> = vec![];
+
+		let query = must_get_query!(req);
+		let params = QueryParams::from(query);
+		params.process_multival_param("id", |id| {
+			if let Ok(x) = util::from_hex(String::from(id)) {
+				commitments.push(Commitment::from_vec(x));
+			}
+		});
+
+		let token_type = self.parse_token_type(&params)?;
+
+		let start_height = parse_param!(params, "start_height", 1);
+		let end_height = parse_param!(params, "end_height", 1);
+		let include_rp = params.get("include_rp").is_some();
+
+		debug!(
+			"token_outputs_block_batch: {} {}-{}, {:?}, {:?}",
+			token_type, start_height, end_height, commitments, include_rp,
+		);
+
+		let mut return_vec = vec![];
+		for i in (start_height..=end_height).rev() {
+			if let Ok(res) =
+				self.token_outputs_at_height(token_type, i, commitments.clone(), include_rp)
+			{
+				if res.outputs.len() > 0 {
+					return_vec.push(res);
+				}
+			}
+		}
+
+		Ok(return_vec)
+	}
+
+	fn parse_token_type(&self, params: &QueryParams) -> Result<TokenKey, Error> {
+		let token_type_param = params.get("token_type");
+		if token_type_param.is_none() {
+			return Err(ErrorKind::RequestError("no token type".to_owned()))?;
+		}
+
+		let token_type = match TokenKey::from_hex(token_type_param.unwrap()) {
+			Ok(s) => Ok(s),
+			Err(_e) => return Err(ErrorKind::RequestError("token type hex error".to_owned()))?,
+		};
+
+		return token_type;
+	}
+}
+
+impl Handler for TokenOutputHandler {
+	fn get(&self, req: Request<Body>) -> ResponseFuture {
+		match right_path_element!(req) {
+			"byids" => result_to_response(self.token_outputs_by_ids(&req)),
+			"byheight" => result_to_response(self.token_outputs_block_batch(&req)),
 			_ => response(StatusCode::BAD_REQUEST, ""),
 		}
 	}

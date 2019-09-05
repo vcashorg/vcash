@@ -17,7 +17,7 @@
 use std::fs::File;
 
 use crate::core::core::pmmr::RewindablePMMR;
-use crate::core::core::{BlockHeader, TxKernel};
+use crate::core::core::{BlockHeader, TokenTxKernel, TxKernel};
 use crate::error::{Error, ErrorKind};
 use crate::store::Batch;
 use grin_store::pmmr::PMMRBackend;
@@ -25,6 +25,7 @@ use grin_store::pmmr::PMMRBackend;
 /// Rewindable (but readonly) view of the kernel set (based on kernel MMR).
 pub struct RewindableKernelView<'a> {
 	pmmr: RewindablePMMR<'a, TxKernel, PMMRBackend<TxKernel>>,
+	token_pmmr: RewindablePMMR<'a, TokenTxKernel, PMMRBackend<TokenTxKernel>>,
 	batch: &'a Batch<'a>,
 	header: BlockHeader,
 }
@@ -33,11 +34,13 @@ impl<'a> RewindableKernelView<'a> {
 	/// Build a new readonly kernel view.
 	pub fn new(
 		pmmr: RewindablePMMR<'a, TxKernel, PMMRBackend<TxKernel>>,
+		token_pmmr: RewindablePMMR<'a, TokenTxKernel, PMMRBackend<TokenTxKernel>>,
 		batch: &'a Batch<'_>,
 		header: BlockHeader,
 	) -> RewindableKernelView<'a> {
 		RewindableKernelView {
 			pmmr,
+			token_pmmr,
 			batch,
 			header,
 		}
@@ -56,6 +59,10 @@ impl<'a> RewindableKernelView<'a> {
 	pub fn rewind(&mut self, header: &BlockHeader) -> Result<(), Error> {
 		self.pmmr
 			.rewind(header.kernel_mmr_size)
+			.map_err(&ErrorKind::TxHashSetErr)?;
+
+		self.token_pmmr
+			.rewind(header.token_kernel_mmr_size)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 
 		// Update our header to reflect the one we rewound to.
@@ -78,6 +85,16 @@ impl<'a> RewindableKernelView<'a> {
 			))
 			.into());
 		}
+
+		let token_root = self.token_pmmr.root().map_err(|_| ErrorKind::InvalidRoot)?;
+		if token_root != self.header.token_kernel_root {
+			return Err(ErrorKind::InvalidTxHashSet(format!(
+				"Token Kernel root at {} does not match",
+				self.header.height
+			))
+			.into());
+		}
+
 		Ok(())
 	}
 

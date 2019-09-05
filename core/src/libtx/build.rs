@@ -25,7 +25,10 @@
 //! build::transaction(vec![input_rand(75), output_rand(42), output_rand(32),
 //!   with_fee(1)])
 
-use crate::core::{Input, Output, OutputFeatures, Transaction, TxKernel};
+use crate::core::{
+	token_kernel_sig_msg, Input, Output, OutputFeatures, TokenInput, TokenKernelFeatures, TokenKey,
+	TokenOutput, TokenTxKernel, Transaction, TxKernel,
+};
 use crate::keychain::{BlindSum, BlindingFactor, Identifier, Keychain};
 use crate::libtx::proof::{self, ProofBuild};
 use crate::libtx::{aggsig, Error};
@@ -45,10 +48,11 @@ where
 
 /// Function type returned by the transaction combinators. Transforms a
 /// (Transaction, BlindSum) pair into another, provided some context.
-pub type Append<K, B> = dyn for<'a> Fn(
-	&'a mut Context<'_, K, B>,
-	(Transaction, TxKernel, BlindSum),
-) -> (Transaction, TxKernel, BlindSum);
+pub type Append<K, B> =
+	dyn for<'a> Fn(
+		&'a mut Context<'_, K, B>,
+		(Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum),
+	) -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum);
 
 /// Adds an input with the provided value and blinding key to the transaction
 /// being built.
@@ -58,7 +62,9 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |build, (tx, kern, sum)| -> (Transaction, TxKernel, BlindSum) {
+		move |build,
+		      (tx, kern, token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
 			let commit = build
 				.keychain
 				.commit(value, &key_id, &SwitchCommitmentType::Regular)
@@ -67,7 +73,47 @@ where
 			(
 				tx.with_input(input),
 				kern,
+				token_kern,
 				sum.sub_key_id(key_id.to_value_path(value)),
+				token_sum,
+			)
+		},
+	)
+}
+
+/// Adds an token input with the provided value and blinding key to the transaction
+/// being built.
+pub fn build_token_input<K, B>(
+	value: u64,
+	token_type: TokenKey,
+	is_issue_token: bool,
+	key_id: Identifier,
+) -> Box<Append<K, B>>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	Box::new(
+		move |build,
+		      (tx, kern, mut token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
+			let commit = build
+				.keychain
+				.commit(value, &key_id, &SwitchCommitmentType::Regular)
+				.unwrap(); // TODO: proper support for different switch commitment schemes
+			let features = if is_issue_token {
+				OutputFeatures::TokenIssue
+			} else {
+				OutputFeatures::Token
+			};
+			let input = TokenInput::new(features, token_type, commit);
+			token_kern.features = TokenKernelFeatures::PlainToken;
+			(
+				tx.with_token_input(input),
+				kern,
+				token_kern,
+				sum,
+				token_sum.sub_key_id(key_id.to_value_path(value)),
 			)
 		},
 	)
@@ -85,6 +131,25 @@ where
 		value, key_id
 	);
 	build_input(value, OutputFeatures::Plain, key_id)
+}
+
+/// Adds an token input with the provided value and blinding key to the transaction
+/// being built.
+pub fn token_input<K, B>(
+	value: u64,
+	token_type: TokenKey,
+	is_issue_token: bool,
+	key_id: Identifier,
+) -> Box<Append<K, B>>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	debug!(
+		"Building token input (spending regular output): {}, {}, {}",
+		value, token_type, key_id
+	);
+	build_token_input(value, token_type, is_issue_token, key_id)
 }
 
 /// Adds a coinbase input spending a coinbase output.
@@ -105,7 +170,9 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |build, (tx, kern, sum)| -> (Transaction, TxKernel, BlindSum) {
+		move |build,
+		      (tx, kern, token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
 			// TODO: proper support for different switch commitment schemes
 			let switch = &SwitchCommitmentType::Regular;
 
@@ -131,7 +198,93 @@ where
 					proof: rproof,
 				}),
 				kern,
+				token_kern,
 				sum.add_key_id(key_id.to_value_path(value)),
+				token_sum,
+			)
+		},
+	)
+}
+
+/// Adds an output with the provided value and key identifier from the
+/// keychain.
+pub fn token_output<K, B>(
+	value: u64,
+	token_type: TokenKey,
+	is_token_issue: bool,
+	key_id: Identifier,
+) -> Box<Append<K, B>>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	Box::new(
+		move |build,
+		      (tx, kern, mut token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
+			// TODO: proper support for different switch commitment schemes
+			let switch = &SwitchCommitmentType::Regular;
+
+			let commit = build.keychain.commit(value, &key_id, switch).unwrap();
+
+			debug!(
+				"Building token output: {}, {}, {:?}",
+				token_type.clone(),
+				value,
+				commit
+			);
+
+			let rproof = proof::create(
+				build.keychain,
+				build.builder,
+				value,
+				&key_id,
+				switch,
+				commit.clone(),
+				None,
+			)
+			.unwrap();
+
+			token_kern.token_type = token_type.clone();
+			if is_token_issue {
+				let secp = build.keychain.secp();
+				let value_commit = secp.commit_value(value).unwrap();
+				let out_commit = commit;
+				let excess = secp
+					.commit_sum(vec![out_commit], vec![value_commit])
+					.unwrap();
+				let pubkey = excess.to_pubkey(&secp).unwrap();
+				let msg =
+					token_kernel_sig_msg(token_type, 0, TokenKernelFeatures::IssueToken).unwrap();
+				let sig = aggsig::sign_from_key_id(
+					&secp,
+					build.keychain,
+					&msg,
+					value,
+					&key_id,
+					None,
+					Some(&pubkey),
+				)
+				.unwrap();
+
+				token_kern.excess = excess;
+				token_kern.excess_sig = sig;
+			}
+
+			(
+				tx.with_token_output(TokenOutput {
+					features: match is_token_issue {
+						true => OutputFeatures::TokenIssue,
+						false => OutputFeatures::Token,
+					},
+					token_type,
+					commit,
+					proof: rproof,
+				}),
+				kern,
+				token_kern,
+				sum,
+				token_sum.add_key_id(key_id.to_value_path(value)),
 			)
 		},
 	)
@@ -144,8 +297,10 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |_build, (tx, kern, sum)| -> (Transaction, TxKernel, BlindSum) {
-			(tx, kern.with_fee(fee), sum)
+		move |_build,
+		      (tx, kern, token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
+			(tx, kern.with_fee(fee), token_kern, sum, token_sum)
 		},
 	)
 }
@@ -157,8 +312,16 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |_build, (tx, kern, sum)| -> (Transaction, TxKernel, BlindSum) {
-			(tx, kern.with_lock_height(lock_height), sum)
+		move |_build,
+		      (tx, kern, token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
+			(
+				tx,
+				kern.with_lock_height(lock_height),
+				token_kern,
+				sum,
+				token_sum,
+			)
 		},
 	)
 }
@@ -172,8 +335,16 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |_build, (tx, kern, sum)| -> (Transaction, TxKernel, BlindSum) {
-			(tx, kern, sum.add_blinding_factor(excess.clone()))
+		move |_build,
+		      (tx, kern, token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
+			(
+				tx,
+				kern,
+				token_kern,
+				sum.add_blinding_factor(excess.clone()),
+				token_sum,
+			)
 		},
 	)
 }
@@ -185,8 +356,16 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |_build, (tx, kern, sum)| -> (Transaction, TxKernel, BlindSum) {
-			(tx.with_offset(offset.clone()), kern, sum)
+		move |_build,
+		      (tx, kern, token_kern, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
+			(
+				tx.with_offset(offset.clone()),
+				kern,
+				token_kern,
+				sum,
+				token_sum,
+			)
 		},
 	)
 }
@@ -201,9 +380,16 @@ where
 {
 	assert_eq!(tx.kernels().len(), 1);
 	let kern = tx.kernels_mut().remove(0);
+	let token_kern = if tx.token_kernels().len() == 0 {
+		TokenTxKernel::empty()
+	} else {
+		tx.token_kernels_mut().remove(0)
+	};
 	Box::new(
-		move |_build, (_, _, sum)| -> (Transaction, TxKernel, BlindSum) {
-			(tx.clone(), kern.clone(), sum)
+		move |_build,
+		      (_, _, _, sum, token_sum)|
+		      -> (Transaction, TxKernel, TokenTxKernel, BlindSum, BlindSum) {
+			(tx.clone(), kern.clone(), token_kern.clone(), sum, token_sum)
 		},
 	)
 }
@@ -222,24 +408,36 @@ pub fn partial_transaction<K, B>(
 	elems: Vec<Box<Append<K, B>>>,
 	keychain: &K,
 	builder: &B,
-) -> Result<(Transaction, BlindingFactor), Error>
+) -> Result<(Transaction, BlindingFactor, BlindingFactor), Error>
 where
 	K: Keychain,
 	B: ProofBuild,
 {
 	let mut ctx = Context { keychain, builder };
-	let (tx, kern, sum) = elems.iter().fold(
-		(Transaction::empty(), TxKernel::empty(), BlindSum::new()),
+	let (tx, kern, token_kern, sum, token_sum) = elems.iter().fold(
+		(
+			Transaction::empty(),
+			TxKernel::empty(),
+			TokenTxKernel::empty(),
+			BlindSum::new(),
+			BlindSum::new(),
+		),
 		|acc, elem| elem(&mut ctx, acc),
 	);
 	let blind_sum = ctx.keychain.blind_sum(&sum)?;
+	let token_blind_sum = ctx.keychain.blind_sum(&token_sum)?;
 
 	// we only support building a tx with a single kernel via build::transaction()
 	assert!(tx.kernels().is_empty());
 
 	let tx = tx.with_kernel(kern);
 
-	Ok((tx, blind_sum))
+	if !token_kern.is_empty() {
+		let tx = tx.with_token_kernel(token_kern);
+		return Ok((tx, blind_sum, token_blind_sum));
+	}
+
+	Ok((tx, blind_sum, token_blind_sum))
 }
 
 /// Builds a complete transaction.
@@ -253,8 +451,14 @@ where
 	B: ProofBuild,
 {
 	let mut ctx = Context { keychain, builder };
-	let (mut tx, mut kern, sum) = elems.iter().fold(
-		(Transaction::empty(), TxKernel::empty(), BlindSum::new()),
+	let (mut tx, mut kern, mut token_kern, sum, token_sum) = elems.iter().fold(
+		(
+			Transaction::empty(),
+			TxKernel::empty(),
+			TokenTxKernel::empty(),
+			BlindSum::new(),
+			BlindSum::new(),
+		),
 		|acc, elem| elem(&mut ctx, acc),
 	);
 	let blind_sum = ctx.keychain.blind_sum(&sum)?;
@@ -282,6 +486,27 @@ where
 	assert!(tx.kernels().is_empty());
 	let tx = tx.with_kernel(kern);
 	assert_eq!(tx.kernels().len(), 1);
+
+	if !token_kern.is_empty() {
+		let token_blind_sum = ctx.keychain.blind_sum(&token_sum)?;
+		let token_msg = token_kern.msg_to_sign()?;
+		let token_key = token_blind_sum.secret_key(&keychain.secp())?;
+		token_kern.excess = ctx.keychain.secp().commit(0, token_key)?;
+		let pubkey = &token_kern.excess.to_pubkey(&keychain.secp())?;
+		token_kern.excess_sig = aggsig::sign_with_blinding(
+			&keychain.secp(),
+			&token_msg,
+			&token_blind_sum,
+			Some(&pubkey),
+		)
+		.unwrap();
+
+		assert!(tx.token_kernels().is_empty());
+		let tx = tx.with_token_kernel(token_kern);
+		assert_eq!(tx.token_kernels().len(), 1);
+
+		return Ok(tx);
+	}
 
 	Ok(tx)
 }

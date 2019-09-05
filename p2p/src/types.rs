@@ -462,6 +462,8 @@ pub struct TxHashSetRead {
 	pub output_index: u64,
 	/// Kernel tree index the receiver should rewind to
 	pub kernel_index: u64,
+	pub token_out_index: u64,
+	pub token_issue_index: u64,
 	/// Binary stream for the txhashset zipped data
 	pub reader: File,
 }

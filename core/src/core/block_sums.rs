@@ -16,9 +16,11 @@
 //! Allows fast "full" verification of kernel sums at a given block height.
 
 use crate::core::committed::Committed;
+use crate::core::transaction::TokenKey;
 use crate::ser::{self, Readable, Reader, Writeable, Writer};
 use crate::util::secp::pedersen::Commitment;
 use crate::util::secp_static;
+use std::collections::HashMap;
 
 /// The output_sum and kernel_sum for a given block.
 /// This is used to validate the next block being processed by applying
@@ -77,5 +79,133 @@ impl<'a> Committed for (BlockSums, &'a dyn Committed) {
 		let mut kernels = vec![self.0.kernel_sum];
 		kernels.extend(&self.1.kernels_committed());
 		kernels
+	}
+
+	fn token_inputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		HashMap::new()
+	}
+
+	fn token_outputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		HashMap::new()
+	}
+
+	fn token_kernels_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		HashMap::new()
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockTokenSums {
+	pub token_issue_commit_map: HashMap<TokenKey, Commitment>,
+	pub token_utxo_sum_map: HashMap<TokenKey, Commitment>,
+	pub token_kernel_sum_map: HashMap<TokenKey, Commitment>,
+}
+
+impl Writeable for BlockTokenSums {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		writer.write_u16(self.token_issue_commit_map.len() as u16)?;
+		for (token_type, commit) in &self.token_issue_commit_map {
+			token_type.write(writer)?;
+			writer.write_fixed_bytes(commit)?;
+		}
+
+		writer.write_u16(self.token_utxo_sum_map.len() as u16)?;
+		for (token_type, commit) in &self.token_utxo_sum_map {
+			token_type.write(writer)?;
+			writer.write_fixed_bytes(commit)?;
+		}
+
+		writer.write_u16(self.token_kernel_sum_map.len() as u16)?;
+		for (token_type, excess) in &self.token_kernel_sum_map {
+			token_type.write(writer)?;
+			writer.write_fixed_bytes(excess)?;
+		}
+
+		Ok(())
+	}
+}
+
+impl Readable for BlockTokenSums {
+	fn read(reader: &mut dyn Reader) -> Result<BlockTokenSums, ser::Error> {
+		let mut token_issue_commit_map: HashMap<TokenKey, Commitment> = HashMap::new();
+		let length = reader.read_u16()?;
+		for _ in 0..length {
+			let tokey_type = TokenKey::read(reader)?;
+			let commit = Commitment::read(reader)?;
+			token_issue_commit_map.insert(tokey_type, commit);
+		}
+
+		let mut token_utxo_sum_map: HashMap<TokenKey, Commitment> = HashMap::new();
+		let length = reader.read_u16()?;
+		for _ in 0..length {
+			let tokey_type = TokenKey::read(reader)?;
+			let commit = Commitment::read(reader)?;
+			token_utxo_sum_map.insert(tokey_type, commit);
+		}
+
+		let mut token_kernel_sum_map: HashMap<TokenKey, Commitment> = HashMap::new();
+		let length = reader.read_u16()?;
+		for _ in 0..length {
+			let tokey_type = TokenKey::read(reader)?;
+			let commit = Commitment::read(reader)?;
+			token_kernel_sum_map.insert(tokey_type, commit);
+		}
+
+		Ok(BlockTokenSums {
+			token_issue_commit_map,
+			token_utxo_sum_map,
+			token_kernel_sum_map,
+		})
+	}
+}
+
+impl Default for BlockTokenSums {
+	fn default() -> BlockTokenSums {
+		BlockTokenSums {
+			token_issue_commit_map: HashMap::new(),
+			token_utxo_sum_map: HashMap::new(),
+			token_kernel_sum_map: HashMap::new(),
+		}
+	}
+}
+
+impl<'a> Committed for (BlockTokenSums, &'a dyn Committed) {
+	fn inputs_committed(&self) -> Vec<Commitment> {
+		vec![]
+	}
+
+	fn outputs_committed(&self) -> Vec<Commitment> {
+		vec![]
+	}
+
+	fn kernels_committed(&self) -> Vec<Commitment> {
+		vec![]
+	}
+
+	fn token_inputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		let mut token_inputs_commit = self.1.token_inputs_committed();
+		for (token_key, commit) in self.0.token_issue_commit_map.iter() {
+			token_inputs_commit.insert(token_key.clone(), vec![commit.clone()]);
+		}
+
+		token_inputs_commit
+	}
+
+	fn token_outputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		let mut token_outputs_commit = self.1.token_outputs_committed();
+		for (token_key, commit) in self.0.token_utxo_sum_map.iter() {
+			token_outputs_commit.insert(token_key.clone(), vec![commit.clone()]);
+		}
+
+		token_outputs_commit
+	}
+
+	fn token_kernels_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		let mut token_kernel_commit = self.1.token_kernels_committed();
+		for (token_key, commit) in self.0.token_kernel_sum_map.iter() {
+			token_kernel_commit.insert(token_key.clone(), vec![commit.clone()]);
+		}
+
+		token_kernel_commit
 	}
 }

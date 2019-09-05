@@ -29,7 +29,8 @@ use grin_core as core;
 use grin_p2p as p2p;
 use grin_servers as servers;
 use grin_util as util;
-
+use std::thread;
+use std::time::Duration;
 mod cmd;
 pub mod tui;
 
@@ -64,6 +65,7 @@ fn log_build_info() {
 }
 
 fn main() {
+	thread::sleep(Duration::from_secs(18));
 	let exit_code = real_main();
 	std::process::exit(exit_code);
 }

@@ -2508,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "vcash"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "blake2-rfc 0.2.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "built 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
