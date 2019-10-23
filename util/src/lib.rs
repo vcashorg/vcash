@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,9 +46,6 @@ pub mod types;
 pub use crate::types::{LogLevel, LoggingConfig, ZeroingString};
 
 pub mod macros;
-
-// read_exact and write_all impls
-pub mod read_write;
 
 // other utils
 #[allow(unused_imports)]

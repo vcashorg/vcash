@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -129,9 +129,9 @@ where
 
 	/// Computes the root of the MMR. Find all the peaks in the current
 	/// tree and "bags" them to get a single peak.
-	pub fn root(&self) -> Hash {
+	pub fn root(&self) -> Result<Hash, String> {
 		if self.is_empty() {
-			return ZERO_HASH;
+			return Ok(ZERO_HASH);
 		}
 		let mut res = None;
 		for peak in self.peaks().iter().rev() {
@@ -140,7 +140,7 @@ where
 				Some(rhash) => Some((*peak, rhash).hash_with_index(self.unpruned_size())),
 			}
 		}
-		res.expect("no root, invalid tree")
+		res.ok_or_else(|| "no root, invalid tree".to_owned())
 	}
 
 	/// Build a Merkle proof for the element at the given position.
@@ -213,13 +213,6 @@ where
 	/// sending the txhashset zip file to another node for fast-sync.
 	pub fn snapshot(&mut self, header: &BlockHeader) -> Result<(), String> {
 		self.backend.snapshot(header)?;
-		Ok(())
-	}
-
-	/// Truncate the MMR by rewinding back to empty state.
-	pub fn truncate(&mut self) -> Result<(), String> {
-		self.backend.rewind(0, &Bitmap::create())?;
-		self.last_pos = 0;
 		Ok(())
 	}
 

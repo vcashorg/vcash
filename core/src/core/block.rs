@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,8 +28,10 @@ use crate::core::compact_block::{CompactBlock, CompactBlockBody};
 use crate::core::hash::{DefaultHashable, Hash, Hashed, ZERO_HASH};
 use crate::core::verifier_cache::VerifierCache;
 use crate::core::{
-	transaction, Commitment, Input, Output, Transaction, TransactionBody, TxKernel, Weighting,
+	transaction, Commitment, Input, KernelFeatures, Output, Transaction, TransactionBody, TxKernel,
+	Weighting,
 };
+
 use crate::global;
 use crate::keychain::{self, BlindingFactor};
 use crate::pow::{Difficulty, Proof, ProofOfWork};
@@ -135,7 +137,7 @@ pub struct HeaderEntry {
 }
 
 impl Readable for HeaderEntry {
-	fn read(reader: &mut Reader) -> Result<HeaderEntry, ser::Error> {
+	fn read(reader: &mut dyn Reader) -> Result<HeaderEntry, ser::Error> {
 		let hash = Hash::read(reader)?;
 		let timestamp = reader.read_u64()?;
 		let total_difficulty = Difficulty::read(reader)?;
@@ -384,7 +386,7 @@ impl BlockHeader {
 	pub fn pre_pow(&self) -> Vec<u8> {
 		let mut header_buf = vec![];
 		{
-			let mut writer = ser::BinWriter::new(&mut header_buf);
+			let mut writer = ser::BinWriter::default(&mut header_buf);
 			self.write_pre_pow(&mut writer).unwrap();
 			self.pow.write_pre_pow(&mut writer).unwrap();
 			writer.write_u64(self.pow.nonce).unwrap();
@@ -440,14 +442,14 @@ impl AuxBitHeader {
 	/// Serialize the AuxBitHeader as a hex string (for api json endpoints)
 	pub fn to_hex(&self) -> String {
 		let mut vec = Vec::new();
-		ser::serialize(&mut vec, &self).expect("serialization failed");
+		ser::serialize_default(&mut vec, &self).expect("serialization failed");
 		util::to_hex(vec)
 	}
 
 	/// Convert hex string representation back to a Merkle proof instance
 	pub fn from_hex(hex: &str) -> Result<AuxBitHeader, String> {
 		let bytes = util::from_hex(hex.to_string()).unwrap();
-		let res = ser::deserialize(&mut &bytes[..])
+		let res = ser::deserialize_default(&mut &bytes[..])
 			.map_err(|_| "failed to deserialize a AuxBitHeader".to_string())?;
 		Ok(res)
 	}
@@ -802,10 +804,7 @@ impl Block {
 
 	/// Sum of all fees (inputs less outputs) in the block
 	pub fn total_fees(&self) -> u64 {
-		self.body
-			.kernels
-			.iter()
-			.fold(0, |acc, ref x| acc.saturating_add(x.fee))
+		self.body.fee()
 	}
 
 	/// Matches any output with a potential spending input, eliminating them
@@ -922,8 +921,10 @@ impl Block {
 		for k in &self.body.kernels {
 			// check we have no kernels with lock_heights greater than current height
 			// no tx can be included in a block earlier than its lock_height
-			if k.lock_height > self.header.height {
-				return Err(Error::KernelLockHeight(k.lock_height));
+			if let KernelFeatures::HeightLocked { lock_height, .. } = k.features {
+				if lock_height > self.header.height {
+					return Err(Error::KernelLockHeight(lock_height));
+				}
 			}
 		}
 		Ok(())

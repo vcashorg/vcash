@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,6 +21,7 @@
 use std::cmp::{max, min};
 
 use crate::core::block::HeaderVersion;
+use crate::core::hash::{Hash, ZERO_HASH};
 use crate::global;
 use crate::pow::Difficulty;
 use crate::pow::{biguint_to_compact, compact_to_biguint};
@@ -84,8 +85,8 @@ pub const YEAR_HEIGHT: u64 = 52 * WEEK_HEIGHT;
 /// Number of blocks before a coinbase matures and can be spent
 pub const COINBASE_MATURITY: u64 = DAY_HEIGHT;
 
-/// Ratio the secondary proof of work should take over the primary, as a
-/// function of block height (time). Starts at 90% losing a percent
+/// Target ratio of secondary proof of work to primary proof of work,
+/// as a function of block height (time). Starts at 90% losing a percent
 /// approximately every week. Represented as an integer between 0 and 100.
 pub fn secondary_pow_ratio(height: u64) -> u64 {
 	90u64.saturating_sub(height / (2 * YEAR_HEIGHT / 90))
@@ -226,6 +227,8 @@ pub const INITIAL_DIFFICULTY: u64 = 1_000_000 * UNIT_DIFFICULTY;
 /// take place
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeaderInfo {
+	/// Block hash, ZERO_HASH when this is a sythetic entry.
+	pub block_hash: Hash,
 	/// Timestamp of the header, 1 when not used (returned info)
 	pub timestamp: u64,
 	/// Network difficulty or next difficulty to use
@@ -239,12 +242,14 @@ pub struct HeaderInfo {
 impl HeaderInfo {
 	/// Default constructor
 	pub fn new(
+		block_hash: Hash,
 		timestamp: u64,
 		difficulty: Difficulty,
 		secondary_scaling: u32,
 		is_secondary: bool,
 	) -> HeaderInfo {
 		HeaderInfo {
+			block_hash,
 			timestamp,
 			difficulty,
 			secondary_scaling,
@@ -256,6 +261,7 @@ impl HeaderInfo {
 	/// PoW factor
 	pub fn from_ts_diff(timestamp: u64, difficulty: Difficulty) -> HeaderInfo {
 		HeaderInfo {
+			block_hash: ZERO_HASH,
 			timestamp,
 			difficulty,
 			secondary_scaling: global::initial_graph_weight(),
@@ -268,6 +274,7 @@ impl HeaderInfo {
 	/// timestamp
 	pub fn from_diff_scaling(difficulty: Difficulty, secondary_scaling: u32) -> HeaderInfo {
 		HeaderInfo {
+			block_hash: ZERO_HASH,
 			timestamp: 1,
 			difficulty,
 			secondary_scaling,

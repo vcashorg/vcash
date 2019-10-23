@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -84,6 +84,11 @@ where
 			// If we are not a leaf get hash ignoring the remove log.
 			self.backend.get_from_file(pos)
 		}
+	}
+
+	/// Iterator over current (unpruned, unremoved) leaf positions.
+	pub fn leaf_pos_iter(&self) -> impl Iterator<Item = u64> + '_ {
+		self.backend.leaf_pos_iter()
 	}
 
 	/// Is the MMR empty?

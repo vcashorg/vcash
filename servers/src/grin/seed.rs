@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -154,7 +154,9 @@ fn monitor_peers(
 				let interval = Utc::now().timestamp() - x.last_banned;
 				// Unban peer
 				if interval >= config.ban_window() {
-					peers.unban_peer(x.addr);
+					if let Err(e) = peers.unban_peer(x.addr) {
+						error!("failed to unban peer {}: {:?}", x.addr, e);
+					}
 					debug!(
 						"monitor_peers: unbanned {} after {} seconds",
 						x.addr, interval
@@ -182,9 +184,12 @@ fn monitor_peers(
 	);
 
 	// maintenance step first, clean up p2p server peers
-	peers.clean_peers(config.peer_max_count() as usize);
+	peers.clean_peers(
+		config.peer_max_inbound_count() as usize,
+		config.peer_max_outbound_count() as usize,
+	);
 
-	if peers.healthy_peers_mix() {
+	if peers.enough_outbound_peers() {
 		return;
 	}
 
@@ -224,20 +229,23 @@ fn monitor_peers(
 
 	// find some peers from our db
 	// and queue them up for a connection attempt
+	// intentionally make too many attempts (2x) as some (most?) will fail
+	// as many nodes in our db are not publicly accessible
+	let max_peer_attempts = 128;
 	let new_peers = peers.find_peers(
 		p2p::State::Healthy,
 		p2p::Capabilities::UNKNOWN,
-		config.peer_max_count() as usize,
+		max_peer_attempts as usize,
 	);
 
-	for p in new_peers.iter().filter(|p| !peers.is_known(p.addr)) {
-		trace!(
-			"monitor_peers: on {}:{}, queue to soon try {}",
-			config.host,
-			config.port,
-			p.addr,
-		);
-		tx.send(p.addr).unwrap();
+	// Only queue up connection attempts for candidate peers where we
+	// are confident we do not yet know about this peer.
+	// The call to is_known() may fail due to contention on the peers map.
+	// Do not attempt any connection where is_known() fails for any reason.
+	for p in new_peers {
+		if let Ok(false) = peers.is_known(p.addr) {
+			tx.send(p.addr).unwrap();
+		}
 	}
 }
 
@@ -293,15 +301,15 @@ fn listen_for_addrs(
 	let addrs: Vec<PeerAddr> = rx.try_iter().collect();
 
 	// If we have a healthy number of outbound peers then we are done here.
-	if peers.peer_count() > peers.peer_outbound_count() && peers.healthy_peers_mix() {
+	if peers.enough_outbound_peers() {
 		return;
 	}
 
-	// Try to connect to (up to max peers) peer addresses.
 	// Note: We drained the rx queue earlier to keep it under control.
-	// Even if there are many addresses to try we will only try a bounded number of them.
+	// Even if there are many addresses to try we will only try a bounded number of them for safety.
 	let connect_min_interval = 30;
-	for addr in addrs.into_iter().take(p2p.config.peer_max_count() as usize) {
+	let max_outbound_attempts = 128;
+	for addr in addrs.into_iter().take(max_outbound_attempts) {
 		// ignore the duplicate connecting to same peer within 30 seconds
 		let now = Utc::now();
 		if let Some(last_connect_time) = connecting_history.get(&addr) {

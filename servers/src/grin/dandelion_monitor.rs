@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ use crate::util::{RwLock, StopState};
 pub fn monitor_transactions(
 	dandelion_config: DandelionConfig,
 	tx_pool: Arc<RwLock<TransactionPool>>,
-	adapter: Arc<DandelionAdapter>,
+	adapter: Arc<dyn DandelionAdapter>,
 	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 	stop_state: Arc<StopState>,
 ) -> std::io::Result<thread::JoinHandle<()>> {
@@ -102,7 +102,7 @@ fn select_txs_cutoff(pool: &Pool, cutoff_secs: u16) -> Vec<PoolEntry> {
 fn process_fluff_phase(
 	dandelion_config: &DandelionConfig,
 	tx_pool: &Arc<RwLock<TransactionPool>>,
-	adapter: &Arc<DandelionAdapter>,
+	adapter: &Arc<dyn DandelionAdapter>,
 	verifier_cache: &Arc<RwLock<dyn VerifierCache>>,
 ) -> Result<(), PoolError> {
 	// Take a write lock on the txpool for the duration of this processing.
@@ -113,9 +113,7 @@ fn process_fluff_phase(
 		return Ok(());
 	}
 
-	let cutoff_secs = dandelion_config
-		.aggregation_secs
-		.expect("aggregation secs config missing");
+	let cutoff_secs = dandelion_config.aggregation_secs;
 	let cutoff_entries = select_txs_cutoff(&tx_pool.stempool, cutoff_secs);
 
 	// If epoch is expired, fluff *all* outstanding entries in stempool.
@@ -149,12 +147,7 @@ fn process_fluff_phase(
 		verifier_cache.clone(),
 	)?;
 
-	let src = TxSource {
-		debug_name: "fluff".to_string(),
-		identifier: "?.?.?.?".to_string(),
-	};
-
-	tx_pool.add_to_pool(src, agg_tx, false, &header)?;
+	tx_pool.add_to_pool(TxSource::Fluff, agg_tx, false, &header)?;
 	Ok(())
 }
 
@@ -165,10 +158,7 @@ fn process_expired_entries(
 	// Take a write lock on the txpool for the duration of this processing.
 	let mut tx_pool = tx_pool.write();
 
-	let embargo_secs = dandelion_config
-		.embargo_secs
-		.expect("embargo_secs config missing")
-		+ thread_rng().gen_range(0, 31);
+	let embargo_secs = dandelion_config.embargo_secs + thread_rng().gen_range(0, 31);
 	let expired_entries = select_txs_cutoff(&tx_pool.stempool, embargo_secs);
 
 	if expired_entries.is_empty() {
@@ -179,14 +169,9 @@ fn process_expired_entries(
 
 	let header = tx_pool.chain_head()?;
 
-	let src = TxSource {
-		debug_name: "embargo_expired".to_string(),
-		identifier: "?.?.?.?".to_string(),
-	};
-
 	for entry in expired_entries {
 		let txhash = entry.tx.hash();
-		match tx_pool.add_to_pool(src.clone(), entry.tx, false, &header) {
+		match tx_pool.add_to_pool(TxSource::EmbargoExpired, entry.tx, false, &header) {
 			Ok(_) => info!(
 				"dand_mon: embargo expired for {}, fluffed successfully.",
 				txhash

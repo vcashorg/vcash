@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ use sha2::{Sha256, Sha512};
 
 use crate::base58;
 
-// Create alias for HMAC-SHA256
+// Create alias for HMAC-SHA512
 type HmacSha512 = Hmac<Sha512>;
 
 /// A chain code
@@ -122,7 +122,7 @@ impl BIP32Hasher for BIP32GrinHasher {
 		b"IamVoldemort".to_owned()
 	}
 	fn init_sha512(&mut self, seed: &[u8]) {
-		self.hmac_sha512 = HmacSha512::new_varkey(seed).expect("HMAC can take key of any size");;
+		self.hmac_sha512 = HmacSha512::new_varkey(seed).expect("HMAC can take key of any size");
 	}
 	fn append_sha512(&mut self, value: &[u8]) {
 		self.hmac_sha512.input(value);
@@ -716,7 +716,7 @@ mod tests {
 			b"Bitcoin seed".to_owned()
 		}
 		fn init_sha512(&mut self, seed: &[u8]) {
-			self.hmac_sha512 = HmacSha512::new_varkey(seed).expect("HMAC can take key of any size");;
+			self.hmac_sha512 = HmacSha512::new_varkey(seed).expect("HMAC can take key of any size");
 		}
 		fn append_sha512(&mut self, value: &[u8]) {
 			self.hmac_sha512.input(value);
@@ -900,5 +900,4 @@ mod tests {
 		serde_round_trip!(ChildNumber::from_hardened_idx(1));
 		serde_round_trip!(ChildNumber::from_hardened_idx((1 << 31) - 1));
 	}
-
 }

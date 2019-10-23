@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,13 +28,19 @@ lazy_static! {
 pub struct BasicAuthMiddleware {
 	api_basic_auth: String,
 	basic_realm: &'static HeaderValue,
+	ignore_uri: Option<String>,
 }
 
 impl BasicAuthMiddleware {
-	pub fn new(api_basic_auth: String, basic_realm: &'static HeaderValue) -> BasicAuthMiddleware {
+	pub fn new(
+		api_basic_auth: String,
+		basic_realm: &'static HeaderValue,
+		ignore_uri: Option<String>,
+	) -> BasicAuthMiddleware {
 		BasicAuthMiddleware {
 			api_basic_auth,
 			basic_realm,
+			ignore_uri,
 		}
 	}
 }
@@ -51,6 +57,11 @@ impl Handler for BasicAuthMiddleware {
 		};
 		if req.method().as_str() == "OPTIONS" {
 			return next_handler.call(req, handlers);
+		}
+		if let Some(u) = self.ignore_uri.as_ref() {
+			if req.uri().path() == u {
+				return next_handler.call(req, handlers);
+			}
 		}
 		if req.headers().contains_key(AUTHORIZATION)
 			&& verify_slices_are_equal(

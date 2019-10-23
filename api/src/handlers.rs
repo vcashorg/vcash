@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ use self::blocks_api::HeaderHandler;
 use self::chain_api::ChainCompactHandler;
 use self::chain_api::ChainHandler;
 use self::chain_api::ChainValidationHandler;
+use self::chain_api::KernelHandler;
 use self::chain_api::OutputHandler;
 use self::peers_api::PeerHandler;
 use self::peers_api::PeersAllHandler;
@@ -61,15 +62,20 @@ pub fn start_rest_apis(
 	chain: Arc<chain::Chain>,
 	tx_pool: Arc<RwLock<pool::TransactionPool>>,
 	peers: Arc<p2p::Peers>,
+	sync_state: Arc<chain::SyncState>,
 	api_secret: Option<String>,
 	tls_config: Option<TLSConfig>,
 ) -> bool {
 	let mut apis = ApiServer::new();
-	let mut router = build_router(chain, tx_pool, peers).expect("unable to build API router");
+	let mut router =
+		build_router(chain, tx_pool, peers, sync_state).expect("unable to build API router");
 	if let Some(api_secret) = api_secret {
 		let api_basic_auth = format!("Basic {}", util::to_base64(&format!("grin:{}", api_secret)));
-		let basic_auth_middleware =
-			Arc::new(BasicAuthMiddleware::new(api_basic_auth, &GRIN_BASIC_REALM));
+		let basic_auth_middleware = Arc::new(BasicAuthMiddleware::new(
+			api_basic_auth,
+			&GRIN_BASIC_REALM,
+			None,
+		));
 		router.add_middleware(basic_auth_middleware);
 	}
 
@@ -89,6 +95,7 @@ pub fn build_router(
 	chain: Arc<chain::Chain>,
 	tx_pool: Arc<RwLock<pool::TransactionPool>>,
 	peers: Arc<p2p::Peers>,
+	sync_state: Arc<chain::SyncState>,
 ) -> Result<Router, RouterError> {
 	let route_list = vec![
 		"get blocks".to_string(),
@@ -96,6 +103,7 @@ pub fn build_router(
 		"get chain".to_string(),
 		"post chain/compact".to_string(),
 		"get chain/validate".to_string(),
+		"get chain/kernels/xxx?min_height=yyy&max_height=zzz".to_string(),
 		"get chain/outputs/byids?id=xxx,yyy,zzz".to_string(),
 		"get chain/outputs/byheight?start_height=101&end_height=200".to_string(),
 		"get status".to_string(),
@@ -119,7 +127,9 @@ pub fn build_router(
 	let output_handler = OutputHandler {
 		chain: Arc::downgrade(&chain),
 	};
-
+	let kernel_handler = KernelHandler {
+		chain: Arc::downgrade(&chain),
+	};
 	let block_handler = BlockHandler {
 		chain: Arc::downgrade(&chain),
 	};
@@ -138,6 +148,7 @@ pub fn build_router(
 	let status_handler = StatusHandler {
 		chain: Arc::downgrade(&chain),
 		peers: Arc::downgrade(&peers),
+		sync_state: Arc::downgrade(&sync_state),
 	};
 	let kernel_download_handler = KernelDownloadHandler {
 		peers: Arc::downgrade(&peers),
@@ -171,6 +182,7 @@ pub fn build_router(
 	router.add_route("/v1/headers/*", Arc::new(header_handler))?;
 	router.add_route("/v1/chain", Arc::new(chain_tip_handler))?;
 	router.add_route("/v1/chain/outputs/*", Arc::new(output_handler))?;
+	router.add_route("/v1/chain/kernels/*", Arc::new(kernel_handler))?;
 	router.add_route("/v1/chain/compact", Arc::new(chain_compact_handler))?;
 	router.add_route("/v1/chain/validate", Arc::new(chain_validation_handler))?;
 	router.add_route("/v1/txhashset/*", Arc::new(txhashset_handler))?;

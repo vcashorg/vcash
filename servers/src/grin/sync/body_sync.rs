@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,8 +17,7 @@ use chrono::Duration;
 use std::cmp;
 use std::sync::Arc;
 
-use crate::chain;
-use crate::common::types::{SyncState, SyncStatus};
+use crate::chain::{self, SyncState, SyncStatus};
 use crate::core::core::hash::Hash;
 use crate::p2p;
 
@@ -139,7 +138,7 @@ impl BodySync {
 			let mut peers_iter = peers.iter().cycle();
 			for hash in hashes_to_get.clone() {
 				if let Some(peer) = peers_iter.next() {
-					if let Err(e) = peer.send_block_request(*hash) {
+					if let Err(e) = peer.send_block_request(*hash, chain::Options::SYNC) {
 						debug!("Skipped request to {}: {:?}", peer.info.addr, e);
 						peer.stop();
 					} else {

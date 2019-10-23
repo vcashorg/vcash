@@ -27,9 +27,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-use crate::chain;
+use crate::chain::{self, SyncState};
 use crate::common::stats::{StratumStats, WorkerStats};
-use crate::common::types::{StratumServerConfig, SyncState};
+use crate::common::types::StratumServerConfig;
 use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{get_grin_magic_data_str, Block};

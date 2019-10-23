@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -88,14 +88,13 @@ pub fn init_logger(config: Option<LoggingConfig>) {
 
 		let level_stdout = convert_log_level(&c.stdout_log_level);
 		let level_file = convert_log_level(&c.file_log_level);
-		let level_minimum;
 
 		// Determine minimum logging level for Root logger
-		if level_stdout > level_file {
-			level_minimum = level_stdout;
+		let level_minimum = if level_stdout > level_file {
+			level_stdout
 		} else {
-			level_minimum = level_file;
-		}
+			level_file
+		};
 
 		// Start logger
 		let stdout = ConsoleAppender::builder()

@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,9 +20,9 @@
 //! `serialize` or `deserialize` functions on them as appropriate.
 
 use crate::core::hash::{DefaultHashable, Hash, Hashed};
+use crate::global::PROTOCOL_VERSION;
 use crate::keychain::{BlindingFactor, Identifier, IDENTIFIER_SIZE};
 use crate::num_bigint::BigUint;
-use crate::util::read_write::read_exact;
 use crate::util::secp::constants::{
 	AGG_SIGNATURE_SIZE, COMPRESSED_PUBLIC_KEY_SIZE, MAX_PROOF_SIZE, PEDERSEN_COMMITMENT_SIZE,
 	SECRET_KEY_SIZE,
@@ -32,11 +32,10 @@ use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::secp::Signature;
 use crate::util::secp::{ContextFlag, Secp256k1};
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt};
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::io::{self, Read, Write};
 use std::marker;
-use std::time::Duration;
-use std::{cmp, error, fmt};
+use std::{cmp, error};
 
 /// Possible errors deriving from serializing or deserializing.
 #[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -135,6 +134,9 @@ pub enum SerializationMode {
 pub trait Writer {
 	/// The mode this serializer is writing in
 	fn serialization_mode(&self) -> SerializationMode;
+
+	/// Protocol version for version specific serialization rules.
+	fn protocol_version(&self) -> ProtocolVersion;
 
 	/// Writes a u8 as bytes
 	fn write_u8(&mut self, n: u8) -> Result<(), Error> {
@@ -254,6 +256,9 @@ pub trait Reader {
 	/// Consumes a byte from the reader, producing an error if it doesn't have
 	/// the expected value
 	fn expect_u8(&mut self, val: u8) -> Result<u8, Error>;
+	/// Access to underlying protocol version to support
+	/// version specific deserialization logic.
+	fn protocol_version(&self) -> ProtocolVersion;
 }
 
 /// Trait that every type that can be serialized as binary must implement.
@@ -320,6 +325,64 @@ where
 	Ok(res)
 }
 
+/// Protocol version for serialization/deserialization.
+/// Note: This is used in various places including but limited to
+/// the p2p layer and our local db storage layer.
+/// We may speak multiple versions to various peers and a potentially *different*
+/// version for our local db.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialOrd, PartialEq, Serialize)]
+pub struct ProtocolVersion(pub u32);
+
+impl ProtocolVersion {
+	/// The max protocol version supported.
+	pub const MAX: u32 = std::u32::MAX;
+
+	/// Protocol version as u32 to allow for convenient exhaustive matching on values.
+	pub fn value(&self) -> u32 {
+		self.0
+	}
+
+	/// Our default "local" protocol version.
+	/// This protocol version is provided to peers as part of the Hand/Shake
+	/// negotiation in the p2p layer. Connected peers will negotiate a suitable
+	/// protocol version for serialization/deserialization of p2p messages.
+	pub fn local() -> ProtocolVersion {
+		ProtocolVersion(PROTOCOL_VERSION)
+	}
+
+	/// We need to specify a protocol version for our local database.
+	/// Regardless of specific version used when sending/receiving data between peers
+	/// we need to take care with serialization/deserialization of data locally in the db.
+	pub fn local_db() -> ProtocolVersion {
+		ProtocolVersion(1)
+	}
+}
+
+impl fmt::Display for ProtocolVersion {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+
+impl From<ProtocolVersion> for u32 {
+	fn from(v: ProtocolVersion) -> u32 {
+		v.0
+	}
+}
+
+impl Writeable for ProtocolVersion {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), Error> {
+		writer.write_u32(self.0)
+	}
+}
+
+impl Readable for ProtocolVersion {
+	fn read(reader: &mut dyn Reader) -> Result<ProtocolVersion, Error> {
+		let version = reader.read_u32()?;
+		Ok(ProtocolVersion(version))
+	}
+}
+
 /// Trait that every type that can be deserialized from binary must implement.
 /// Reads directly to a Reader, a utility type thinly wrapping an
 /// underlying Read implementation.
@@ -332,28 +395,53 @@ where
 }
 
 /// Deserializes a Readable from any std::io::Read implementation.
-pub fn deserialize<T: Readable>(source: &mut dyn Read) -> Result<T, Error> {
-	let mut reader = BinReader { source };
+pub fn deserialize<T: Readable>(
+	source: &mut dyn Read,
+	version: ProtocolVersion,
+) -> Result<T, Error> {
+	let mut reader = BinReader::new(source, version);
 	T::read(&mut reader)
 }
 
+/// Deserialize a Readable based on our default "local" protocol version.
+pub fn deserialize_default<T: Readable>(source: &mut dyn Read) -> Result<T, Error> {
+	deserialize(source, ProtocolVersion::local())
+}
+
 /// Serializes a Writeable into any std::io::Write implementation.
-pub fn serialize<W: Writeable>(sink: &mut dyn Write, thing: &W) -> Result<(), Error> {
-	let mut writer = BinWriter { sink };
+pub fn serialize<W: Writeable>(
+	sink: &mut dyn Write,
+	version: ProtocolVersion,
+	thing: &W,
+) -> Result<(), Error> {
+	let mut writer = BinWriter::new(sink, version);
 	thing.write(&mut writer)
+}
+
+/// Serialize a Writeable according to our default "local" protocol version.
+pub fn serialize_default<W: Writeable>(sink: &mut dyn Write, thing: &W) -> Result<(), Error> {
+	serialize(sink, ProtocolVersion::local(), thing)
 }
 
 /// Utility function to serialize a writeable directly in memory using a
 /// Vec<u8>.
-pub fn ser_vec<W: Writeable>(thing: &W) -> Result<Vec<u8>, Error> {
+pub fn ser_vec<W: Writeable>(thing: &W, version: ProtocolVersion) -> Result<Vec<u8>, Error> {
 	let mut vec = vec![];
-	serialize(&mut vec, thing)?;
+	serialize(&mut vec, version, thing)?;
 	Ok(vec)
 }
 
 /// Utility to read from a binary source
 pub struct BinReader<'a> {
 	source: &'a mut dyn Read,
+	version: ProtocolVersion,
+}
+
+impl<'a> BinReader<'a> {
+	/// Constructor for a new BinReader for the provided source and protocol version.
+	pub fn new(source: &'a mut dyn Read, version: ProtocolVersion) -> BinReader<'a> {
+		BinReader { source, version }
+	}
 }
 
 fn map_io_err(err: io::Error) -> Error {
@@ -426,24 +514,28 @@ impl<'a> Reader for BinReader<'a> {
 			})
 		}
 	}
+
+	fn protocol_version(&self) -> ProtocolVersion {
+		self.version
+	}
 }
 
 /// A reader that reads straight off a stream.
 /// Tracks total bytes read so we can verify we read the right number afterwards.
 pub struct StreamingReader<'a> {
 	total_bytes_read: u64,
+	version: ProtocolVersion,
 	stream: &'a mut dyn Read,
-	timeout: Duration,
 }
 
 impl<'a> StreamingReader<'a> {
 	/// Create a new streaming reader with the provided underlying stream.
 	/// Also takes a duration to be used for each individual read_exact call.
-	pub fn new(stream: &'a mut dyn Read, timeout: Duration) -> StreamingReader<'a> {
+	pub fn new(stream: &'a mut dyn Read, version: ProtocolVersion) -> StreamingReader<'a> {
 		StreamingReader {
 			total_bytes_read: 0,
+			version,
 			stream,
-			timeout,
 		}
 	}
 
@@ -453,12 +545,12 @@ impl<'a> StreamingReader<'a> {
 	}
 }
 
+/// Note: We use read_fixed_bytes() here to ensure our "async" I/O behaves as expected.
 impl<'a> Reader for StreamingReader<'a> {
 	fn read_u8(&mut self) -> Result<u8, Error> {
 		let buf = self.read_fixed_bytes(1)?;
 		Ok(buf[0])
 	}
-
 	fn read_u16(&mut self) -> Result<u16, Error> {
 		let buf = self.read_fixed_bytes(2)?;
 		Ok(BigEndian::read_u16(&buf[..]))
@@ -514,7 +606,7 @@ impl<'a> Reader for StreamingReader<'a> {
 	/// Read a fixed number of bytes.
 	fn read_fixed_bytes(&mut self, len: usize) -> Result<Vec<u8>, Error> {
 		let mut buf = vec![0u8; len];
-		read_exact(&mut self.stream, &mut buf, self.timeout, true)?;
+		self.stream.read_exact(&mut buf)?;
 		self.total_bytes_read += len as u64;
 		Ok(buf)
 	}
@@ -529,6 +621,10 @@ impl<'a> Reader for StreamingReader<'a> {
 				received: vec![b],
 			})
 		}
+	}
+
+	fn protocol_version(&self) -> ProtocolVersion {
+		self.version
 	}
 }
 
@@ -696,12 +792,18 @@ impl<T: Hashed> VerifySortedAndUnique<T> for Vec<T> {
 /// to write numbers, byte vectors, hashes, etc.
 pub struct BinWriter<'a> {
 	sink: &'a mut dyn Write,
+	version: ProtocolVersion,
 }
 
 impl<'a> BinWriter<'a> {
 	/// Wraps a standard Write in a new BinWriter
-	pub fn new(write: &'a mut dyn Write) -> BinWriter<'a> {
-		BinWriter { sink: write }
+	pub fn new(sink: &'a mut dyn Write, version: ProtocolVersion) -> BinWriter<'a> {
+		BinWriter { sink, version }
+	}
+
+	/// Constructor for BinWriter with default "local" protocol version.
+	pub fn default(sink: &'a mut dyn Write) -> BinWriter<'a> {
+		BinWriter::new(sink, ProtocolVersion::local())
 	}
 }
 
@@ -714,6 +816,10 @@ impl<'a> Writer for BinWriter<'a> {
 		let bs = fixed.as_ref();
 		self.sink.write_all(bs)?;
 		Ok(())
+	}
+
+	fn protocol_version(&self) -> ProtocolVersion {
+		self.version
 	}
 }
 

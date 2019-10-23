@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -78,14 +78,14 @@ impl MerkleProof {
 	/// Serialize the Merkle proof as a hex string (for api json endpoints)
 	pub fn to_hex(&self) -> String {
 		let mut vec = Vec::new();
-		ser::serialize(&mut vec, &self).expect("serialization failed");
+		ser::serialize_default(&mut vec, &self).expect("serialization failed");
 		util::to_hex(vec)
 	}
 
 	/// Convert hex string representation back to a Merkle proof instance
 	pub fn from_hex(hex: &str) -> Result<MerkleProof, String> {
 		let bytes = util::from_hex(hex.to_string()).unwrap();
-		let res = ser::deserialize(&mut &bytes[..])
+		let res = ser::deserialize_default(&mut &bytes[..])
 			.map_err(|_| "failed to deserialize a Merkle Proof".to_string())?;
 		Ok(res)
 	}

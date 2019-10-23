@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,6 +31,9 @@ use crate::mining::mine_block;
 use crate::pool;
 use crate::util;
 use crate::util::StopState;
+use grin_chain::SyncState;
+use std::thread;
+use std::time::Duration;
 
 pub struct Miner {
 	config: StratumServerConfig,
@@ -38,7 +41,7 @@ pub struct Miner {
 	tx_pool: Arc<RwLock<pool::TransactionPool>>,
 	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 	stop_state: Arc<StopState>,
-
+	sync_state: Arc<SyncState>,
 	// Just to hold the port we're on, so this miner can be identified
 	// while watching debug output
 	debug_output_id: String,
@@ -53,6 +56,7 @@ impl Miner {
 		tx_pool: Arc<RwLock<pool::TransactionPool>>,
 		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 		stop_state: Arc<StopState>,
+		sync_state: Arc<SyncState>,
 	) -> Miner {
 		Miner {
 			config,
@@ -61,6 +65,7 @@ impl Miner {
 			verifier_cache,
 			debug_output_id: String::from("none"),
 			stop_state,
+			sync_state,
 		}
 	}
 
@@ -139,6 +144,10 @@ impl Miner {
 		loop {
 			if self.stop_state.is_stopped() {
 				break;
+			}
+
+			while self.sync_state.is_syncing() {
+				thread::sleep(Duration::from_secs(5));
 			}
 
 			trace!("in miner loop. key_id: {:?}", key_id);

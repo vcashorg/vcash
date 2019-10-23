@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ use lmdb_zero as lmdb;
 use lmdb_zero::traits::CreateCursor;
 use lmdb_zero::LmdbResultExt;
 
-use crate::core::ser;
+use crate::core::ser::{self, ProtocolVersion};
 use crate::util::{RwLock, RwLockReadGuard};
 
 /// number of bytes to grow the database by when needed
@@ -54,20 +54,26 @@ impl From<lmdb::error::Error> for Error {
 }
 
 /// unwraps the inner option by converting the none case to a not found error
-pub fn option_to_not_found<T>(res: Result<Option<T>, Error>, field_name: &str) -> Result<T, Error> {
+pub fn option_to_not_found<T, F>(res: Result<Option<T>, Error>, field_name: F) -> Result<T, Error>
+where
+	F: Fn() -> String,
+{
 	match res {
-		Ok(None) => Err(Error::NotFoundErr(field_name.to_owned())),
+		Ok(None) => Err(Error::NotFoundErr(field_name())),
 		Ok(Some(o)) => Ok(o),
 		Err(e) => Err(e),
 	}
 }
 
+const DEFAULT_DB_VERSION: ProtocolVersion = ProtocolVersion(2);
+
 /// LMDB-backed store facilitating data access and serialization. All writes
 /// are done through a Batch abstraction providing atomicity.
 pub struct Store {
 	env: Arc<lmdb::Environment>,
-	db: RwLock<Option<Arc<lmdb::Database<'static>>>>,
+	db: Arc<RwLock<Option<Arc<lmdb::Database<'static>>>>>,
 	name: String,
+	version: ProtocolVersion,
 }
 
 impl Store {
@@ -109,8 +115,9 @@ impl Store {
 		);
 		let res = Store {
 			env: Arc::new(env),
-			db: RwLock::new(None),
+			db: Arc::new(RwLock::new(None)),
 			name: db_name,
+			version: DEFAULT_DB_VERSION,
 		};
 
 		{
@@ -122,6 +129,17 @@ impl Store {
 			)?));
 		}
 		Ok(res)
+	}
+
+	/// Construct a new store using a specific protocol version.
+	/// Permits access to the db with legacy protocol versions for db migrations.
+	pub fn with_version(&self, version: ProtocolVersion) -> Store {
+		Store {
+			env: self.env.clone(),
+			db: self.db.clone(),
+			name: self.name.clone(),
+			version: version,
+		}
 	}
 
 	/// Opens the database environment
@@ -230,7 +248,7 @@ impl Store {
 	) -> Result<Option<T>, Error> {
 		let res: lmdb::error::Result<&[u8]> = access.get(&db.as_ref().unwrap(), key);
 		match res.to_opt() {
-			Ok(Some(mut res)) => match ser::deserialize(&mut res) {
+			Ok(Some(mut res)) => match ser::deserialize(&mut res, self.version) {
 				Ok(res) => Ok(Some(res)),
 				Err(e) => Err(Error::SerErr(format!("{}", e))),
 			},
@@ -259,6 +277,7 @@ impl Store {
 			cursor,
 			seek: false,
 			prefix: from.to_vec(),
+			version: self.version,
 			_marker: marker::PhantomData,
 		})
 	}
@@ -269,11 +288,8 @@ impl Store {
 		if self.needs_resize()? {
 			self.do_resize()?;
 		}
-		let txn = lmdb::WriteTransaction::new(self.env.clone())?;
-		Ok(Batch {
-			store: self,
-			tx: txn,
-		})
+		let tx = lmdb::WriteTransaction::new(self.env.clone())?;
+		Ok(Batch { store: self, tx })
 	}
 }
 
@@ -293,10 +309,21 @@ impl<'a> Batch<'a> {
 		Ok(())
 	}
 
-	/// Writes a single key and its `Writeable` value to the db. Encapsulates
-	/// serialization.
+	/// Writes a single key and its `Writeable` value to the db.
+	/// Encapsulates serialization using the (default) version configured on the store instance.
 	pub fn put_ser<W: ser::Writeable>(&self, key: &[u8], value: &W) -> Result<(), Error> {
-		let ser_value = ser::ser_vec(value);
+		self.put_ser_with_version(key, value, self.store.version)
+	}
+
+	/// Writes a single key and its `Writeable` value to the db.
+	/// Encapsulates serialization using the specified protocol version.
+	pub fn put_ser_with_version<W: ser::Writeable>(
+		&self,
+		key: &[u8],
+		value: &W,
+		version: ProtocolVersion,
+	) -> Result<(), Error> {
+		let ser_value = ser::ser_vec(value, version);
 		match ser_value {
 			Ok(data) => self.put(key, &data),
 			Err(err) => Err(Error::SerErr(format!("{}", err))),
@@ -350,7 +377,7 @@ impl<'a> Batch<'a> {
 	}
 }
 
-/// An iterator thad produces Readable instances back. Wraps the lower level
+/// An iterator that produces Readable instances back. Wraps the lower level
 /// DBIterator and deserializes the returned values.
 pub struct SerIterator<T>
 where
@@ -360,6 +387,7 @@ where
 	cursor: Arc<lmdb::Cursor<'static, 'static>>,
 	seek: bool,
 	prefix: Vec<u8>,
+	version: ProtocolVersion,
 	_marker: marker::PhantomData<T>,
 }
 
@@ -392,8 +420,8 @@ where
 {
 	fn deser_if_prefix_match(&self, key: &[u8], value: &[u8]) -> Option<(Vec<u8>, T)> {
 		let plen = self.prefix.len();
-		if plen == 0 || key[0..plen] == self.prefix[..] {
-			if let Ok(value) = ser::deserialize(&mut &value[..]) {
+		if plen == 0 || (key.len() >= plen && key[0..plen] == self.prefix[..]) {
+			if let Ok(value) = ser::deserialize(&mut &value[..], self.version) {
 				Some((key.to_vec(), value))
 			} else {
 				None

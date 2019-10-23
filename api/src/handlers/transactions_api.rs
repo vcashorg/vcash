@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ impl TxHashSetHandler {
 		Ok(TxHashSetNode::get_last_n_output(w(&self.chain)?, distance))
 	}
 
-	// gets last n outputs inserted in to the tree
+	// gets last n rangeproofs inserted in to the tree
 	fn get_last_n_rangeproof(&self, distance: u64) -> Result<Vec<TxHashSetNode>, Error> {
 		Ok(TxHashSetNode::get_last_n_rangeproof(
 			w(&self.chain)?,
@@ -62,7 +62,7 @@ impl TxHashSetHandler {
 		))
 	}
 
-	// gets last n outputs inserted in to the tree
+	// gets last n kernels inserted in to the tree
 	fn get_last_n_kernel(&self, distance: u64) -> Result<Vec<TxHashSetNode>, Error> {
 		Ok(TxHashSetNode::get_last_n_kernel(w(&self.chain)?, distance))
 	}
@@ -70,8 +70,8 @@ impl TxHashSetHandler {
 	// allows traversal of utxo set
 	fn outputs(&self, start_index: u64, mut max: u64) -> Result<OutputListing, Error> {
 		//set a limit here
-		if max > 1000 {
-			max = 1000;
+		if max > 10_000 {
+			max = 10_000;
 		}
 		let chain = w(&self.chain)?;
 		let outputs = chain

@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -111,7 +111,7 @@ impl<'a> UTXOView<'a> {
 			.unwrap_or(0);
 
 		if pos > 0 {
-			// If we have not yet reached 1,000 / 1,440 blocks then
+			// If we have not yet reached 1440 blocks then
 			// we can fail immediately as coinbase cannot be mature.
 			if height < global::coinbase_maturity() {
 				return Err(ErrorKind::ImmatureCoinbase.into());

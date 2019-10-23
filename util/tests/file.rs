@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,11 +28,9 @@ fn copy_dir() {
 	let original_path = Path::new("./target/tmp2/original");
 	let copy_path = Path::new("./target/tmp2/copy");
 	file::copy_dir_to(original_path, copy_path).unwrap();
-	let original_files = file::list_files("./target/tmp2/original".to_string());
-	let copied_files = file::list_files("./target/tmp2/copy".to_string());
-	for i in 1..5 {
-		assert_eq!(copied_files[i], original_files[i]);
-	}
+	let original_files = file::list_files(&Path::new("./target/tmp2/original"));
+	let copied_files = file::list_files(&Path::new("./target/tmp2/copy"));
+	assert_eq!(original_files, copied_files);
 	fs::remove_dir_all(root).unwrap();
 }
 

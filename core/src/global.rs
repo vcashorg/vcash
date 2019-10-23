@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,10 +16,9 @@
 //! having to pass them all over the place, but aren't consensus values.
 //! should be used sparingly.
 
-use crate::consensus::HeaderInfo;
 use crate::consensus::{
-	BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT, DIFFICULTY_ADJUST_WINDOW,
-	MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
+	HeaderInfo, BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT,
+	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
 };
 use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
 /// An enum collecting sets of parameters used throughout the
@@ -27,9 +26,15 @@ use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
 /// different sets of parameters for different purposes,
 /// e.g. CI, User testing, production values
 use crate::util::RwLock;
-
 /// Define these here, as they should be developer-set, not really tweakable
 /// by users
+
+/// The default "local" protocol version for this node.
+/// We negotiate compatible versions with each peer via Hand/Shake.
+/// Note: We also use a specific (possible different) protocol version
+/// for both the backend database and MMR data files.
+/// This defines the p2p layer protocol version for this node.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Automated testing edge_bits
 pub const AUTOMATED_TESTING_MIN_EDGE_BITS: u8 = 9;
@@ -50,7 +55,10 @@ pub const AUTOMATED_TESTING_COINBASE_MATURITY: u64 = 3;
 pub const USER_TESTING_COINBASE_MATURITY: u64 = 3;
 
 /// Testing cut through horizon in blocks
-pub const TESTING_CUT_THROUGH_HORIZON: u32 = 70;
+pub const AUTOMATED_TESTING_CUT_THROUGH_HORIZON: u32 = 20;
+
+/// Testing cut through horizon in blocks
+pub const USER_TESTING_CUT_THROUGH_HORIZON: u32 = 70;
 
 /// Testing state sync threshold in blocks
 pub const TESTING_STATE_SYNC_THRESHOLD: u32 = 20;
@@ -86,6 +94,12 @@ pub const HALVINGINTERVAL: u64 = 210000;
 
 /// Testing Subsidy amount half height
 pub const AUTOTEST_HALVINGINTERVAL: u64 = 50;
+
+/// Number of blocks to reuse a txhashset zip for (automated testing and user testing).
+pub const TESTING_TXHASHSET_ARCHIVE_INTERVAL: u64 = 10;
+
+/// Number of blocks to reuse a txhashset zip for.
+pub const TXHASHSET_ARCHIVE_INTERVAL: u64 = 12 * 60;
 
 /// Types of chain a server can run with, dictates the genesis block and
 /// and mining parameters used.
@@ -274,8 +288,8 @@ pub fn max_block_weight() -> usize {
 pub fn cut_through_horizon() -> u32 {
 	let param_ref = CHAIN_TYPE.read();
 	match *param_ref {
-		ChainTypes::AutomatedTesting => TESTING_CUT_THROUGH_HORIZON,
-		ChainTypes::UserTesting => TESTING_CUT_THROUGH_HORIZON,
+		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_CUT_THROUGH_HORIZON,
+		ChainTypes::UserTesting => USER_TESTING_CUT_THROUGH_HORIZON,
 		_ => CUT_THROUGH_HORIZON,
 	}
 }
@@ -290,16 +304,14 @@ pub fn state_sync_threshold() -> u32 {
 	}
 }
 
-/// Are we in automated testing mode?
-pub fn is_automated_testing_mode() -> bool {
+/// Number of blocks to reuse a txhashset zip for.
+pub fn txhashset_archive_interval() -> u64 {
 	let param_ref = CHAIN_TYPE.read();
-	ChainTypes::AutomatedTesting == *param_ref
-}
-
-/// Are we in user testing mode?
-pub fn is_user_testing_mode() -> bool {
-	let param_ref = CHAIN_TYPE.read();
-	ChainTypes::UserTesting == *param_ref
+	match *param_ref {
+		ChainTypes::AutomatedTesting => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
+		ChainTypes::UserTesting => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
+		_ => TXHASHSET_ARCHIVE_INTERVAL,
+	}
 }
 
 /// Are we in production mode?
@@ -316,37 +328,6 @@ pub fn is_production_mode() -> bool {
 pub fn is_floonet() -> bool {
 	let param_ref = CHAIN_TYPE.read();
 	ChainTypes::Floonet == *param_ref
-}
-
-/// Are we for real?
-pub fn is_mainnet() -> bool {
-	let param_ref = CHAIN_TYPE.read();
-	ChainTypes::Mainnet == *param_ref
-}
-
-/// Helper function to get a nonce known to create a valid POW on
-/// the genesis block, to prevent it taking ages. Should be fine for now
-/// as the genesis block POW solution turns out to be the same for every new
-/// block chain at the moment
-pub fn get_genesis_nonce() -> u64 {
-	//	let param_ref = CHAIN_TYPE.read();
-	//	match *param_ref {
-	//		// won't make a difference
-	//		ChainTypes::AutomatedTesting => 0,
-	//		// Magic nonce for current genesis block at cuckatoo15
-	//		ChainTypes::UserTesting => 27944,
-	//		// Placeholder, obviously not the right value
-	//		ChainTypes::Floonet => 0,
-	//		// Placeholder, obviously not the right value
-	//		ChainTypes::Mainnet => 0,
-	//	}
-	0
-}
-
-/// Short name representing the current chain type ("floo", "main", etc.)
-pub fn chain_shortname() -> String {
-	let param_ref = CHAIN_TYPE.read();
-	param_ref.shortname()
 }
 
 /// Converts an iterator of block difficulty data to more a more manageable

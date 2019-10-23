@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,7 +25,9 @@ use std::{fmt, ops};
 
 use crate::blake2::blake2b::Blake2b;
 
-use crate::ser::{self, AsFixedBytes, Error, FixedLength, Readable, Reader, Writeable, Writer};
+use crate::ser::{
+	self, AsFixedBytes, Error, FixedLength, ProtocolVersion, Readable, Reader, Writeable, Writer,
+};
 use crate::util;
 use digest::Digest;
 use sha2::Sha256;
@@ -226,6 +228,10 @@ impl ser::Writer for DHashWriter {
 		self.state.extend_from_slice(b32.as_ref());
 		Ok(())
 	}
+
+	fn protocol_version(&self) -> ProtocolVersion {
+		ProtocolVersion::local()
+	}
 }
 
 /// Serializer that outputs a hash of the serialized object
@@ -266,6 +272,10 @@ impl ser::Writer for HashWriter {
 		self.state.update(b32.as_ref());
 		Ok(())
 	}
+
+	fn protocol_version(&self) -> ProtocolVersion {
+		ProtocolVersion::local()
+	}
 }
 
 /// A trait for types that have a canonical hash
@@ -305,6 +315,7 @@ impl<D: DefaultHashable, E: DefaultHashable, F: DefaultHashable> DefaultHashable
 /// Implement Hashed trait for external types here
 impl DefaultHashable for crate::util::secp::pedersen::RangeProof {}
 impl DefaultHashable for Vec<u8> {}
+impl DefaultHashable for u8 {}
 impl DefaultHashable for u64 {}
 
 #[cfg(test)]

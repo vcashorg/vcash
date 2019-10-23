@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -19,7 +19,7 @@ use std::{io, time};
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::pmmr::{self, family, Backend};
 use crate::core::core::BlockHeader;
-use crate::core::ser::{FixedLength, PMMRable};
+use crate::core::ser::{FixedLength, PMMRable, ProtocolVersion};
 use crate::leaf_set::LeafSet;
 use crate::prune_list::PruneList;
 use crate::types::{AppendOnlyFile, DataFile, SizeEntry, SizeInfo};
@@ -132,7 +132,7 @@ impl<T: PMMRable> Backend<T> for PMMRBackend<T> {
 	/// Returns an iterator over all the leaf positions.
 	/// for a prunable PMMR this is an iterator over the leaf_set bitmap.
 	/// For a non-prunable PMMR this is *all* leaves (this is not yet implemented).
-	fn leaf_pos_iter(&self) -> Box<Iterator<Item = u64> + '_> {
+	fn leaf_pos_iter(&self) -> Box<dyn Iterator<Item = u64> + '_> {
 		if self.prunable {
 			Box::new(self.leaf_set.iter())
 		} else {
@@ -204,6 +204,7 @@ impl<T: PMMRable> PMMRBackend<T> {
 		data_dir: P,
 		prunable: bool,
 		fixed_size: bool,
+		version: ProtocolVersion,
 		header: Option<&BlockHeader>,
 	) -> io::Result<PMMRBackend<T>> {
 		let data_dir = data_dir.as_ref();
@@ -216,14 +217,15 @@ impl<T: PMMRable> PMMRBackend<T> {
 			SizeInfo::VariableSize(Box::new(AppendOnlyFile::open(
 				data_dir.join(PMMR_SIZE_FILE),
 				SizeInfo::FixedSize(SizeEntry::LEN as u16),
+				version,
 			)?))
 		};
 
 		// Hash file is always "fixed size" and we use 32 bytes per hash.
 		let hash_size_info = SizeInfo::FixedSize(Hash::LEN as u16);
 
-		let hash_file = DataFile::open(&data_dir.join(PMMR_HASH_FILE), hash_size_info)?;
-		let data_file = DataFile::open(&data_dir.join(PMMR_DATA_FILE), size_info)?;
+		let hash_file = DataFile::open(&data_dir.join(PMMR_HASH_FILE), hash_size_info, version)?;
+		let data_file = DataFile::open(&data_dir.join(PMMR_DATA_FILE), size_info, version)?;
 
 		let leaf_set_path = data_dir.join(PMMR_LEAF_FILE);
 
@@ -466,7 +468,7 @@ pub fn clean_files_by_prefix<P: AsRef<std::path::Path>>(
 
 	let number_of_files_deleted: u32 = fs::read_dir(&path)?
 		.flat_map(
-			|possible_dir_entry| -> Result<u32, Box<std::error::Error>> {
+			|possible_dir_entry| -> Result<u32, Box<dyn std::error::Error>> {
 				// result implements iterator and so if we were to use map here
 				// we would have a list of Result<u32, Box<std::error::Error>>
 				// but because we use flat_map, the errors get "discarded" and we are

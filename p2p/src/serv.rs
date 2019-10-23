@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -95,6 +95,10 @@ impl Server {
 					let peer_addr = PeerAddr(peer_addr);
 
 					if self.check_undesirable(&stream) {
+						// Shutdown the incoming TCP connection if it is not desired
+						if let Err(e) = stream.shutdown(Shutdown::Both) {
+							debug!("Error shutting down conn: {:?}", e);
+						}
 						continue;
 					}
 					match self.handle_new_peer(stream) {
@@ -229,31 +233,48 @@ impl Server {
 
 		Ok(())
 	}
-	/// Checks whether there's any reason we don't want to accept a peer
-	/// connection. There can be a couple of them:
-	/// 1. The peer has been previously banned and the ban period hasn't
+
+	/// Checks whether there's any reason we don't want to accept an incoming peer
+	/// connection. There can be a few of them:
+	/// 1. Accepting the peer connection would exceed the configured maximum allowed
+	/// inbound peer count. Note that seed nodes may wish to increase the default
+	/// value for PEER_LISTENER_BUFFER_COUNT to help with network bootstrapping.
+	/// A default buffer of 8 peers is allowed to help with network growth.
+	/// 2. The peer has been previously banned and the ban period hasn't
 	/// expired yet.
-	/// 2. We're already connected to a peer at the same IP. While there are
+	/// 3. We're already connected to a peer at the same IP. While there are
 	/// many reasons multiple peers can legitimately share identical IP
 	/// addresses (NAT), network distribution is improved if they choose
 	/// different sets of peers themselves. In addition, it prevent potential
 	/// duplicate connections, malicious or not.
 	fn check_undesirable(&self, stream: &TcpStream) -> bool {
+		if self.peers.peer_inbound_count()
+			>= self.config.peer_max_inbound_count() + self.config.peer_listener_buffer_count()
+		{
+			debug!("Accepting new connection will exceed peer limit, refusing connection.");
+			return true;
+		}
 		if let Ok(peer_addr) = stream.peer_addr() {
 			let peer_addr = PeerAddr(peer_addr);
 			if self.peers.is_banned(peer_addr) {
 				debug!("Peer {} banned, refusing connection.", peer_addr);
-				if let Err(e) = stream.shutdown(Shutdown::Both) {
-					debug!("Error shutting down conn: {:?}", e);
-				}
 				return true;
 			}
-			if self.peers.is_known(peer_addr) {
-				debug!("Peer {} already known, refusing connection.", peer_addr);
-				if let Err(e) = stream.shutdown(Shutdown::Both) {
-					debug!("Error shutting down conn: {:?}", e);
+			// The call to is_known() can fail due to contention on the peers map.
+			// If it fails we want to default to refusing the connection.
+			match self.peers.is_known(peer_addr) {
+				Ok(true) => {
+					debug!("Peer {} already known, refusing connection.", peer_addr);
+					return true;
 				}
-				return true;
+				Err(_) => {
+					error!(
+						"Peer {} is_known check failed, refusing connection.",
+						peer_addr
+					);
+					return true;
+				}
+				_ => (),
 			}
 		}
 		false
@@ -311,7 +332,12 @@ impl ChainAdapter for DummyAdapter {
 	) -> Result<bool, chain::Error> {
 		Ok(true)
 	}
-	fn block_received(&self, _: core::Block, _: &PeerInfo, _: bool) -> Result<bool, chain::Error> {
+	fn block_received(
+		&self,
+		_: core::Block,
+		_: &PeerInfo,
+		_: chain::Options,
+	) -> Result<bool, chain::Error> {
 		Ok(true)
 	}
 	fn headers_received(
@@ -330,10 +356,14 @@ impl ChainAdapter for DummyAdapter {
 	fn kernel_data_read(&self) -> Result<File, chain::Error> {
 		unimplemented!()
 	}
-	fn kernel_data_write(&self, _reader: &mut Read) -> Result<bool, chain::Error> {
+	fn kernel_data_write(&self, _reader: &mut dyn Read) -> Result<bool, chain::Error> {
 		unimplemented!()
 	}
 	fn txhashset_read(&self, _h: Hash) -> Option<TxHashSetRead> {
+		unimplemented!()
+	}
+
+	fn txhashset_archive_header(&self) -> Result<core::BlockHeader, chain::Error> {
 		unimplemented!()
 	}
 

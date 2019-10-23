@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -182,9 +182,10 @@ impl Controller {
 			}
 
 			if Utc::now().timestamp() > next_stat_update {
-				let stats = server.get_server_stats().unwrap();
-				self.ui.ui_tx.send(UIMessage::UpdateStatus(stats)).unwrap();
 				next_stat_update = Utc::now().timestamp() + stat_update_interval;
+				if let Ok(stats) = server.get_server_stats() {
+					self.ui.ui_tx.send(UIMessage::UpdateStatus(stats)).unwrap();
+				}
 			}
 		}
 		server.stop();

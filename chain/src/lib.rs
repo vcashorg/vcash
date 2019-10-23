@@ -1,4 +1,4 @@
-// Copyright 2018 The Grin Developers
+// Copyright 2019 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,4 +45,6 @@ pub mod types;
 pub use crate::chain::{Chain, MAX_ORPHAN_SIZE};
 pub use crate::error::{Error, ErrorKind};
 pub use crate::store::ChainStore;
-pub use crate::types::{BlockStatus, ChainAdapter, Options, Tip, TxHashsetWriteStatus};
+pub use crate::types::{
+	BlockStatus, ChainAdapter, Options, SyncState, SyncStatus, Tip, TxHashsetWriteStatus,
+};
