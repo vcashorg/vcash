@@ -19,7 +19,10 @@ use crate::core::core::committed::Committed;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::merkle_proof::MerkleProof;
 use crate::core::core::pmmr::{self, Backend, ReadonlyPMMR, RewindablePMMR, PMMR};
-use crate::core::core::{Block, BlockHeader, Input, Output, OutputIdentifier, TxKernel};
+use crate::core::core::{
+	Block, BlockHeader, BlockTokenSums, Input, Output, OutputIdentifier, TokenInput,
+	TokenIssueProof, TokenKey, TokenOutput, TokenOutputIdentifier, TokenTxKernel, TxKernel,
+};
 use crate::core::ser::{PMMRIndexHashable, PMMRable, ProtocolVersion};
 use crate::error::{Error, ErrorKind};
 use crate::store::{Batch, ChainStore};
@@ -30,6 +33,7 @@ use crate::util::{file, secp_static, zip};
 use croaring::Bitmap;
 use grin_store;
 use grin_store::pmmr::{clean_files_by_prefix, PMMRBackend};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,7 +43,11 @@ const TXHASHSET_SUBDIR: &'static str = "txhashset";
 
 const OUTPUT_SUBDIR: &'static str = "output";
 const RANGE_PROOF_SUBDIR: &'static str = "rangeproof";
+const TOKEN_OUTPUT_SUBDIR: &'static str = "tokenoutput";
+const TOKEN_RANGE_PROOF_SUBDIR: &'static str = "tokenrangeproof";
+const TOKEN_ISSUE_PROOF_SUBDIR: &'static str = "tokenissueproof";
 const KERNEL_SUBDIR: &'static str = "kernel";
+const TOKEN_KERNEL_SUBDIR: &'static str = "tokenkernel";
 
 const TXHASHSET_ZIP: &'static str = "txhashset_snapshot";
 
@@ -102,6 +110,11 @@ pub struct TxHashSet {
 	rproof_pmmr_h: PMMRHandle<RangeProof>,
 	kernel_pmmr_h: PMMRHandle<TxKernel>,
 
+	token_output_pmmr_h: PMMRHandle<TokenOutput>,
+	token_rproof_pmmr_h: PMMRHandle<RangeProof>,
+	token_issue_proof_pmmr_h: PMMRHandle<TokenIssueProof>,
+	token_kernel_pmmr_h: PMMRHandle<TokenTxKernel>,
+
 	// chain store used as index of commitments to MMR positions
 	commit_index: Arc<ChainStore>,
 }
@@ -131,6 +144,42 @@ impl TxHashSet {
 			true,
 			ProtocolVersion(1),
 			header,
+		)?;
+		let token_output_pmmr_h = PMMRHandle::new(
+			&root_dir,
+			TXHASHSET_SUBDIR,
+			TOKEN_OUTPUT_SUBDIR,
+			true,
+			true,
+			ProtocolVersion(1),
+			header,
+		)?;
+		let token_rproof_pmmr_h = PMMRHandle::new(
+			&root_dir,
+			TXHASHSET_SUBDIR,
+			TOKEN_RANGE_PROOF_SUBDIR,
+			true,
+			true,
+			ProtocolVersion(1),
+			header,
+		)?;
+		let token_issue_proof_pmmr_h = PMMRHandle::new(
+			&root_dir,
+			TXHASHSET_SUBDIR,
+			TOKEN_ISSUE_PROOF_SUBDIR,
+			false,
+			true,
+			ProtocolVersion(1),
+			header,
+		)?;
+		let token_kernel_pmmr_h = PMMRHandle::new(
+			&root_dir,
+			TXHASHSET_SUBDIR,
+			TOKEN_KERNEL_SUBDIR,
+			false, // not prunable
+			false, // variable size kernel data file
+			ProtocolVersion(1),
+			None,
 		)?;
 
 		let mut maybe_kernel_handle: Option<PMMRHandle<TxKernel>> = None;
@@ -180,6 +229,10 @@ impl TxHashSet {
 				output_pmmr_h,
 				rproof_pmmr_h,
 				kernel_pmmr_h,
+				token_output_pmmr_h,
+				token_rproof_pmmr_h,
+				token_issue_proof_pmmr_h,
+				token_kernel_pmmr_h,
 				commit_index,
 			})
 		} else {
@@ -192,6 +245,10 @@ impl TxHashSet {
 		self.output_pmmr_h.backend.release_files();
 		self.rproof_pmmr_h.backend.release_files();
 		self.kernel_pmmr_h.backend.release_files();
+		self.token_output_pmmr_h.backend.release_files();
+		self.token_rproof_pmmr_h.backend.release_files();
+		self.token_issue_proof_pmmr_h.backend.release_files();
+		self.token_kernel_pmmr_h.backend.release_files();
 	}
 
 	/// Check if an output is unspent.
@@ -240,6 +297,64 @@ impl TxHashSet {
 	pub fn last_n_kernel(&self, distance: u64) -> Vec<(Hash, TxKernel)> {
 		ReadonlyPMMR::at(&self.kernel_pmmr_h.backend, self.kernel_pmmr_h.last_pos)
 			.get_last_n_insertions(distance)
+	}
+
+	/// Check if an token output is unspent.
+	/// We look in the index to find the token output MMR pos.
+	/// Then we check the entry in the output MMR and confirm the hash matches.
+	pub fn is_token_unspent(
+		&self,
+		output_id: &TokenOutputIdentifier,
+	) -> Result<(Hash, u64), Error> {
+		match self.commit_index.get_token_output_pos(&output_id.commit) {
+			Ok(pos) => {
+				let output_pmmr: ReadonlyPMMR<'_, TokenOutput, _> = ReadonlyPMMR::at(
+					&self.token_output_pmmr_h.backend,
+					self.token_output_pmmr_h.last_pos,
+				);
+				if let Some(hash) = output_pmmr.get_hash(pos) {
+					if hash == output_id.hash_with_index(pos - 1) {
+						Ok((hash, pos))
+					} else {
+						Err(ErrorKind::TxHashSetErr(format!("txhashset hash mismatch")).into())
+					}
+				} else {
+					Err(ErrorKind::OutputNotFound.into())
+				}
+			}
+			Err(grin_store::Error::NotFoundErr(_)) => Err(ErrorKind::OutputNotFound.into()),
+			Err(e) => Err(ErrorKind::StoreErr(e, format!("txhashset unspent check")).into()),
+		}
+	}
+
+	/// returns the last N nodes inserted into the tree (i.e. the 'bottom'
+	/// nodes at level 0
+	/// TODO: These need to return the actual data from the flat-files instead
+	/// of hashes now
+	pub fn last_n_token_output(&self, distance: u64) -> Vec<(Hash, TokenOutputIdentifier)> {
+		ReadonlyPMMR::at(
+			&self.token_output_pmmr_h.backend,
+			self.token_output_pmmr_h.last_pos,
+		)
+		.get_last_n_insertions(distance)
+	}
+
+	/// as above, for token range proofs
+	pub fn last_n_token_rangeproof(&self, distance: u64) -> Vec<(Hash, RangeProof)> {
+		ReadonlyPMMR::at(
+			&self.token_rproof_pmmr_h.backend,
+			self.token_rproof_pmmr_h.last_pos,
+		)
+		.get_last_n_insertions(distance)
+	}
+
+	/// as above, for token issue proof
+	pub fn last_n_token_issue_proof(&self, distance: u64) -> Vec<(Hash, TokenIssueProof)> {
+		ReadonlyPMMR::at(
+			&self.token_issue_proof_pmmr_h.backend,
+			self.token_issue_proof_pmmr_h.last_pos,
+		)
+		.get_last_n_insertions(distance)
 	}
 
 	/// Convenience function to query the db for a header by its hash.
@@ -310,10 +425,31 @@ impl TxHashSet {
 		let kernel_pmmr =
 			ReadonlyPMMR::at(&self.kernel_pmmr_h.backend, self.kernel_pmmr_h.last_pos);
 
+		let token_output_pmmr = ReadonlyPMMR::at(
+			&self.token_output_pmmr_h.backend,
+			self.token_output_pmmr_h.last_pos,
+		);
+		let token_rproof_pmmr = ReadonlyPMMR::at(
+			&self.token_rproof_pmmr_h.backend,
+			self.token_rproof_pmmr_h.last_pos,
+		);
+		let token_issue_proof_pmmr = ReadonlyPMMR::at(
+			&self.token_issue_proof_pmmr_h.backend,
+			self.token_issue_proof_pmmr_h.last_pos,
+		);
+		let token_kernel_pmmr = ReadonlyPMMR::at(
+			&self.token_kernel_pmmr_h.backend,
+			self.token_kernel_pmmr_h.last_pos,
+		);
+
 		TxHashSetRoots {
 			output_root: output_pmmr.root(),
 			rproof_root: rproof_pmmr.root(),
 			kernel_root: kernel_pmmr.root(),
+			token_output_root: token_output_pmmr.root(),
+			token_rproof_root: token_rproof_pmmr.root(),
+			token_issue_proof_root: token_issue_proof_pmmr.root(),
+			token_kernel_root: token_kernel_pmmr.root(),
 		}
 	}
 
@@ -340,6 +476,7 @@ impl TxHashSet {
 
 		let head_header = batch.head_header()?;
 		let rewind_rm_pos = input_pos_to_rewind(&horizon_header, &head_header, batch)?;
+		let token_rewind_rm_pos = token_input_pos_to_rewind(&horizon_header, &head_header, batch)?;
 
 		debug!("txhashset: check_compact output mmr backend...");
 		self.output_pmmr_h
@@ -350,6 +487,17 @@ impl TxHashSet {
 		self.rproof_pmmr_h
 			.backend
 			.check_compact(horizon_header.output_mmr_size, &rewind_rm_pos)?;
+
+		debug!("txhashset: check_compact token_output mmr backend...");
+		self.token_output_pmmr_h
+			.backend
+			.check_compact(horizon_header.token_output_mmr_size, &token_rewind_rm_pos)?;
+
+		debug!("txhashset: check_compact token_rangeproof mmr backend...");
+		self.token_rproof_pmmr_h.backend.check_compact(
+			horizon_header.token_issue_proof_mmr_size,
+			&token_rewind_rm_pos,
+		)?;
 
 		debug!("txhashset: ... compaction finished");
 
@@ -414,6 +562,54 @@ impl TxHashSet {
 		);
 		Ok(())
 	}
+
+	/// returns outputs from the given insertion (leaf) index up to the
+	/// specified limit. Also returns the last index actually populated
+	pub fn token_outputs_by_insertion_index(
+		&self,
+		start_index: u64,
+		max_count: u64,
+	) -> (u64, Vec<TokenOutputIdentifier>) {
+		ReadonlyPMMR::at(
+			&self.token_output_pmmr_h.backend,
+			self.token_output_pmmr_h.last_pos,
+		)
+		.elements_from_insertion_index(start_index, max_count)
+	}
+
+	/// highest output insertion index available
+	pub fn highest_token_output_insertion_index(&self) -> u64 {
+		pmmr::n_leaves(self.token_output_pmmr_h.last_pos)
+	}
+
+	/// As above, for rangeproofs
+	pub fn token_rangeproofs_by_insertion_index(
+		&self,
+		start_index: u64,
+		max_count: u64,
+	) -> (u64, Vec<RangeProof>) {
+		ReadonlyPMMR::at(
+			&self.token_rproof_pmmr_h.backend,
+			self.token_rproof_pmmr_h.last_pos,
+		)
+		.elements_from_insertion_index(start_index, max_count)
+	}
+
+	/// Return Commit's MMR position
+	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+		Ok(self.commit_index.get_token_output_pos(&commit)?)
+	}
+
+	/// build a new merkle proof for the given position.
+	pub fn token_merkle_proof(&mut self, commit: Commitment) -> Result<MerkleProof, Error> {
+		let pos = self.commit_index.get_token_output_pos(&commit)?;
+		PMMR::at(
+			&mut self.token_output_pmmr_h.backend,
+			self.token_output_pmmr_h.last_pos,
+		)
+		.merkle_proof(pos)
+		.map_err(|_| ErrorKind::MerkleProof.into())
+	}
 }
 
 /// Starts a new unit of work to extend (or rewind) the chain with additional
@@ -457,6 +653,11 @@ where
 	trees.rproof_pmmr_h.backend.discard();
 	trees.kernel_pmmr_h.backend.discard();
 
+	trees.token_output_pmmr_h.backend.discard();
+	trees.token_rproof_pmmr_h.backend.discard();
+	trees.token_issue_proof_pmmr_h.backend.discard();
+	trees.token_kernel_pmmr_h.backend.discard();
+
 	trace!("TxHashSet (readonly) extension done.");
 
 	res
@@ -477,11 +678,24 @@ where
 		let output_pmmr =
 			ReadonlyPMMR::at(&trees.output_pmmr_h.backend, trees.output_pmmr_h.last_pos);
 		let header_pmmr = ReadonlyPMMR::at(&handle.backend, handle.last_pos);
-
+		let token_output_pmmr = ReadonlyPMMR::at(
+			&trees.token_output_pmmr_h.backend,
+			trees.token_output_pmmr_h.last_pos,
+		);
+		let token_issue_proof_pmmr = ReadonlyPMMR::at(
+			&trees.token_issue_proof_pmmr_h.backend,
+			trees.token_issue_proof_pmmr_h.last_pos,
+		);
 		// Create a new batch here to pass into the utxo_view.
 		// Discard it (rollback) after we finish with the utxo_view.
 		let batch = trees.commit_index.batch()?;
-		let utxo = UTXOView::new(output_pmmr, header_pmmr, &batch);
+		let utxo = UTXOView::new(
+			output_pmmr,
+			token_output_pmmr,
+			token_issue_proof_pmmr,
+			header_pmmr,
+			&batch,
+		);
 		res = inner(&utxo);
 	}
 	res
@@ -501,11 +715,16 @@ where
 		let kernel_pmmr =
 			RewindablePMMR::at(&trees.kernel_pmmr_h.backend, trees.kernel_pmmr_h.last_pos);
 
+		let token_kernel_pmmr = RewindablePMMR::at(
+			&trees.token_kernel_pmmr_h.backend,
+			trees.token_kernel_pmmr_h.last_pos,
+		);
+
 		// Create a new batch here to pass into the kernel_view.
 		// Discard it (rollback) after we finish with the kernel_view.
 		let batch = trees.commit_index.batch()?;
 		let header = batch.head_header()?;
-		let mut view = RewindableKernelView::new(kernel_pmmr, &batch, header);
+		let mut view = RewindableKernelView::new(kernel_pmmr, token_kernel_pmmr, &batch, header);
 		res = inner(&mut view);
 	}
 	res
@@ -527,7 +746,7 @@ pub fn extending<'a, F, T>(
 where
 	F: FnOnce(&mut ExtensionPair<'_>) -> Result<T, Error>,
 {
-	let sizes: (u64, u64, u64);
+	let sizes: (u64, u64, u64, u64, u64, u64, u64);
 	let res: Result<T, Error>;
 	let rollback: bool;
 
@@ -563,6 +782,10 @@ where
 			trees.output_pmmr_h.backend.discard();
 			trees.rproof_pmmr_h.backend.discard();
 			trees.kernel_pmmr_h.backend.discard();
+			trees.token_output_pmmr_h.backend.discard();
+			trees.token_rproof_pmmr_h.backend.discard();
+			trees.token_issue_proof_pmmr_h.backend.discard();
+			trees.token_kernel_pmmr_h.backend.discard();
 			Err(e)
 		}
 		Ok(r) => {
@@ -571,6 +794,10 @@ where
 				trees.output_pmmr_h.backend.discard();
 				trees.rproof_pmmr_h.backend.discard();
 				trees.kernel_pmmr_h.backend.discard();
+				trees.token_output_pmmr_h.backend.discard();
+				trees.token_rproof_pmmr_h.backend.discard();
+				trees.token_issue_proof_pmmr_h.backend.discard();
+				trees.token_kernel_pmmr_h.backend.discard();
 			} else {
 				trace!("Committing txhashset extension. sizes {:?}", sizes);
 				child_batch.commit()?;
@@ -580,6 +807,17 @@ where
 				trees.output_pmmr_h.last_pos = sizes.0;
 				trees.rproof_pmmr_h.last_pos = sizes.1;
 				trees.kernel_pmmr_h.last_pos = sizes.2;
+				trees.token_output_pmmr_h.backend.sync()?;
+				trees.token_rproof_pmmr_h.backend.sync()?;
+				trees.token_issue_proof_pmmr_h.backend.sync()?;
+				trees.token_kernel_pmmr_h.backend.sync()?;
+				trees.output_pmmr_h.last_pos = sizes.0;
+				trees.rproof_pmmr_h.last_pos = sizes.1;
+				trees.kernel_pmmr_h.last_pos = sizes.2;
+				trees.token_output_pmmr_h.last_pos = sizes.3;
+				trees.token_rproof_pmmr_h.last_pos = sizes.4;
+				trees.token_issue_proof_pmmr_h.last_pos = sizes.5;
+				trees.token_kernel_pmmr_h.last_pos = sizes.6;
 			}
 
 			trace!("TxHashSet extension done.");
@@ -787,6 +1025,11 @@ pub struct Extension<'a> {
 	rproof_pmmr: PMMR<'a, RangeProof, PMMRBackend<RangeProof>>,
 	kernel_pmmr: PMMR<'a, TxKernel, PMMRBackend<TxKernel>>,
 
+	token_output_pmmr: PMMR<'a, TokenOutput, PMMRBackend<TokenOutput>>,
+	token_rproof_pmmr: PMMR<'a, RangeProof, PMMRBackend<RangeProof>>,
+	token_issue_proof_pmmr: PMMR<'a, TokenIssueProof, PMMRBackend<TokenIssueProof>>,
+	token_kernel_pmmr: PMMR<'a, TokenTxKernel, PMMRBackend<TokenTxKernel>>,
+
 	/// Rollback flag.
 	rollback: bool,
 
@@ -822,6 +1065,48 @@ impl<'a> Committed for Extension<'a> {
 		}
 		commitments
 	}
+
+	fn token_inputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		let mut token_inputs_map: HashMap<TokenKey, Vec<Commitment>> = HashMap::new();
+		for n in 1..self.token_issue_proof_pmmr.unpruned_size() + 1 {
+			if pmmr::is_leaf(n) {
+				if let Some(issue_proof) = self.token_issue_proof_pmmr.get_data(n) {
+					let commit_vec = token_inputs_map
+						.entry(issue_proof.token_type)
+						.or_insert(vec![]);
+					commit_vec.push(issue_proof.commitment());
+				}
+			}
+		}
+		token_inputs_map
+	}
+
+	fn token_outputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		let mut token_outputs_map: HashMap<TokenKey, Vec<Commitment>> = HashMap::new();
+		for pos in self.token_output_pmmr.leaf_pos_iter() {
+			if let Some(out) = self.token_output_pmmr.get_data(pos) {
+				let commit_vec = token_outputs_map.entry(out.token_type).or_insert(vec![]);
+				commit_vec.push(out.commit);
+			}
+		}
+		token_outputs_map
+	}
+
+	fn token_kernels_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		let mut token_kernels_map: HashMap<TokenKey, Vec<Commitment>> = HashMap::new();
+		for n in 1..self.token_kernel_pmmr.unpruned_size() + 1 {
+			if pmmr::is_leaf(n) {
+				if let Some(kernel) = self.token_kernel_pmmr.get_data(n) {
+					if kernel.is_plain_token() {
+						let commit_vec =
+							token_kernels_map.entry(kernel.token_type).or_insert(vec![]);
+						commit_vec.push(kernel.excess());
+					}
+				}
+			}
+		}
+		token_kernels_map
+	}
 }
 
 impl<'a> Extension<'a> {
@@ -840,6 +1125,23 @@ impl<'a> Extension<'a> {
 				&mut trees.kernel_pmmr_h.backend,
 				trees.kernel_pmmr_h.last_pos,
 			),
+
+			token_output_pmmr: PMMR::at(
+				&mut trees.token_output_pmmr_h.backend,
+				trees.token_output_pmmr_h.last_pos,
+			),
+			token_rproof_pmmr: PMMR::at(
+				&mut trees.token_rproof_pmmr_h.backend,
+				trees.token_rproof_pmmr_h.last_pos,
+			),
+			token_issue_proof_pmmr: PMMR::at(
+				&mut trees.token_issue_proof_pmmr_h.backend,
+				trees.token_issue_proof_pmmr_h.last_pos,
+			),
+			token_kernel_pmmr: PMMR::at(
+				&mut trees.token_kernel_pmmr_h.backend,
+				trees.token_kernel_pmmr_h.last_pos,
+			),
 			rollback: false,
 			batch,
 		}
@@ -855,6 +1157,8 @@ impl<'a> Extension<'a> {
 	pub fn utxo_view(&'a self, header_ext: &'a HeaderExtension<'a>) -> UTXOView<'a> {
 		UTXOView::new(
 			self.output_pmmr.readonly_pmmr(),
+			self.token_output_pmmr.readonly_pmmr(),
+			self.token_issue_proof_pmmr.readonly_pmmr(),
 			header_ext.pmmr.readonly_pmmr(),
 			self.batch,
 		)
@@ -873,8 +1177,28 @@ impl<'a> Extension<'a> {
 			self.apply_input(input)?;
 		}
 
+		for out in b.token_outputs() {
+			let pos = self.apply_token_output(out)?;
+			// Update the output_pos index for the new output.
+			self.batch.save_token_output_pos(&out.commitment(), pos)?;
+
+			if out.is_tokenissue() {
+				let pos = self.apply_token_issue_output(out)?;
+				self.batch
+					.save_token_issue_proof_pos(&out.token_type, pos)?;
+			}
+		}
+
+		for input in b.token_inputs() {
+			self.apply_token_input(input)?;
+		}
+
 		for kernel in b.kernels() {
 			self.apply_kernel(kernel)?;
+		}
+
+		for token_kernel in b.token_kernels() {
+			self.apply_token_kernel(token_kernel)?;
 		}
 
 		// Update the head of the extension to reflect the block we just applied.
@@ -954,10 +1278,116 @@ impl<'a> Extension<'a> {
 		Ok(output_pos)
 	}
 
+	fn apply_token_input(&mut self, token_input: &TokenInput) -> Result<(), Error> {
+		let commit = token_input.commitment();
+		let pos_res = self.batch.get_token_output_pos(&commit);
+		if let Ok(pos) = pos_res {
+			// First check this input corresponds to an existing entry in the output MMR.
+			if let Some(hash) = self.token_output_pmmr.get_hash(pos) {
+				if hash != token_input.hash_with_index(pos - 1) {
+					return Err(ErrorKind::TxHashSetErr(format!(
+						"token_output pmmr hash mismatch"
+					))
+					.into());
+				}
+			}
+
+			// Now prune the output_pmmr, rproof_pmmr and their storage.
+			// Input is not valid if we cannot prune successfully (to spend an unspent
+			// output).
+			match self.token_output_pmmr.prune(pos) {
+				Ok(true) => {
+					self.token_rproof_pmmr
+						.prune(pos)
+						.map_err(|e| ErrorKind::TxHashSetErr(e))?;
+				}
+				Ok(false) => return Err(ErrorKind::AlreadySpent(commit).into()),
+				Err(e) => return Err(ErrorKind::TxHashSetErr(e).into()),
+			}
+		} else {
+			return Err(ErrorKind::AlreadySpent(commit).into());
+		}
+		Ok(())
+	}
+
+	fn apply_token_output(&mut self, token_out: &TokenOutput) -> Result<(u64), Error> {
+		let commit = token_out.commitment();
+
+		if let Ok(pos) = self.batch.get_token_output_pos(&commit) {
+			if let Some(out_mmr) = self.token_output_pmmr.get_data(pos) {
+				if out_mmr.commitment() == commit {
+					return Err(ErrorKind::DuplicateCommitment(commit).into());
+				}
+			}
+		}
+		// push the new output to the MMR.
+		let output_pos = self
+			.token_output_pmmr
+			.push(token_out)
+			.map_err(&ErrorKind::TxHashSetErr)?;
+
+		// push the rangeproof to the MMR.
+		let rproof_pos = self
+			.token_rproof_pmmr
+			.push(&token_out.proof)
+			.map_err(&ErrorKind::TxHashSetErr)?;
+
+		// The output and rproof MMRs should be exactly the same size
+		// and we should have inserted to both in exactly the same pos.
+		{
+			if self.token_output_pmmr.unpruned_size() != self.token_rproof_pmmr.unpruned_size() {
+				return Err(ErrorKind::Other(format!(
+					"token_output vs token_rproof MMRs different sizes"
+				))
+				.into());
+			}
+
+			if output_pos != rproof_pos {
+				return Err(ErrorKind::Other(format!(
+					"token_output vs token_rproof MMRs different pos"
+				))
+				.into());
+			}
+		}
+
+		Ok(output_pos)
+	}
+
+	fn apply_token_issue_output(&mut self, token_out: &TokenOutput) -> Result<(u64), Error> {
+		if token_out.is_token() {
+			return Err(ErrorKind::Other(format!("token_output is not a token issue")).into());
+		}
+
+		let token_key = token_out.token_type();
+
+		if let Ok(pos) = self.batch.get_token_issue_proof_pos(&token_key) {
+			if let Some(out_mmr) = self.token_issue_proof_pmmr.get_data(pos) {
+				if out_mmr.token_type() == token_key {
+					return Err(ErrorKind::DuplicateTokenKey(token_key).into());
+				}
+			}
+		}
+		// push the new output to the MMR.
+		let issue_pos = self
+			.token_issue_proof_pmmr
+			.push(&TokenIssueProof::from_token_output(token_out))
+			.map_err(&ErrorKind::TxHashSetErr)?;
+
+		Ok(issue_pos)
+	}
+
 	/// Push kernel onto MMR (hash and data files).
 	fn apply_kernel(&mut self, kernel: &TxKernel) -> Result<(), Error> {
 		self.kernel_pmmr
 			.push(kernel)
+			.map_err(&ErrorKind::TxHashSetErr)?;
+		Ok(())
+	}
+
+	/// Push kernel onto MMR (hash and data files).
+	fn apply_token_kernel(&mut self, token_kernel: &TokenTxKernel) -> Result<(), Error> {
+		self.token_kernel_pmmr
+			.push(token_kernel)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		Ok(())
 	}
@@ -979,6 +1409,23 @@ impl<'a> Extension<'a> {
 		Ok(merkle_proof)
 	}
 
+	/// Build a Merkle proof for the given token output and the block
+	/// this extension is currently referencing.
+	/// Note: this relies on the MMR being stable even after pruning/compaction.
+	/// We need the hash of each sibling pos from the pos up to the peak
+	/// including the sibling leaf node which may have been removed.
+	pub fn token_merkle_proof(&self, output: &TokenOutputIdentifier) -> Result<MerkleProof, Error> {
+		debug!("txhashset: merkle_proof: output: {:?}", output.commit,);
+		// then calculate the Merkle Proof based on the known pos
+		let pos = self.batch.get_token_output_pos(&output.commit)?;
+		let merkle_proof = self
+			.token_output_pmmr
+			.merkle_proof(pos)
+			.map_err(&ErrorKind::TxHashSetErr)?;
+
+		Ok(merkle_proof)
+	}
+
 	/// Saves a snapshot of the output and rangeproof MMRs to disk.
 	/// Specifically - saves a snapshot of the utxo file, tagged with
 	/// the block hash as filename suffix.
@@ -990,6 +1437,12 @@ impl<'a> Extension<'a> {
 			.snapshot(&header)
 			.map_err(|e| ErrorKind::Other(e))?;
 		self.rproof_pmmr
+			.snapshot(&header)
+			.map_err(|e| ErrorKind::Other(e))?;
+		self.token_output_pmmr
+			.snapshot(&header)
+			.map_err(|e| ErrorKind::Other(e))?;
+		self.token_rproof_pmmr
 			.snapshot(&header)
 			.map_err(|e| ErrorKind::Other(e))?;
 		Ok(())
@@ -1014,11 +1467,16 @@ impl<'a> Extension<'a> {
 		// Rewound input (spent) pos will be added back to the MMR.
 		let head_header = self.batch.get_block_header(&self.head.hash())?;
 		let rewind_rm_pos = input_pos_to_rewind(header, &head_header, &self.batch)?;
+		let rewind_token_rm_pos = token_input_pos_to_rewind(header, &head_header, &self.batch)?;
 
 		self.rewind_to_pos(
 			header.output_mmr_size,
 			header.kernel_mmr_size,
+			header.token_output_mmr_size,
+			header.token_issue_proof_mmr_size,
+			header.token_kernel_mmr_size,
 			&rewind_rm_pos,
+			&rewind_token_rm_pos,
 		)?;
 
 		// Update our head to reflect the header we rewound to.
@@ -1033,7 +1491,11 @@ impl<'a> Extension<'a> {
 		&mut self,
 		output_pos: u64,
 		kernel_pos: u64,
+		token_output_pos: u64,
+		token_issue_proof_pos: u64,
+		token_kernel_pos: u64,
 		rewind_rm_pos: &Bitmap,
+		rewind_token_rm_pos: &Bitmap,
 	) -> Result<(), Error> {
 		self.output_pmmr
 			.rewind(output_pos, rewind_rm_pos)
@@ -1043,6 +1505,18 @@ impl<'a> Extension<'a> {
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		self.kernel_pmmr
 			.rewind(kernel_pos, &Bitmap::create())
+			.map_err(&ErrorKind::TxHashSetErr)?;
+		self.token_output_pmmr
+			.rewind(token_output_pos, rewind_token_rm_pos)
+			.map_err(&ErrorKind::TxHashSetErr)?;
+		self.token_rproof_pmmr
+			.rewind(token_output_pos, rewind_token_rm_pos)
+			.map_err(&ErrorKind::TxHashSetErr)?;
+		self.token_issue_proof_pmmr
+			.rewind(token_issue_proof_pos, &Bitmap::create())
+			.map_err(&ErrorKind::TxHashSetErr)?;
+		self.token_kernel_pmmr
+			.rewind(token_kernel_pos, &Bitmap::create())
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		Ok(())
 	}
@@ -1063,6 +1537,22 @@ impl<'a> Extension<'a> {
 				.kernel_pmmr
 				.root()
 				.map_err(|_| ErrorKind::InvalidRoot)?,
+			token_output_root: self
+				.token_output_pmmr
+				.root()
+				.map_err(|_| ErrorKind::InvalidRoot)?,
+			token_rproof_root: self
+				.token_rproof_pmmr
+				.root()
+				.map_err(|_| ErrorKind::InvalidRoot)?,
+			token_issue_proof_root: self
+				.token_issue_proof_pmmr
+				.root()
+				.map_err(|_| ErrorKind::InvalidRoot)?,
+			token_kernel_root: self
+				.token_kernel_pmmr
+				.root()
+				.map_err(|_| ErrorKind::InvalidRoot)?,
 		})
 	}
 
@@ -1076,6 +1566,10 @@ impl<'a> Extension<'a> {
 			output_root: head_header.output_root,
 			rproof_root: head_header.range_proof_root,
 			kernel_root: head_header.kernel_root,
+			token_output_root: head_header.token_output_root,
+			token_rproof_root: head_header.token_range_proof_root,
+			token_issue_proof_root: head_header.token_issue_proof_root,
+			token_kernel_root: head_header.token_kernel_root,
 		};
 		if header_roots != self.roots()? {
 			Err(ErrorKind::InvalidRoot.into())
@@ -1094,6 +1588,10 @@ impl<'a> Extension<'a> {
 			head_header.output_mmr_size,
 			head_header.output_mmr_size,
 			head_header.kernel_mmr_size,
+			head_header.token_output_mmr_size,
+			head_header.token_output_mmr_size,
+			head_header.token_issue_proof_mmr_size,
+			head_header.token_kernel_mmr_size,
 		) != self.sizes()
 		{
 			Err(ErrorKind::InvalidMMRSize.into())
@@ -1115,12 +1613,28 @@ impl<'a> Extension<'a> {
 		if let Err(e) = self.kernel_pmmr.validate() {
 			return Err(ErrorKind::InvalidTxHashSet(e).into());
 		}
+		if let Err(e) = self.token_output_pmmr.validate() {
+			return Err(ErrorKind::InvalidTxHashSet(e).into());
+		}
+		if let Err(e) = self.token_rproof_pmmr.validate() {
+			return Err(ErrorKind::InvalidTxHashSet(e).into());
+		}
+		if let Err(e) = self.token_issue_proof_pmmr.validate() {
+			return Err(ErrorKind::InvalidTxHashSet(e).into());
+		}
+		if let Err(e) = self.token_kernel_pmmr.validate() {
+			return Err(ErrorKind::InvalidTxHashSet(e).into());
+		}
 
 		debug!(
-			"txhashset: validated the output {}, rproof {}, kernel {} mmrs, took {}s",
+			"txhashset: validated the output {}, rproof {}, kernel {}, token_output {}, token_rproof {}, token_issue_prrof {}, token_kernel {}  mmrs, took {}s",
 			self.output_pmmr.unpruned_size(),
 			self.rproof_pmmr.unpruned_size(),
 			self.kernel_pmmr.unpruned_size(),
+			self.token_output_pmmr.unpruned_size(),
+			self.token_rproof_pmmr.unpruned_size(),
+			self.token_issue_proof_pmmr.unpruned_size(),
+			self.token_kernel_pmmr.unpruned_size(),
 			now.elapsed().as_secs(),
 		);
 
@@ -1151,6 +1665,19 @@ impl<'a> Extension<'a> {
 		Ok((utxo_sum, kernel_sum))
 	}
 
+	pub fn validate_token_kernel_sums(&self) -> Result<BlockTokenSums, Error> {
+		let now = Instant::now();
+
+		let token_kernel_sum_map = self.verify_token_kernel_sum()?;
+
+		debug!(
+			"txhashset: validated total token kernel sums, took {}s",
+			now.elapsed().as_secs(),
+		);
+
+		Ok(token_kernel_sum_map)
+	}
+
 	/// Validate the txhashset state against the provided block header.
 	/// A "fast validation" will skip rangeproof verification and kernel signature verification.
 	pub fn validate(
@@ -1158,14 +1685,19 @@ impl<'a> Extension<'a> {
 		genesis: &BlockHeader,
 		fast_validation: bool,
 		status: &dyn TxHashsetWriteStatus,
-	) -> Result<((Commitment, Commitment)), Error> {
+	) -> Result<((Commitment, Commitment, BlockTokenSums)), Error> {
 		self.validate_mmrs()?;
 		self.validate_roots()?;
 		self.validate_sizes()?;
+		let block_token_sums = self.validate_token_kernel_sums()?;
 
 		if self.head.height == 0 {
 			let zero_commit = secp_static::commit_to_zero_value();
-			return Ok((zero_commit.clone(), zero_commit.clone()));
+			return Ok((
+				zero_commit.clone(),
+				zero_commit.clone(),
+				BlockTokenSums::default(),
+			));
 		}
 
 		// The real magicking happens here. Sum of kernel excesses should equal
@@ -1181,7 +1713,7 @@ impl<'a> Extension<'a> {
 			self.verify_kernel_signatures(status)?;
 		}
 
-		Ok((output_sum, kernel_sum))
+		Ok((output_sum, kernel_sum, block_token_sums))
 	}
 
 	/// Force the rollback of this extension, no matter the result
@@ -1213,11 +1745,15 @@ impl<'a> Extension<'a> {
 	}
 
 	/// Sizes of each of the sum trees
-	pub fn sizes(&self) -> (u64, u64, u64) {
+	pub fn sizes(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
 		(
 			self.output_pmmr.unpruned_size(),
 			self.rproof_pmmr.unpruned_size(),
 			self.kernel_pmmr.unpruned_size(),
+			self.token_output_pmmr.unpruned_size(),
+			self.token_rproof_pmmr.unpruned_size(),
+			self.token_issue_proof_pmmr.unpruned_size(),
+			self.token_kernel_pmmr.unpruned_size(),
 		)
 	}
 
@@ -1503,6 +2039,53 @@ fn input_pos_to_rewind(
 		// I/O should be minimized or eliminated here for most
 		// rewind scenarios.
 		if let Ok(b_res) = batch.get_block_input_bitmap(&current.hash()) {
+			bitmap_fast_or(Some(b_res), &mut block_input_bitmaps);
+		}
+		current = batch.get_previous_header(&current)?;
+	}
+
+	bitmap_fast_or(None, &mut block_input_bitmaps).ok_or_else(|| ErrorKind::Bitmap.into())
+}
+
+pub fn token_input_pos_to_rewind(
+	block_header: &BlockHeader,
+	head_header: &BlockHeader,
+	batch: &Batch<'_>,
+) -> Result<Bitmap, Error> {
+	if head_header.height < block_header.height {
+		debug!(
+			"token_input_pos_to_rewind: {} < {}, nothing to rewind",
+			head_header.height, block_header.height
+		);
+		return Ok(Bitmap::create());
+	}
+
+	// Batching up the block input bitmaps, and running fast_or() on every batch of 256 bitmaps.
+	// so to avoid maintaining a huge vec of bitmaps.
+	let bitmap_fast_or = |b_res, block_input_bitmaps: &mut Vec<Bitmap>| -> Option<Bitmap> {
+		if let Some(b) = b_res {
+			block_input_bitmaps.push(b);
+			if block_input_bitmaps.len() < 256 {
+				return None;
+			}
+		}
+		let bitmap = Bitmap::fast_or(&block_input_bitmaps.iter().collect::<Vec<&Bitmap>>());
+		block_input_bitmaps.clear();
+		block_input_bitmaps.push(bitmap.clone());
+		Some(bitmap)
+	};
+
+	let mut block_input_bitmaps: Vec<Bitmap> = vec![];
+
+	let mut current = head_header.clone();
+	while current.hash() != block_header.hash() {
+		if current.height < 1 {
+			break;
+		}
+
+		// I/O should be minimized or eliminated here for most
+		// rewind scenarios.
+		if let Ok(b_res) = batch.get_block_token_input_bitmap(&current.hash()) {
 			bitmap_fast_or(Some(b_res), &mut block_input_bitmaps);
 		}
 		current = batch.get_previous_header(&current)?;

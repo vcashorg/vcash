@@ -235,7 +235,7 @@ impl BlockHandler {
 			let new_block = self.get_bitmining_block();
 			match new_block {
 				Ok((block, fee)) => {
-					warn!("PoolCenter nofity pool at height {}", block.header.height);
+					warn!("PoolCenter notify pool at height {}", block.header.height);
 					let info = JobInfo {
 						height: block.header.height,
 						cur_hash: block.header.hash().to_hex(),

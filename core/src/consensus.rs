@@ -73,13 +73,13 @@ pub fn total_reward(height: u64, genesis_had_reward: bool) -> u64 {
 	total
 }
 
-/// Nominal height for standard time intervals, hour is 60 blocks
+/// Nominal height for standard time intervals, hour is 6 blocks
 pub const HOUR_HEIGHT: u64 = 3600 / BLOCK_TIME_SEC;
-/// A day is 1440 blocks
+/// A day is 144 blocks
 pub const DAY_HEIGHT: u64 = 24 * HOUR_HEIGHT;
-/// A week is 10_080 blocks
+/// A week is 10_08 blocks
 pub const WEEK_HEIGHT: u64 = 7 * DAY_HEIGHT;
-/// A year is 524_160 blocks
+/// A year is 524_16 blocks
 pub const YEAR_HEIGHT: u64 = 52 * WEEK_HEIGHT;
 
 /// Number of blocks before a coinbase matures and can be spent
@@ -151,26 +151,27 @@ pub const BLOCK_KERNEL_WEIGHT: usize = 3;
 pub const MAX_BLOCK_WEIGHT: usize = 40_000;
 
 /// Fork every 6 months.
-pub const HARD_FORK_INTERVAL: u64 = YEAR_HEIGHT / 2;
+pub const HARD_FORK_INTERVAL: u64 = YEAR_HEIGHT;
+
+pub const SUPPORT_TOKEN_HEIGHT: u64 = 144;
 
 /// Check whether the block version is valid at a given height, implements
 /// 6 months interval scheduled hard forks for the first 2 years.
-pub fn valid_header_version(_height: u64, version: HeaderVersion) -> bool {
-	version == HeaderVersion::default()
+pub fn valid_header_version(height: u64, version: HeaderVersion) -> bool {
 	// uncomment below as we go from hard fork to hard fork
-	//	if height < HARD_FORK_INTERVAL {
-	//		version == 1
-	//	/* } else if height < 2 * HARD_FORK_INTERVAL {
-	//		version == 2
-	//	} else if height < 3 * HARD_FORK_INTERVAL {
-	//		version == 3
-	//	} else if height < 4 * HARD_FORK_INTERVAL {
-	//		version == 4
-	//	} else if height >= 5 * HARD_FORK_INTERVAL {
-	//		version > 4 */
-	//	} else {
-	//		false
-	//	}
+	if height < HARD_FORK_INTERVAL {
+		version == HeaderVersion::new(1)
+	/*} else if height < 2 * HARD_FORK_INTERVAL {
+		version == 2
+	} else if height < 3 * HARD_FORK_INTERVAL {
+		version == 3
+	} else if height < 4 * HARD_FORK_INTERVAL {
+		version == 4
+	} else if height >= 5 * HARD_FORK_INTERVAL {
+		version > 4 */
+	} else {
+		version == HeaderVersion::new(2)
+	}
 }
 
 /// Number of blocks used to calculate difficulty adjustments

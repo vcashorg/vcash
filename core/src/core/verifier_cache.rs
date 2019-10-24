@@ -18,7 +18,7 @@
 use lru_cache::LruCache;
 
 use crate::core::hash::{Hash, Hashed};
-use crate::core::{Output, TxKernel};
+use crate::core::{Output, TokenOutput, TokenTxKernel, TxKernel};
 
 /// Verifier cache for caching expensive verification results.
 /// Specifically the following -
@@ -28,13 +28,23 @@ pub trait VerifierCache: Sync + Send {
 	/// Takes a vec of tx kernels and returns those kernels
 	/// that have not yet been verified.
 	fn filter_kernel_sig_unverified(&mut self, kernels: &[TxKernel]) -> Vec<TxKernel>;
+	fn filter_token_kernel_sig_unverified(
+		&mut self,
+		kernels: &[TokenTxKernel],
+	) -> Vec<TokenTxKernel>;
 	/// Takes a vec of tx outputs and returns those outputs
 	/// that have not yet had their rangeproofs verified.
 	fn filter_rangeproof_unverified(&mut self, outputs: &[Output]) -> Vec<Output>;
+	/// Takes a vec of tx token_outputs and returns those outputs
+	/// that have not yet had their rangeproofs verified.
+	fn filter_token_rangeproof_unverified(&mut self, outputs: &[TokenOutput]) -> Vec<TokenOutput>;
 	/// Adds a vec of tx kernels to the cache (used in conjunction with the the filter above).
 	fn add_kernel_sig_verified(&mut self, kernels: Vec<TxKernel>);
+	fn add_token_kernel_sig_verified(&mut self, kernels: Vec<TokenTxKernel>);
 	/// Adds a vec of outputs to the cache (used in conjunction with the the filter above).
 	fn add_rangeproof_verified(&mut self, outputs: Vec<Output>);
+	/// Adds a vec of token_outputs to the cache (used in conjunction with the the filter above).
+	fn add_token_rangeproof_verified(&mut self, outputs: Vec<TokenOutput>);
 }
 
 /// An implementation of verifier_cache using lru_cache.
@@ -71,6 +81,23 @@ impl VerifierCache for LruVerifierCache {
 		res
 	}
 
+	fn filter_token_kernel_sig_unverified(
+		&mut self,
+		token_kernels: &[TokenTxKernel],
+	) -> Vec<TokenTxKernel> {
+		let res = token_kernels
+			.iter()
+			.filter(|x| !self.kernel_sig_verification_cache.contains_key(&x.hash()))
+			.cloned()
+			.collect::<Vec<_>>();
+		trace!(
+			"lru_verifier_cache: token kernel sigs: {}, not cached (must verify): {}",
+			token_kernels.len(),
+			res.len()
+		);
+		res
+	}
+
 	fn filter_rangeproof_unverified(&mut self, outputs: &[Output]) -> Vec<Output> {
 		let res = outputs
 			.iter()
@@ -89,13 +116,44 @@ impl VerifierCache for LruVerifierCache {
 		res
 	}
 
+	fn filter_token_rangeproof_unverified(&mut self, outputs: &[TokenOutput]) -> Vec<TokenOutput> {
+		let res = outputs
+			.iter()
+			.filter(|x| {
+				!self
+					.rangeproof_verification_cache
+					.contains_key(&x.proof.hash())
+			})
+			.cloned()
+			.collect::<Vec<_>>();
+		trace!(
+			"lru_verifier_cache: token rangeproofs: {}, not cached (must verify): {}",
+			outputs.len(),
+			res.len()
+		);
+		res
+	}
+
 	fn add_kernel_sig_verified(&mut self, kernels: Vec<TxKernel>) {
 		for k in kernels {
 			self.kernel_sig_verification_cache.insert(k.hash(), ());
 		}
 	}
 
+	fn add_token_kernel_sig_verified(&mut self, token_kernels: Vec<TokenTxKernel>) {
+		for k in token_kernels {
+			self.kernel_sig_verification_cache.insert(k.hash(), ());
+		}
+	}
+
 	fn add_rangeproof_verified(&mut self, outputs: Vec<Output>) {
+		for o in outputs {
+			self.rangeproof_verification_cache
+				.insert(o.proof.hash(), ());
+		}
+	}
+
+	fn add_token_rangeproof_verified(&mut self, outputs: Vec<TokenOutput>) {
 		for o in outputs {
 			self.rangeproof_verification_cache
 				.insert(o.proof.hash(), ());

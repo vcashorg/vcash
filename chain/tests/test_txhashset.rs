@@ -74,6 +74,17 @@ fn test_unexpected_zip() {
 			"output/pmmr_hash.bin",
 			"rangeproof/pmmr_data.bin",
 			"rangeproof/pmmr_hash.bin",
+			"tokenkernel/pmmr_data.bin",
+			"tokenkernel/pmmr_hash.bin",
+			"tokenkernel/pmmr_size.bin",
+			"tokenoutput/badfile",
+			"tokenoutput/pmmr_data.bin",
+			"tokenoutput/pmmr_hash.bin",
+			"tokenrangeproof/pmmr_data.bin",
+			"tokenrangeproof/pmmr_hash.bin",
+			"tokenissueproof/pmmr_data.bin",
+			"tokenissueproof/pmmr_hash.bin",
+			"tokenissueproof/pmmr_size.bin",
 		];
 		assert_eq!(
 			files,
@@ -101,6 +112,14 @@ fn test_unexpected_zip() {
 			"output/pmmr_hash.bin",
 			"rangeproof/pmmr_data.bin",
 			"rangeproof/pmmr_hash.bin",
+			"tokenkernel/pmmr_data.bin",
+			"tokenkernel/pmmr_hash.bin",
+			"tokenoutput/pmmr_data.bin",
+			"tokenoutput/pmmr_hash.bin",
+			"tokenrangeproof/pmmr_data.bin",
+			"tokenrangeproof/pmmr_hash.bin",
+			"tokenissueproof/pmmr_data.bin",
+			"tokenissueproof/pmmr_hash.bin",
 		];
 		assert_eq!(
 			files,

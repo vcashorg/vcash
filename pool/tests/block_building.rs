@@ -16,7 +16,7 @@ pub mod common;
 
 use self::core::core::hash::Hashed;
 use self::core::core::verifier_cache::LruVerifierCache;
-use self::core::core::{Block, BlockHeader, Transaction};
+use self::core::core::{Block, BlockHeader, TokenKey, Transaction};
 use self::core::libtx;
 use self::core::pow::Difficulty;
 use self::keychain::{ExtKeychain, Keychain};
@@ -126,6 +126,83 @@ fn test_transaction_pool_block_building() {
 		assert!(block.kernels().contains(&root_tx_3.kernels()[0]));
 		assert!(block.kernels().contains(&child_tx_1.kernels()[0]));
 		assert!(block.kernels().contains(&child_tx_1.kernels()[0]));
+
+		// Now reconcile the transaction pool with the new block
+		// and check the resulting contents of the pool are what we expect.
+		{
+			let mut write_pool = pool.write();
+			write_pool.reconcile_block(&block).unwrap();
+
+			assert_eq!(write_pool.total_size(), 0);
+		}
+
+		// start test issue token test
+		let token_type = TokenKey::new_token_key();
+		let issue_token_tx =
+			test_issue_token_transaction(&keychain, 22, 19, token_type.clone(), 100);
+		let header = block.header;
+		{
+			let mut write_pool = pool.write();
+
+			write_pool
+				.add_to_pool(test_source(), issue_token_tx.clone(), false, &header)
+				.unwrap();
+
+			assert_eq!(write_pool.total_size(), 1);
+		}
+
+		let txs = pool.read().prepare_mineable_transactions().unwrap();
+
+		let block = add_block(header, txs, &mut chain);
+
+		// Check the block contains what we expect.
+		assert_eq!(block.inputs().len(), 1);
+		assert_eq!(block.outputs().len(), 2);
+		assert_eq!(block.kernels().len(), 2);
+		assert_eq!(block.token_inputs().len(), 0);
+		assert_eq!(block.token_outputs().len(), 1);
+		assert_eq!(block.token_kernels().len(), 1);
+
+		// Now reconcile the transaction pool with the new block
+		// and check the resulting contents of the pool are what we expect.
+		{
+			let mut write_pool = pool.write();
+			write_pool.reconcile_block(&block).unwrap();
+
+			assert_eq!(write_pool.total_size(), 0);
+		}
+
+		// start test send token tx test
+		let token_tx = test_token_transaction(
+			&keychain,
+			19,
+			17,
+			token_type.clone(),
+			vec![100],
+			vec![49, 51],
+		);
+		let header = block.header;
+		{
+			let mut write_pool = pool.write();
+
+			write_pool
+				.add_to_pool(test_source(), token_tx.clone(), false, &header)
+				.unwrap();
+
+			assert_eq!(write_pool.total_size(), 1);
+		}
+
+		let txs = pool.read().prepare_mineable_transactions().unwrap();
+
+		let block = add_block(header, txs, &mut chain);
+
+		// Check the block contains what we expect.
+		assert_eq!(block.inputs().len(), 1);
+		assert_eq!(block.outputs().len(), 2);
+		assert_eq!(block.kernels().len(), 2);
+		assert_eq!(block.token_inputs().len(), 1);
+		assert_eq!(block.token_outputs().len(), 2);
+		assert_eq!(block.token_kernels().len(), 1);
 
 		// Now reconcile the transaction pool with the new block
 		// and check the resulting contents of the pool are what we expect.

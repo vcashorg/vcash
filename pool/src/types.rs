@@ -21,7 +21,7 @@ use self::core::core::block;
 use self::core::core::committed;
 use self::core::core::hash::Hash;
 use self::core::core::transaction::{self, Transaction};
-use self::core::core::{BlockHeader, BlockSums};
+use self::core::core::{BlockHeader, BlockSums, BlockTokenSums};
 use self::core::{consensus, global};
 use failure::Fail;
 use grin_core as core;
@@ -266,6 +266,7 @@ pub trait BlockChain: Sync + Send {
 
 	fn get_block_header(&self, hash: &Hash) -> Result<BlockHeader, PoolError>;
 	fn get_block_sums(&self, hash: &Hash) -> Result<BlockSums, PoolError>;
+	fn get_block_token_sums(&self, hash: &Hash) -> Result<BlockTokenSums, PoolError>;
 }
 
 /// Bridge between the transaction pool and the rest of the system. Handles

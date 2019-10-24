@@ -34,13 +34,16 @@ use crate::core::Transaction;
 pub use self::proof::ProofBuilder;
 pub use crate::libtx::error::{Error, ErrorKind};
 
-const DEFAULT_BASE_FEE: u64 = consensus::MILLI_GRIN;
+pub const DEFAULT_BASE_FEE: u64 = consensus::MILLI_GRIN;
 
 /// Transaction fee calculation
 pub fn tx_fee(
 	input_len: usize,
 	output_len: usize,
 	kernel_len: usize,
+	token_input_len: usize,
+	token_output_len: usize,
+	token_kernel_len: usize,
 	base_fee: Option<u64>,
 ) -> u64 {
 	let use_base_fee = match base_fee {
@@ -48,5 +51,13 @@ pub fn tx_fee(
 		None => DEFAULT_BASE_FEE,
 	};
 
-	(Transaction::weight(input_len, output_len, kernel_len) as u64) * use_base_fee
+	(Transaction::weight(
+		input_len,
+		output_len,
+		kernel_len,
+		token_input_len,
+		token_output_len,
+		token_kernel_len,
+	) as u64)
+		* use_base_fee
 }
