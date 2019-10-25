@@ -128,7 +128,10 @@ impl<'a> UTXOView<'a> {
 	// that currently exists in the token_output MMR.
 	// Compare the hash in the token_output MMR at the expected pos.
 	fn validate_token_input(&self, token_input: &TokenInput) -> Result<(), Error> {
-		if let Ok(pos) = self.batch.get_token_output_pos(&token_input.commitment()) {
+		if let Ok((pos, _)) = self
+			.batch
+			.get_token_output_pos_height(&token_input.commitment())
+		{
 			if let Some(hash) = self.token_output_pmmr.get_hash(pos) {
 				if hash == token_input.hash_with_index(pos - 1) {
 					return Ok(());
@@ -140,7 +143,10 @@ impl<'a> UTXOView<'a> {
 
 	// Token_Output is valid if it would not result in a duplicate commitment in the token_output MMR.
 	fn validate_token_output(&self, token_output: &TokenOutput) -> Result<(), Error> {
-		if let Ok(pos) = self.batch.get_token_output_pos(&token_output.commitment()) {
+		if let Ok((pos, _)) = self
+			.batch
+			.get_token_output_pos_height(&token_output.commitment())
+		{
 			if let Some(out_mmr) = self.token_output_pmmr.get_data(pos) {
 				if out_mmr.commitment() == token_output.commitment() {
 					return Err(ErrorKind::DuplicateCommitment(token_output.commitment()).into());

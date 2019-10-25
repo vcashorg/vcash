@@ -43,6 +43,7 @@ use std::{error, fmt};
 pub struct TokenKey(hash::Hash);
 
 impl TokenKey {
+	/// create a new token key
 	pub fn new_token_key() -> TokenKey {
 		let mut ret = [0u8; 32];
 		let mut rng = thread_rng();
@@ -50,15 +51,18 @@ impl TokenKey {
 		TokenKey(hash::Hash::from_vec(&ret))
 	}
 
+	/// create a token key with ZERO_HASH
 	pub fn new_zero_key() -> TokenKey {
 		TokenKey(hash::ZERO_HASH)
 	}
 
+	/// Convert hex string back to TokenKey.
 	pub fn from_hex(hex: &str) -> Result<TokenKey, Error> {
 		let data = hash::Hash::from_hex(hex)?;
 		Ok(TokenKey(data))
 	}
 
+	/// Convert a TokenKey to hex string format.
 	pub fn to_hex(&self) -> String {
 		self.0.to_hex()
 	}
@@ -266,34 +270,87 @@ impl Readable for KernelFeatures {
 	}
 }
 
-// Enum of various supported kernel "features".
-enum_from_primitive! {
-	/// Various flavors of tx kernel.
-	#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-	#[repr(u8)]
-	pub enum TokenKernelFeatures {
-		/// Plain kernel (the default for Grin txs).
-		PlainToken = 0,
-		/// A coinbase kernel.
-		IssueToken = 1,
-		/// A kernel with an expicit lock height.
-		HeightLocked = 2,
+/// Various tx token kernel variants.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TokenKernelFeatures {
+	/// token Plain kernel (the default for Grin txs).
+	PlainToken,
+	/// A issue token kernel.
+	IssueToken,
+	/// A token kernel with an explicit lock height.
+	HeightLockedToken {
+		/// Height locked kernels have lock heights.
+		lock_height: u64,
+	},
+}
+
+impl TokenKernelFeatures {
+	const PLAIN_TOKEN_U8: u8 = 0;
+	const ISSUE_TOKEN_U8: u8 = 1;
+	const HEIGHT_LOCKED_U8: u8 = 2;
+
+	/// Underlying (u8) value representing this kernel variant.
+	/// This is the first byte when we serialize/deserialize the kernel features.
+	pub fn as_u8(&self) -> u8 {
+		match self {
+			TokenKernelFeatures::PlainToken { .. } => TokenKernelFeatures::PLAIN_TOKEN_U8,
+			TokenKernelFeatures::IssueToken => TokenKernelFeatures::ISSUE_TOKEN_U8,
+			TokenKernelFeatures::HeightLockedToken { .. } => TokenKernelFeatures::HEIGHT_LOCKED_U8,
+		}
+	}
+
+	/// Conversion for backward compatibility.
+	pub fn as_string(&self) -> String {
+		match self {
+			TokenKernelFeatures::PlainToken { .. } => String::from("PlainToken"),
+			TokenKernelFeatures::IssueToken => String::from("IssueToken"),
+			TokenKernelFeatures::HeightLockedToken { .. } => String::from("HeightLockedToken"),
+		}
+	}
+
+	/// Construct token msg from token_type and token kernel features.
+	pub fn token_kernel_sig_msg(&self, token_type: TokenKey) -> Result<secp::Message, Error> {
+		let x = self.as_u8();
+		let hash = match self {
+			TokenKernelFeatures::HeightLockedToken { lock_height } => {
+				(x, token_type, lock_height).hash()
+			}
+			_ => (x, token_type).hash(),
+		};
+
+		let msg = secp::Message::from_slice(&hash.as_bytes())?;
+		Ok(msg)
 	}
 }
 
-impl DefaultHashable for TokenKernelFeatures {}
-
 impl Writeable for TokenKernelFeatures {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		writer.write_u8(*self as u8)?;
+		match self {
+			TokenKernelFeatures::HeightLockedToken { lock_height } => {
+				writer.write_u8(self.as_u8())?;
+				writer.write_u64(*lock_height)?;
+			}
+			_ => {
+				writer.write_u8(self.as_u8())?;
+			}
+		}
 		Ok(())
 	}
 }
 
 impl Readable for TokenKernelFeatures {
 	fn read(reader: &mut dyn Reader) -> Result<TokenKernelFeatures, ser::Error> {
-		let features =
-			TokenKernelFeatures::from_u8(reader.read_u8()?).ok_or(ser::Error::CorruptedData)?;
+		let features = match reader.read_u8()? {
+			TokenKernelFeatures::PLAIN_TOKEN_U8 => TokenKernelFeatures::PlainToken,
+			TokenKernelFeatures::ISSUE_TOKEN_U8 => TokenKernelFeatures::IssueToken,
+			TokenKernelFeatures::HEIGHT_LOCKED_U8 => {
+				let lock_height = reader.read_u64()?;
+				TokenKernelFeatures::HeightLockedToken { lock_height }
+			}
+			_ => {
+				return Err(ser::Error::CorruptedData);
+			}
+		};
 		Ok(features)
 	}
 }
@@ -347,6 +404,8 @@ pub enum Error {
 	IssueTokenKeyRepeated,
 	/// Issue Token tx outputs and kernel mismatch
 	IssueTokenSumMismatch,
+	/// Unreach Token Support Height
+	UnreachTokenSupportHeight,
 }
 
 impl error::Error for Error {
@@ -681,17 +740,26 @@ impl FixedLength for TokenTxKernel {
 impl TokenKernelFeatures {
 	/// Is this a issue token kernel?
 	pub fn is_issue_token(&self) -> bool {
-		*self == TokenKernelFeatures::IssueToken
+		match self {
+			TokenKernelFeatures::IssueToken => true,
+			_ => false,
+		}
 	}
 
 	/// Is this a plain token kernel?
 	pub fn is_plain_token(&self) -> bool {
-		*self == TokenKernelFeatures::PlainToken
+		match self {
+			TokenKernelFeatures::PlainToken { .. } => true,
+			_ => false,
+		}
 	}
 
 	/// Is this a height locked kernel?
 	pub fn is_height_locked(&self) -> bool {
-		*self == TokenKernelFeatures::HeightLocked
+		match self {
+			TokenKernelFeatures::HeightLockedToken { .. } => true,
+			_ => false,
+		}
 	}
 }
 
@@ -719,7 +787,9 @@ impl TokenTxKernel {
 	/// The msg signed as part of the tx kernel.
 	/// Consists of the fee and the lock_height.
 	pub fn msg_to_sign(&self) -> Result<secp::Message, Error> {
-		let msg = token_kernel_sig_msg(self.token_type, self.lock_height, self.features)?;
+		let msg = self
+			.features
+			.token_kernel_sig_msg(self.token_type.clone())?;
 		Ok(msg)
 	}
 
@@ -750,6 +820,29 @@ impl TokenTxKernel {
 		Ok(())
 	}
 
+	/// Batch signature verification.
+	pub fn batch_sig_verify(tx_kernels: &Vec<TokenTxKernel>) -> Result<(), Error> {
+		let len = tx_kernels.len();
+		let mut sigs: Vec<secp::Signature> = Vec::with_capacity(len);
+		let mut pubkeys: Vec<secp::key::PublicKey> = Vec::with_capacity(len);
+		let mut msgs: Vec<secp::Message> = Vec::with_capacity(len);
+
+		let secp = static_secp_instance();
+		let secp = secp.lock();
+
+		for tx_kernel in tx_kernels {
+			sigs.push(tx_kernel.excess_sig);
+			pubkeys.push(tx_kernel.excess.to_pubkey(&secp)?);
+			msgs.push(tx_kernel.msg_to_sign()?);
+		}
+
+		if !secp::aggsig::verify_batch(&secp, &sigs, &msgs, &pubkeys) {
+			return Err(Error::IncorrectSignature);
+		}
+
+		Ok(())
+	}
+
 	/// Build an empty tx kernel with zero values.
 	pub fn empty() -> TokenTxKernel {
 		TokenTxKernel {
@@ -761,6 +854,7 @@ impl TokenTxKernel {
 		}
 	}
 
+	/// is a TokenTxKernel for zero key
 	pub fn is_empty(&self) -> bool {
 		self.token_type == TokenKey::new_zero_key()
 	}
@@ -770,12 +864,16 @@ impl TokenTxKernel {
 		TokenTxKernel { token_type, ..self }
 	}
 
-	/// Builds a new tx kernel with the provided lock_height.
+	/// Builds a new tx token kernel with the provided lock_height.
 	pub fn with_lock_height(self, lock_height: u64) -> TokenTxKernel {
-		TokenTxKernel {
-			features: token_kernel_features(lock_height),
-			lock_height,
-			..self
+		match self.features {
+			TokenKernelFeatures::PlainToken | TokenKernelFeatures::HeightLockedToken { .. } => {
+				let features = TokenKernelFeatures::HeightLockedToken { lock_height };
+				TokenTxKernel { features, ..self }
+			}
+			TokenKernelFeatures::IssueToken => {
+				panic!("lock_height not supported on issue token kernel")
+			}
 		}
 	}
 }
@@ -832,23 +930,10 @@ impl PartialEq for TransactionBody {
 /// write the body as binary.
 impl Writeable for TransactionBody {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		ser_multiwrite!(
-			writer,
-			[write_u64, self.inputs.len() as u64],
-			[write_u64, self.token_inputs.len() as u64],
-			[write_u64, self.outputs.len() as u64],
-			[write_u64, self.token_outputs.len() as u64],
-			[write_u64, self.kernels.len() as u64],
-			[write_u64, self.token_kernels.len() as u64]
-		);
-
-		self.inputs.write(writer)?;
-		self.token_inputs.write(writer)?;
-		self.outputs.write(writer)?;
-		self.token_outputs.write(writer)?;
-		self.kernels.write(writer)?;
-		self.token_kernels.write(writer)?;
-		Ok(())
+		match writer.protocol_version().value() {
+			0..=1 => self.write_v1(writer),
+			2..=ProtocolVersion::MAX => self.write_v2(writer),
+		}
 	}
 }
 
@@ -856,50 +941,10 @@ impl Writeable for TransactionBody {
 /// body from a binary stream.
 impl Readable for TransactionBody {
 	fn read(reader: &mut dyn Reader) -> Result<TransactionBody, ser::Error> {
-		let (
-			input_len,
-			token_input_len,
-			output_len,
-			token_output_len,
-			kernel_len,
-			token_kernel_len,
-		) = ser_multiread!(reader, read_u64, read_u64, read_u64, read_u64, read_u64, read_u64);
-
-		// Quick block weight check before proceeding.
-		// Note: We use weight_as_block here (inputs have weight).
-		let tx_block_weight = TransactionBody::weight_as_block(
-			input_len as usize,
-			output_len as usize,
-			kernel_len as usize,
-			token_input_len as usize,
-			token_output_len as usize,
-			token_kernel_len as usize,
-		);
-
-		if tx_block_weight > global::max_block_weight() {
-			return Err(ser::Error::TooLargeReadErr);
+		match reader.protocol_version().value() {
+			0..=1 => TransactionBody::read_v1(reader),
+			2..=ProtocolVersion::MAX => TransactionBody::read_v2(reader),
 		}
-
-		let inputs = read_multi(reader, input_len)?;
-		let token_inputs = read_multi(reader, token_input_len)?;
-		let outputs = read_multi(reader, output_len)?;
-		let token_outputs = read_multi(reader, token_output_len)?;
-		let kernels = read_multi(reader, kernel_len)?;
-		let token_kernels = read_multi(reader, token_kernel_len)?;
-
-		// Initialize tx body and verify everything is sorted.
-		let body = TransactionBody::init(
-			inputs,
-			outputs,
-			token_inputs,
-			token_outputs,
-			kernels,
-			token_kernels,
-			true,
-		)
-		.map_err(|_| ser::Error::CorruptedData)?;
-
-		Ok(body)
 	}
 }
 
@@ -976,6 +1021,119 @@ impl TransactionBody {
 		}
 	}
 
+	fn write_v1<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		ser_multiwrite!(
+			writer,
+			[write_u64, self.inputs.len() as u64],
+			[write_u64, self.outputs.len() as u64],
+			[write_u64, self.kernels.len() as u64]
+		);
+
+		self.inputs.write(writer)?;
+		self.outputs.write(writer)?;
+		self.kernels.write(writer)?;
+
+		Ok(())
+	}
+
+	fn write_v2<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		ser_multiwrite!(
+			writer,
+			[write_u64, self.inputs.len() as u64],
+			[write_u64, self.token_inputs.len() as u64],
+			[write_u64, self.outputs.len() as u64],
+			[write_u64, self.token_outputs.len() as u64],
+			[write_u64, self.kernels.len() as u64],
+			[write_u64, self.token_kernels.len() as u64]
+		);
+
+		self.inputs.write(writer)?;
+		self.token_inputs.write(writer)?;
+		self.outputs.write(writer)?;
+		self.token_outputs.write(writer)?;
+		self.kernels.write(writer)?;
+		self.token_kernels.write(writer)?;
+
+		Ok(())
+	}
+
+	fn read_v1(reader: &mut dyn Reader) -> Result<TransactionBody, ser::Error> {
+		let (input_len, output_len, kernel_len) =
+			ser_multiread!(reader, read_u64, read_u64, read_u64);
+
+		// Quick block weight check before proceeding.
+		// Note: We use weight_as_block here (inputs have weight).
+		let tx_block_weight = TransactionBody::weight_as_block(
+			input_len as usize,
+			output_len as usize,
+			kernel_len as usize,
+			0,
+			0,
+			0,
+		);
+
+		if tx_block_weight > global::max_block_weight() {
+			return Err(ser::Error::TooLargeReadErr);
+		}
+
+		let inputs = read_multi(reader, input_len)?;
+		let outputs = read_multi(reader, output_len)?;
+		let kernels = read_multi(reader, kernel_len)?;
+
+		// Initialize tx body and verify everything is sorted.
+		let body = TransactionBody::init(inputs, outputs, kernels, vec![], vec![], vec![], true)
+			.map_err(|_| ser::Error::CorruptedData)?;
+
+		Ok(body)
+	}
+
+	fn read_v2(reader: &mut dyn Reader) -> Result<TransactionBody, ser::Error> {
+		let (
+			input_len,
+			token_input_len,
+			output_len,
+			token_output_len,
+			kernel_len,
+			token_kernel_len,
+		) = ser_multiread!(reader, read_u64, read_u64, read_u64, read_u64, read_u64, read_u64);
+
+		// Quick block weight check before proceeding.
+		// Note: We use weight_as_block here (inputs have weight).
+		let tx_block_weight = TransactionBody::weight_as_block(
+			input_len as usize,
+			output_len as usize,
+			kernel_len as usize,
+			token_input_len as usize,
+			token_output_len as usize,
+			token_kernel_len as usize,
+		);
+
+		if tx_block_weight > global::max_block_weight() {
+			return Err(ser::Error::TooLargeReadErr);
+		}
+
+		let inputs = read_multi(reader, input_len)?;
+		let token_inputs = read_multi(reader, token_input_len)?;
+		let outputs = read_multi(reader, output_len)?;
+		let token_outputs = read_multi(reader, token_output_len)?;
+		let kernels = read_multi(reader, kernel_len)?;
+		let token_kernels = read_multi(reader, token_kernel_len)?;
+
+		// Initialize tx body and verify everything is sorted.
+		let body = TransactionBody::init(
+			inputs,
+			outputs,
+			kernels,
+			token_inputs,
+			token_outputs,
+			token_kernels,
+			true,
+		)
+		.map_err(|_| ser::Error::CorruptedData)?;
+
+		Ok(body)
+	}
+
 	/// Sort the inputs|outputs|kernels.
 	pub fn sort(&mut self) {
 		self.inputs.sort_unstable();
@@ -992,9 +1150,9 @@ impl TransactionBody {
 	pub fn init(
 		inputs: Vec<Input>,
 		outputs: Vec<Output>,
+		kernels: Vec<TxKernel>,
 		token_inputs: Vec<TokenInput>,
 		token_outputs: Vec<TokenOutput>,
-		kernels: Vec<TxKernel>,
 		token_kernels: Vec<TokenTxKernel>,
 		verify_sorted: bool,
 	) -> Result<TransactionBody, Error> {
@@ -1073,6 +1231,9 @@ impl TransactionBody {
 		self
 	}
 
+	/// Builds a new TransactionBody with the provided token kernel added. Existing
+	/// kernels, if any, are kept intact.
+	/// Sort order is maintained.
 	pub fn with_token_kernel(mut self, token_kernel: TokenTxKernel) -> TransactionBody {
 		self.token_kernels
 			.binary_search(&token_kernel)
@@ -1356,6 +1517,15 @@ impl TransactionBody {
 		Ok(())
 	}
 
+	/// Validate chain height reaches support_token_height
+	pub fn validate_token_height(&self, height: u64) -> Result<(), Error> {
+		if height < global::support_token_height() && self.token_kernels.len() > 0 {
+			return Err(Error::UnreachTokenSupportHeight);
+		}
+
+		Ok(())
+	}
+
 	/// Validates all relevant parts of a transaction body. Checks the
 	/// excess value against the signature as well as range proofs for each
 	/// output.
@@ -1417,12 +1587,8 @@ impl TransactionBody {
 			verifier.filter_token_kernel_sig_unverified(&self.token_kernels)
 		};
 
-		// Verify the unverified tx kernels.
-		// No ability to batch verify these right now
-		// so just do them individually.
-		for x in &token_kernels {
-			x.verify()?;
-		}
+		// Verify the unverified tx token kernels.
+		TokenTxKernel::batch_sig_verify(&token_kernels)?;
 
 		// Cache the successful verification results for the new outputs and kernels.
 		{
@@ -1550,9 +1716,9 @@ impl Transaction {
 		let body = TransactionBody::init(
 			inputs,
 			outputs,
+			kernels,
 			token_inputs,
 			token_outputs,
-			kernels,
 			token_kernels,
 			false,
 		)
@@ -1711,6 +1877,11 @@ impl Transaction {
 		self.body.validate_read(Weighting::AsTransaction)?;
 		self.body.verify_features()?;
 		Ok(())
+	}
+
+	/// Validate chain height reaches support_token_height
+	pub fn validate_token_height(&self, height: u64) -> Result<(), Error> {
+		self.body.validate_token_height(height)
 	}
 
 	/// Validates all relevant parts of a fully built transaction. Checks the
@@ -2170,6 +2341,7 @@ impl TokenInput {
 		self.commit
 	}
 
+	/// The input token key
 	pub fn token_type(&self) -> TokenKey {
 		self.token_type
 	}
@@ -2425,6 +2597,7 @@ impl TokenOutput {
 		self.commit
 	}
 
+	/// the output token key
 	pub fn token_type(&self) -> TokenKey {
 		self.token_type
 	}
@@ -2651,39 +2824,6 @@ impl From<TokenOutput> for TokenOutputIdentifier {
 	}
 }
 
-/// token kernel features as determined by lock height
-pub fn token_kernel_features(lock_height: u64) -> TokenKernelFeatures {
-	if lock_height > 0 {
-		TokenKernelFeatures::HeightLocked
-	} else {
-		TokenKernelFeatures::PlainToken
-	}
-}
-
-/// Construct token msg from tx fee, lock_height and kernel features.
-///
-///       hash(features || token_type)                for plain kernels
-///       hash(features || token_type || lock_height) for height locked kernels
-///
-pub fn token_kernel_sig_msg(
-	token_type: TokenKey,
-	lock_height: u64,
-	features: TokenKernelFeatures,
-) -> Result<secp::Message, Error> {
-	let valid_features = match features {
-		TokenKernelFeatures::HeightLocked => (lock_height > 0),
-		_ => lock_height == 0,
-	};
-	if !valid_features {
-		return Err(Error::InvalidTokenKernelFeatures);
-	}
-	let hash = match features {
-		TokenKernelFeatures::HeightLocked => (features, token_type, lock_height).hash(),
-		_ => (features, token_type).hash(),
-	};
-	Ok(secp::Message::from_slice(&hash.as_bytes())?)
-}
-
 /// Proof for Token issue
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct TokenIssueProof {
@@ -2760,6 +2900,7 @@ impl TokenIssueProof {
 		self.commit
 	}
 
+	/// Token key for the output
 	pub fn token_type(&self) -> TokenKey {
 		self.token_type
 	}
@@ -2905,11 +3046,20 @@ mod test {
 		let features: KernelFeatures = ser::deserialize_default(&mut &vec[..]).unwrap();
 		assert_eq!(features, KernelFeatures::Coinbase);
 
-		let features = KernelFeatures::from_u8(2).unwrap();
-		assert_eq!(features, KernelFeatures::HeightLocked);
+		let mut vec = vec![];
+		ser::serialize_default(&mut vec, &(2u8, 10u64, 100u64)).expect("serialized failed");
+		let features: KernelFeatures = ser::deserialize_default(&mut &vec[..]).unwrap();
+		assert_eq!(
+			features,
+			KernelFeatures::HeightLocked {
+				fee: 10,
+				lock_height: 100
+			}
+		);
 
-		// Verify we cannot deserialize an unexpected kernel feature
-		let features = KernelFeatures::from_u8(3);
-		assert_eq!(features, None);
+		let mut vec = vec![];
+		ser::serialize_default(&mut vec, &(3u8, 0u64, 0u64)).expect("serialized failed");
+		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
+		assert_eq!(res.err(), Some(ser::Error::CorruptedData));
 	}
 }

@@ -29,7 +29,7 @@ use self::core::ser;
 use self::keychain::{BlindingFactor, ExtKeychain, Keychain};
 use self::util::static_secp_instance;
 use self::util::RwLock;
-use crate::common::{new_block, tx1i1o, tx1i2o, tx2i1o};
+use crate::common::{new_block, tokentx1i2o, tx1i1o, tx1i2o, tx2i1o};
 use grin_core as core;
 use grin_keychain as keychain;
 use grin_util as util;
@@ -43,7 +43,7 @@ fn simple_tx_ser() {
 	{
 		let mut vec = Vec::new();
 		ser::serialize_default(&mut vec, &tx).expect("serialization failed");
-		assert_eq!(vec.len(), 947);
+		assert_eq!(vec.len(), 971);
 	}
 
 	// Explicit protocol version 1.
@@ -57,7 +57,7 @@ fn simple_tx_ser() {
 	{
 		let mut vec = Vec::new();
 		ser::serialize(&mut vec, ser::ProtocolVersion(2), &tx).expect("serialization failed");
-		assert_eq!(vec.len(), 947);
+		assert_eq!(vec.len(), 971);
 	}
 }
 
@@ -169,10 +169,10 @@ fn transaction_cut_through() {
 // Attempt to deaggregate a multi-kernel transaction in a different way
 #[test]
 fn multi_kernel_transaction_deaggregation() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
-	let tx4 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
+	let tx4 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -207,9 +207,9 @@ fn multi_kernel_transaction_deaggregation() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_2() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -232,9 +232,9 @@ fn multi_kernel_transaction_deaggregation_2() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_3() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -258,11 +258,11 @@ fn multi_kernel_transaction_deaggregation_3() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_4() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
-	let tx4 = tx1i1o();
-	let tx5 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
+	let tx4 = tokentx1i2o();
+	let tx5 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -297,11 +297,11 @@ fn multi_kernel_transaction_deaggregation_4() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_5() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
-	let tx4 = tx1i1o();
-	let tx5 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
+	let tx4 = tokentx1i2o();
+	let tx5 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -336,8 +336,8 @@ fn multi_kernel_transaction_deaggregation_5() {
 // Attempt to deaggregate a multi-kernel transaction
 #[test]
 fn basic_transaction_deaggregation() {
-	let tx1 = tx1i2o();
-	let tx2 = tx2i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -439,7 +439,7 @@ fn tx_build_exchange() {
 
 		// Alice builds her transaction, with change, which also produces the sum
 		// of blinding factors before they're obscured.
-		let (tx, sum) = build::partial_transaction(
+		let (tx, sum, _token_sum) = build::partial_transaction(
 			vec![in1, in2, output(1, key_id3), with_fee(2)],
 			&keychain,
 			&builder,

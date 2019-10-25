@@ -11,8 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-#[macro_use]
 extern crate log;
 
 use self::core::global::{self, ChainTypes};
@@ -21,20 +19,13 @@ use crate::core::core::get_grin_magic_data_str;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::servers::JobInfo;
 use crate::servers::SubmitInfo;
-use bufstream::BufStream;
 use grin_api as api;
 use grin_core as core;
-use grin_core::core::{AuxBitHeader, BlockAuxData};
+use grin_core::core::BlockAuxData;
 use grin_p2p as p2p;
 use grin_servers as servers;
 use grin_util as util;
-use grin_util::{Mutex, StopState};
-use serde_json::Value;
-use servers::common::types::PoolServerConfig;
-use std::io::prelude::{BufRead, Write};
 use std::net::TcpStream;
-use std::process;
-use std::sync::Arc;
 use std::{fs, thread, time};
 
 /// return pool server config
@@ -94,7 +85,7 @@ fn test_pool_server() {
 	let s = servers::Server::new(config(4000, test_name_dir, 0)).unwrap();
 
 	// Get mining config with stratumserver enabled
-	let mut pool_server_cfg = pool_server_config();
+	let pool_server_cfg = pool_server_config();
 
 	// Start stratum server
 	s.start_pool_server(pool_server_cfg.clone());

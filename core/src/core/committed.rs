@@ -152,6 +152,8 @@ pub trait Committed {
 		Ok((utxo_sum, kernel_sum))
 	}
 
+	/// Verify the sum of the token kernel excesses equals the
+	/// sum of the token outputs, taking into account token issue commit
 	fn verify_token_kernel_sum(&self) -> Result<BlockTokenSums, Error> {
 		let token_input_commit_vec = self.token_inputs_committed();
 		let token_output_commit_vec = self.token_outputs_committed();

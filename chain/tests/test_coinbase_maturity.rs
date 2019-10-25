@@ -21,7 +21,7 @@ use self::core::pow::Difficulty;
 use self::core::{consensus, pow};
 use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
 use self::util::RwLock;
-use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
+use crate::core::core::hash::Hashed;
 use chrono::Duration;
 use env_logger;
 use grin_chain as chain;
@@ -48,7 +48,7 @@ fn test_coinbase_maturity() {
 
 	{
 		let chain = chain::Chain::init(
-			".grin".to_string(),
+			".grin_coinbase".to_string(),
 			Arc::new(NoopAdapter {}),
 			genesis_block,
 			pow::verify_size,

@@ -34,6 +34,7 @@ use crate::core::Transaction;
 pub use self::proof::ProofBuilder;
 pub use crate::libtx::error::{Error, ErrorKind};
 
+/// default base fee for tx
 pub const DEFAULT_BASE_FEE: u64 = consensus::MILLI_GRIN;
 
 /// Transaction fee calculation

@@ -28,6 +28,8 @@ pub trait VerifierCache: Sync + Send {
 	/// Takes a vec of tx kernels and returns those kernels
 	/// that have not yet been verified.
 	fn filter_kernel_sig_unverified(&mut self, kernels: &[TxKernel]) -> Vec<TxKernel>;
+	/// Takes a vec of tx token kernels and returns those kernels
+	/// that have not yet been verified.
 	fn filter_token_kernel_sig_unverified(
 		&mut self,
 		kernels: &[TokenTxKernel],
@@ -40,6 +42,7 @@ pub trait VerifierCache: Sync + Send {
 	fn filter_token_rangeproof_unverified(&mut self, outputs: &[TokenOutput]) -> Vec<TokenOutput>;
 	/// Adds a vec of tx kernels to the cache (used in conjunction with the the filter above).
 	fn add_kernel_sig_verified(&mut self, kernels: Vec<TxKernel>);
+	/// Adds a vec of tx token kernels to the cache (used in conjunction with the the filter above).
 	fn add_token_kernel_sig_verified(&mut self, kernels: Vec<TokenTxKernel>);
 	/// Adds a vec of outputs to the cache (used in conjunction with the the filter above).
 	fn add_rangeproof_verified(&mut self, outputs: Vec<Output>);

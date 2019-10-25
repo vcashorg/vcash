@@ -202,13 +202,16 @@ impl Pool {
 
 	fn log_pool_add(&self, entry: &PoolEntry, header: &BlockHeader) {
 		debug!(
-			"add_to_pool [{}]: {} ({:?}) [in/out/kern: {}/{}/{}] pool: {} (at block {})",
+			"add_to_pool [{}]: {} ({:?}) [in/out/kern: {}/{}/{}, tokenin/tokenout/tokenkern: {}/{}/{}] pool: {} (at block {})",
 			self.name,
 			entry.tx.hash(),
 			entry.src,
 			entry.tx.inputs().len(),
 			entry.tx.outputs().len(),
 			entry.tx.kernels().len(),
+			entry.tx.token_inputs().len(),
+			entry.tx.token_outputs().len(),
+			entry.tx.token_kernels().len(),
 			self.size(),
 			header.hash(),
 		);
@@ -454,6 +457,17 @@ impl Pool {
 		self.entries.retain(|x| {
 			!x.tx.kernels().iter().any(|y| block.kernels().contains(y))
 				&& !x.tx.inputs().iter().any(|y| block.inputs().contains(y))
+		});
+		self.entries.retain(|x| {
+			!x.tx
+				.token_kernels()
+				.iter()
+				.any(|y| block.token_kernels().contains(y))
+				&& !x
+					.tx
+					.token_inputs()
+					.iter()
+					.any(|y| block.token_inputs().contains(y))
 		});
 	}
 

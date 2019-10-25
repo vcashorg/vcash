@@ -563,13 +563,12 @@ impl Chain {
 	/// spent. This querying is done in a way that is consistent with the
 	/// current chain state, specifically the current winning (valid, most
 	/// work) fork.
-	pub fn is_token_unspent(&self, output_ref: &TokenOutputIdentifier) -> Result<Hash, Error> {
+	pub fn is_token_unspent(
+		&self,
+		output_ref: &TokenOutputIdentifier,
+	) -> Result<OutputMMRPosition, Error> {
 		let txhashset = self.txhashset.read();
-		let res = txhashset.is_token_unspent(output_ref);
-		match res {
-			Err(e) => Err(e),
-			Ok((h, _)) => Ok(h),
-		}
+		txhashset.is_token_unspent(output_ref)
 	}
 
 	/// Validate the tx against the current UTXO set.
@@ -1547,35 +1546,9 @@ impl Chain {
 	) -> Result<BlockHeader, Error> {
 		let header_pmmr = self.header_pmmr.read();
 		let txhashset = self.txhashset.read();
-
-		let (_, pos) = txhashset.is_token_unspent(output_ref)?;
-
-		let mut min = 0;
-		let mut max = {
-			let head = self.head()?;
-			head.height
-		};
-
-		loop {
-			let search_height = max - (max - min) / 2;
-			let hash = header_pmmr.get_header_hash_by_height(search_height)?;
-			let h = self.get_block_header(&hash)?;
-			if search_height == 0 {
-				return Ok(h);
-			}
-			let hash_prev = header_pmmr.get_header_hash_by_height(search_height - 1)?;
-			let h_prev = self.get_block_header(&hash_prev)?;
-			if pos > h.token_output_mmr_size {
-				min = search_height;
-			} else if pos < h_prev.token_output_mmr_size {
-				max = search_height;
-			} else {
-				if pos == h_prev.token_output_mmr_size {
-					return Ok(h_prev);
-				}
-				return Ok(h);
-			}
-		}
+		let output_pos = txhashset.is_token_unspent(output_ref)?;
+		let hash = header_pmmr.get_header_hash_by_height(output_pos.height)?;
+		Ok(self.get_block_header(&hash)?)
 	}
 
 	/// Verifies the given block header is actually on the current chain.
@@ -1755,6 +1728,7 @@ fn setup_head(
 
 			// Save the block_sums to the db for use later.
 			batch.save_block_sums(&genesis.hash(), &sums)?;
+			batch.save_block_token_sums(&genesis.hash(), &BlockTokenSums::default())?;
 
 			info!("init: saved genesis: {:?}", genesis.hash());
 		}

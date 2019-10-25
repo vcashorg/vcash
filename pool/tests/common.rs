@@ -32,7 +32,7 @@ use grin_core as core;
 use grin_keychain as keychain;
 use grin_pool as pool;
 use grin_util as util;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::Arc;
 
@@ -40,6 +40,7 @@ use std::sync::Arc;
 pub struct ChainAdapter {
 	pub store: Arc<RwLock<ChainStore>>,
 	pub utxo: Arc<RwLock<HashSet<Commitment>>>,
+	pub token_utxo: Arc<RwLock<HashMap<TokenKey, HashSet<Commitment>>>>,
 }
 
 impl ChainAdapter {
@@ -49,8 +50,13 @@ impl ChainAdapter {
 			.map_err(|e| format!("failed to init chain_store, {:?}", e))?;
 		let store = Arc::new(RwLock::new(chain_store));
 		let utxo = Arc::new(RwLock::new(HashSet::new()));
+		let token_utxo = Arc::new(RwLock::new(HashMap::new()));
 
-		Ok(ChainAdapter { store, utxo })
+		Ok(ChainAdapter {
+			store,
+			utxo,
+			token_utxo,
+		})
 	}
 
 	pub fn update_db_for_block(&self, block: &Block) {
@@ -100,10 +106,6 @@ impl ChainAdapter {
 			.verify_token_kernel_sum()
 			.unwrap();
 
-		let block_sums = BlockSums {
-			utxo_sum,
-			kernel_sum,
-		};
 		batch
 			.save_block_token_sums(&header.hash(), &token_kernel_sum)
 			.unwrap();
@@ -117,6 +119,18 @@ impl ChainAdapter {
 			}
 			for x in block.outputs() {
 				utxo.insert(x.commitment());
+			}
+		}
+
+		{
+			let mut token_utxo = self.token_utxo.write();
+			for x in block.token_inputs() {
+				let vec = token_utxo.entry(x.token_type).or_insert(HashSet::new());
+				vec.remove(&x.commitment());
+			}
+			for x in block.token_outputs() {
+				let vec = token_utxo.entry(x.token_type).or_insert(HashSet::new());
+				vec.insert(x.commitment());
 			}
 		}
 	}
@@ -159,6 +173,24 @@ impl BlockChain for ChainAdapter {
 		for x in tx.inputs() {
 			if !utxo.contains(&x.commitment()) {
 				return Err(PoolError::Other(format!("not in utxo set")));
+			}
+		}
+
+		let token_utxo = self.token_utxo.read();
+		for x in tx.token_outputs() {
+			let vec = token_utxo.get(&x.token_type);
+			if vec.is_some() && vec.unwrap().contains(&x.commitment()) {
+				return Err(PoolError::Other(format!(
+					"token output commitment not unique"
+				)));
+			}
+		}
+
+		for x in tx.token_inputs() {
+			let vec = token_utxo.get(&x.token_type);
+
+			if vec.is_none() || !vec.unwrap().contains(&x.commitment()) {
+				return Err(PoolError::Other(format!("not in token utxo set")));
 			}
 		}
 
@@ -281,12 +313,7 @@ where
 	tx_elements.push(libtx::build::with_fee(fees as u64));
 
 	let key_id = ExtKeychain::derive_key_id(1, amount as u32, 0, 0, 0);
-	tx_elements.push(libtx::build::token_output(
-		output_value,
-		token_type,
-		true,
-		key_id,
-	));
+	tx_elements.push(libtx::build::token_output(amount, token_type, true, key_id));
 
 	libtx::build::transaction(tx_elements, keychain, &libtx::ProofBuilder::new(keychain)).unwrap()
 }
@@ -320,6 +347,7 @@ where
 		tx_elements.push(libtx::build::token_input(
 			token_input_value,
 			token_type,
+			false,
 			key_id,
 		));
 	}

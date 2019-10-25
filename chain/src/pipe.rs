@@ -591,7 +591,7 @@ fn update_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Error> {
 
 // Whether the provided block totals more work than the chain tip
 fn has_more_work(header: &BlockHeader, head: &Tip) -> bool {
-	header.total_difficulty() > head.total_difficulty
+	header.height > head.height
 }
 
 /// Update the sync head so we can keep syncing from where we left off.

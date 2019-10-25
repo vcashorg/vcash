@@ -305,16 +305,23 @@ impl TxHashSet {
 	pub fn is_token_unspent(
 		&self,
 		output_id: &TokenOutputIdentifier,
-	) -> Result<(Hash, u64), Error> {
-		match self.commit_index.get_token_output_pos(&output_id.commit) {
-			Ok(pos) => {
+	) -> Result<OutputMMRPosition, Error> {
+		match self
+			.commit_index
+			.get_token_output_pos_height(&output_id.commit)
+		{
+			Ok((pos, block_height)) => {
 				let output_pmmr: ReadonlyPMMR<'_, TokenOutput, _> = ReadonlyPMMR::at(
 					&self.token_output_pmmr_h.backend,
 					self.token_output_pmmr_h.last_pos,
 				);
 				if let Some(hash) = output_pmmr.get_hash(pos) {
 					if hash == output_id.hash_with_index(pos - 1) {
-						Ok((hash, pos))
+						Ok(OutputMMRPosition {
+							output_mmr_hash: hash,
+							position: pos,
+							height: block_height,
+						})
 					} else {
 						Err(ErrorKind::TxHashSetErr(format!("txhashset hash mismatch")).into())
 					}
@@ -597,12 +604,12 @@ impl TxHashSet {
 
 	/// Return Commit's MMR position
 	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
-		Ok(self.commit_index.get_token_output_pos(&commit)?)
+		Ok(self.commit_index.get_token_output_pos_height(&commit)?.0)
 	}
 
 	/// build a new merkle proof for the given position.
 	pub fn token_merkle_proof(&mut self, commit: Commitment) -> Result<MerkleProof, Error> {
-		let pos = self.commit_index.get_token_output_pos(&commit)?;
+		let pos = self.commit_index.get_token_output_pos_height(&commit)?.0;
 		PMMR::at(
 			&mut self.token_output_pmmr_h.backend,
 			self.token_output_pmmr_h.last_pos,
@@ -1180,7 +1187,8 @@ impl<'a> Extension<'a> {
 		for out in b.token_outputs() {
 			let pos = self.apply_token_output(out)?;
 			// Update the output_pos index for the new output.
-			self.batch.save_token_output_pos(&out.commitment(), pos)?;
+			self.batch
+				.save_token_output_pos_height(&out.commitment(), pos, b.header.height)?;
 
 			if out.is_tokenissue() {
 				let pos = self.apply_token_issue_output(out)?;
@@ -1280,8 +1288,8 @@ impl<'a> Extension<'a> {
 
 	fn apply_token_input(&mut self, token_input: &TokenInput) -> Result<(), Error> {
 		let commit = token_input.commitment();
-		let pos_res = self.batch.get_token_output_pos(&commit);
-		if let Ok(pos) = pos_res {
+		let pos_res = self.batch.get_token_output_pos_height(&commit);
+		if let Ok((pos, _height)) = pos_res {
 			// First check this input corresponds to an existing entry in the output MMR.
 			if let Some(hash) = self.token_output_pmmr.get_hash(pos) {
 				if hash != token_input.hash_with_index(pos - 1) {
@@ -1313,7 +1321,7 @@ impl<'a> Extension<'a> {
 	fn apply_token_output(&mut self, token_out: &TokenOutput) -> Result<(u64), Error> {
 		let commit = token_out.commitment();
 
-		if let Ok(pos) = self.batch.get_token_output_pos(&commit) {
+		if let Ok((pos, _)) = self.batch.get_token_output_pos_height(&commit) {
 			if let Some(out_mmr) = self.token_output_pmmr.get_data(pos) {
 				if out_mmr.commitment() == commit {
 					return Err(ErrorKind::DuplicateCommitment(commit).into());
@@ -1417,10 +1425,10 @@ impl<'a> Extension<'a> {
 	pub fn token_merkle_proof(&self, output: &TokenOutputIdentifier) -> Result<MerkleProof, Error> {
 		debug!("txhashset: merkle_proof: output: {:?}", output.commit,);
 		// then calculate the Merkle Proof based on the known pos
-		let pos = self.batch.get_token_output_pos(&output.commit)?;
+		let pos = self.batch.get_token_output_pos_height(&output.commit)?;
 		let merkle_proof = self
 			.token_output_pmmr
-			.merkle_proof(pos)
+			.merkle_proof(pos.0)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 
 		Ok(merkle_proof)
@@ -1665,6 +1673,7 @@ impl<'a> Extension<'a> {
 		Ok((utxo_sum, kernel_sum))
 	}
 
+	/// Validate full token kernel sums against the provided header.
 	pub fn validate_token_kernel_sums(&self) -> Result<BlockTokenSums, Error> {
 		let now = Instant::now();
 
@@ -1709,8 +1718,12 @@ impl<'a> Extension<'a> {
 			// Verify the rangeproof associated with each unspent output.
 			self.verify_rangeproofs(status)?;
 
+			self.verify_token_rangeproofs(status)?;
+
 			// Verify all the kernel signatures.
 			self.verify_kernel_signatures(status)?;
+
+			self.verify_token_kernel_signatures(status)?;
 		}
 
 		Ok((output_sum, kernel_sum, block_token_sums))
@@ -1795,6 +1808,48 @@ impl<'a> Extension<'a> {
 		Ok(())
 	}
 
+	fn verify_token_kernel_signatures(
+		&self,
+		status: &dyn TxHashsetWriteStatus,
+	) -> Result<(), Error> {
+		let now = Instant::now();
+		const KERNEL_BATCH_SIZE: usize = 5_000;
+
+		let mut kern_count = 0;
+		let total_kernels = pmmr::n_leaves(self.token_kernel_pmmr.unpruned_size());
+		let mut tx_kernels: Vec<TokenTxKernel> = Vec::with_capacity(KERNEL_BATCH_SIZE);
+		for n in 1..self.token_kernel_pmmr.unpruned_size() + 1 {
+			if pmmr::is_leaf(n) {
+				let kernel = self
+					.token_kernel_pmmr
+					.get_data(n)
+					.ok_or::<Error>(ErrorKind::TxKernelNotFound.into())?;
+				tx_kernels.push(kernel);
+			}
+
+			if tx_kernels.len() >= KERNEL_BATCH_SIZE || n >= self.token_kernel_pmmr.unpruned_size()
+			{
+				TokenTxKernel::batch_sig_verify(&tx_kernels)?;
+				kern_count += tx_kernels.len() as u64;
+				tx_kernels.clear();
+				status.on_validation(kern_count, total_kernels, 0, 0);
+				debug!(
+					"txhashset: verify_token_kernel_signatures: verified {} signatures",
+					kern_count,
+				);
+			}
+		}
+
+		debug!(
+			"txhashset: verified {} token kernel signatures, pmmr size {}, took {}s",
+			kern_count,
+			self.token_kernel_pmmr.unpruned_size(),
+			now.elapsed().as_secs(),
+		);
+
+		Ok(())
+	}
+
 	fn verify_rangeproofs(&self, status: &dyn TxHashsetWriteStatus) -> Result<(), Error> {
 		let now = Instant::now();
 
@@ -1850,6 +1905,66 @@ impl<'a> Extension<'a> {
 			"txhashset: verified {} rangeproofs, pmmr size {}, took {}s",
 			proof_count,
 			self.rproof_pmmr.unpruned_size(),
+			now.elapsed().as_secs(),
+		);
+		Ok(())
+	}
+
+	fn verify_token_rangeproofs(&self, status: &dyn TxHashsetWriteStatus) -> Result<(), Error> {
+		let now = Instant::now();
+
+		let mut commits: Vec<Commitment> = Vec::with_capacity(1_000);
+		let mut proofs: Vec<RangeProof> = Vec::with_capacity(1_000);
+
+		let mut proof_count = 0;
+		let total_rproofs = pmmr::n_leaves(self.token_output_pmmr.unpruned_size());
+		for pos in self.token_output_pmmr.leaf_pos_iter() {
+			let output = self.token_output_pmmr.get_data(pos);
+			let proof = self.token_rproof_pmmr.get_data(pos);
+
+			// Output and corresponding rangeproof *must* exist.
+			// It is invalid for either to be missing and we fail immediately in this case.
+			match (output, proof) {
+				(None, _) => return Err(ErrorKind::OutputNotFound.into()),
+				(_, None) => return Err(ErrorKind::RangeproofNotFound.into()),
+				(Some(output), Some(proof)) => {
+					commits.push(output.commit);
+					proofs.push(proof);
+				}
+			}
+
+			proof_count += 1;
+
+			if proofs.len() >= 1_000 {
+				Output::batch_verify_proofs(&commits, &proofs)?;
+				commits.clear();
+				proofs.clear();
+				debug!(
+					"txhashset: verify_token_rangeproofs: verified {} rangeproofs",
+					proof_count,
+				);
+			}
+
+			if proof_count % 1_000 == 0 {
+				status.on_validation(0, 0, proof_count, total_rproofs);
+			}
+		}
+
+		// remaining part which not full of 1000 range proofs
+		if proofs.len() > 0 {
+			Output::batch_verify_proofs(&commits, &proofs)?;
+			commits.clear();
+			proofs.clear();
+			debug!(
+				"txhashset: verify_rangeproofs: verified {} token rangeproofs",
+				proof_count,
+			);
+		}
+
+		debug!(
+			"txhashset: verified {} token rangeproofs, pmmr size {}, took {}s",
+			proof_count,
+			self.token_rproof_pmmr.unpruned_size(),
 			now.elapsed().as_secs(),
 		);
 		Ok(())
@@ -1942,6 +2057,23 @@ fn file_list(header: &BlockHeader) -> Vec<PathBuf> {
 		// Header specific "rewound" leaf files for output and rangeproof MMR.
 		PathBuf::from(format!("output/pmmr_leaf.bin.{}", header.hash())),
 		PathBuf::from(format!("rangeproof/pmmr_leaf.bin.{}", header.hash())),
+		// token kernel MMR
+		PathBuf::from("tokenkernel/pmmr_data.bin"),
+		PathBuf::from("tokenkernel/pmmr_hash.bin"),
+		// token output MMR
+		PathBuf::from("tokenoutput/pmmr_data.bin"),
+		PathBuf::from("tokenoutput/pmmr_hash.bin"),
+		PathBuf::from("tokenoutput/pmmr_prun.bin"),
+		// token rangeproof MMR
+		PathBuf::from("tokenrangeproof/pmmr_data.bin"),
+		PathBuf::from("tokenrangeproof/pmmr_hash.bin"),
+		PathBuf::from("tokenrangeproof/pmmr_prun.bin"),
+		// token issue proof MMR
+		PathBuf::from("tokenissueproof/pmmr_data.bin"),
+		PathBuf::from("tokenissueproof/pmmr_hash.bin"),
+		// Header specific "rewound" leaf files for token output and token rangeproof MMR.
+		PathBuf::from(format!("tokenoutput/pmmr_leaf.bin.{}", header.hash())),
+		PathBuf::from(format!("tokenrangeproof/pmmr_leaf.bin.{}", header.hash())),
 	]
 }
 
@@ -2047,6 +2179,11 @@ fn input_pos_to_rewind(
 	bitmap_fast_or(None, &mut block_input_bitmaps).ok_or_else(|| ErrorKind::Bitmap.into())
 }
 
+/// Given a block header to rewind to and the block header at the
+/// head of the current chain state, we need to calculate the positions
+/// of all teken inputs (spent token outputs) we need to "undo" during a rewind.
+/// We do this by leveraging the "block_input_bitmap" cache and OR'ing
+/// the set of bitmaps together for the set of blocks being rewound.
 pub fn token_input_pos_to_rewind(
 	block_header: &BlockHeader,
 	head_header: &BlockHeader,

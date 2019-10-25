@@ -26,8 +26,8 @@
 //!   with_fee(1)])
 
 use crate::core::{
-	token_kernel_sig_msg, Input, Output, OutputFeatures, TokenInput, TokenKernelFeatures, TokenKey,
-	TokenOutput, TokenTxKernel, Transaction, TxKernel,
+	Input, Output, OutputFeatures, TokenInput, TokenKernelFeatures, TokenKey, TokenOutput,
+	TokenTxKernel, Transaction, TxKernel,
 };
 use crate::keychain::{BlindSum, BlindingFactor, Identifier, Keychain};
 use crate::libtx::proof::{self, ProofBuild};
@@ -254,8 +254,8 @@ where
 					.commit_sum(vec![out_commit], vec![value_commit])
 					.unwrap();
 				let pubkey = excess.to_pubkey(&secp).unwrap();
-				let msg =
-					token_kernel_sig_msg(token_type, 0, TokenKernelFeatures::IssueToken).unwrap();
+				let feature = TokenKernelFeatures::IssueToken;
+				let msg = feature.token_kernel_sig_msg(token_type.clone()).unwrap();
 				let sig = aggsig::sign_from_key_id(
 					&secp,
 					build.keychain,

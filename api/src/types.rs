@@ -435,7 +435,9 @@ impl OutputPrintable {
 			None
 		};
 
-		let output_pos = chain.get_output_pos(&token_output.commit).unwrap_or(0);
+		let output_pos = chain
+			.get_token_output_pos(&token_output.commit)
+			.unwrap_or(0);
 
 		Ok(OutputPrintable {
 			output_type,

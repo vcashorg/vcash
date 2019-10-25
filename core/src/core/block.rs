@@ -251,14 +251,6 @@ pub struct BlockHeader {
 	pub range_proof_root: Hash,
 	/// Merklish root of all transaction kernels in the TxHashSet
 	pub kernel_root: Hash,
-	/// Merklish root of all the token output commitments in the TxHashSet
-	pub token_output_root: Hash,
-	/// Merklish root of all token output range proofs in the TxHashSet
-	pub token_range_proof_root: Hash,
-	/// Merklish root of all token_issue_proof in the TxHashSet
-	pub token_issue_proof_root: Hash,
-	/// Merklish root of all token transaction kernels in the TxHashSet
-	pub token_kernel_root: Hash,
 	/// Total accumulated sum of kernel offsets since genesis block.
 	/// We can derive the kernel offset sum for *this* block from
 	/// the total kernel offset of the previous block header.
@@ -267,14 +259,22 @@ pub struct BlockHeader {
 	pub output_mmr_size: u64,
 	/// Total size of the kernel MMR after applying this block
 	pub kernel_mmr_size: u64,
+	/// mergemining diff
+	pub bits: u32,
+	/// Merklish root of all the token output commitments in the TxHashSet
+	pub token_output_root: Hash,
+	/// Merklish root of all token output range proofs in the TxHashSet
+	pub token_range_proof_root: Hash,
+	/// Merklish root of all token_issue_proof in the TxHashSet
+	pub token_issue_proof_root: Hash,
+	/// Merklish root of all token transaction kernels in the TxHashSet
+	pub token_kernel_root: Hash,
 	/// Total size of the token output MMR after applying this block
 	pub token_output_mmr_size: u64,
 	/// Total size of the token_issue_proof MMR after applying this block
 	pub token_issue_proof_mmr_size: u64,
 	/// Total size of the token kernel MMR after applying this block
 	pub token_kernel_mmr_size: u64,
-	/// mergemining diff
-	pub bits: u32,
 	/// Proof of work and related
 	pub pow: ProofOfWork,
 }
@@ -342,19 +342,38 @@ impl Readable for BlockHeader {
 		let output_root = Hash::read(reader)?;
 		let range_proof_root = Hash::read(reader)?;
 		let kernel_root = Hash::read(reader)?;
-		let token_output_root = Hash::read(reader)?;
-		let token_range_proof_root = Hash::read(reader)?;
-		let token_issue_proof_root = Hash::read(reader)?;
-		let token_kernel_root = Hash::read(reader)?;
 		let total_kernel_offset = BlindingFactor::read(reader)?;
+		let (output_mmr_size, kernel_mmr_size) = ser_multiread!(reader, read_u64, read_u64);
+		let bits = reader.read_u32()?;
+
 		let (
-			output_mmr_size,
-			kernel_mmr_size,
+			token_output_root,
+			token_range_proof_root,
+			token_issue_proof_root,
+			token_kernel_root,
 			token_output_mmr_size,
 			token_issue_proof_mmr_size,
 			token_kernel_mmr_size,
-		) = ser_multiread!(reader, read_u64, read_u64, read_u64, read_u64, read_u64);
-		let bits = reader.read_u32()?;
+		) = if height >= global::support_token_height() {
+			let token_output_root = Hash::read(reader)?;
+			let token_range_proof_root = Hash::read(reader)?;
+			let token_issue_proof_root = Hash::read(reader)?;
+			let token_kernel_root = Hash::read(reader)?;
+			let (token_output_mmr_size, token_issue_proof_mmr_size, token_kernel_mmr_size) =
+				ser_multiread!(reader, read_u64, read_u64, read_u64);
+			(
+				token_output_root,
+				token_range_proof_root,
+				token_issue_proof_root,
+				token_kernel_root,
+				token_output_mmr_size,
+				token_issue_proof_mmr_size,
+				token_kernel_mmr_size,
+			)
+		} else {
+			(ZERO_HASH, ZERO_HASH, ZERO_HASH, ZERO_HASH, 0, 0, 0)
+		};
+
 		let pow = ProofOfWork::read(reader)?;
 
 		if timestamp > MAX_DATE.and_hms(0, 0, 0).timestamp()
@@ -409,18 +428,24 @@ impl BlockHeader {
 			[write_fixed_bytes, &self.output_root],
 			[write_fixed_bytes, &self.range_proof_root],
 			[write_fixed_bytes, &self.kernel_root],
-			[write_fixed_bytes, &self.token_output_root],
-			[write_fixed_bytes, &self.token_range_proof_root],
-			[write_fixed_bytes, &self.token_issue_proof_root],
-			[write_fixed_bytes, &self.token_kernel_root],
 			[write_fixed_bytes, &self.total_kernel_offset],
 			[write_u64, self.output_mmr_size],
 			[write_u64, self.kernel_mmr_size],
-			[write_u64, self.token_output_mmr_size],
-			[write_u64, self.token_issue_proof_mmr_size],
-			[write_u64, self.token_kernel_mmr_size],
 			[write_u32, self.bits]
 		);
+		if self.height >= global::support_token_height() {
+			ser_multiwrite!(
+				writer,
+				[write_fixed_bytes, &self.token_output_root],
+				[write_fixed_bytes, &self.token_range_proof_root],
+				[write_fixed_bytes, &self.token_issue_proof_root],
+				[write_fixed_bytes, &self.token_kernel_root],
+				[write_u64, self.token_output_mmr_size],
+				[write_u64, self.token_issue_proof_mmr_size],
+				[write_u64, self.token_kernel_mmr_size]
+			);
+		}
+
 		Ok(())
 	}
 
@@ -757,9 +782,9 @@ impl Block {
 		let body = TransactionBody::init(
 			all_inputs,
 			all_outputs,
+			all_kernels,
 			all_token_inputs,
 			all_token_outputs,
-			all_kernels,
 			all_token_kernels,
 			false,
 		)?;
@@ -934,9 +959,9 @@ impl Block {
 		let body = TransactionBody::init(
 			inputs,
 			outputs,
+			kernels,
 			tokeninputs,
 			tokenoutputs,
-			kernels,
 			token_kernels,
 			false,
 		)?;
@@ -985,6 +1010,7 @@ impl Block {
 		prev_kernel_offset: &BlindingFactor,
 		verifier: Arc<RwLock<dyn VerifierCache>>,
 	) -> Result<Commitment, Error> {
+		self.body.validate_token_height(self.header.height)?;
 		self.body.validate(Weighting::AsBlock, verifier)?;
 
 		self.verify_kernel_lock_heights()?;

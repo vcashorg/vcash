@@ -15,6 +15,7 @@
 use super::utils::w;
 use crate::core::core::hash::Hashed;
 use crate::core::core::Transaction;
+use crate::core::global;
 use crate::core::ser::{self, ProtocolVersion};
 use crate::pool;
 use crate::rest::*;
@@ -67,6 +68,7 @@ impl PoolPushHandler {
 			Ok(p) => p,
 			Err(e) => return Box::new(err(e)),
 		};
+		let pool_arc_read = pool_arc.clone();
 
 		Box::new(
 			parse_body(req)
@@ -75,8 +77,16 @@ impl PoolPushHandler {
 						.map_err(|e| ErrorKind::RequestError(format!("Bad request: {}", e)).into())
 				})
 				.and_then(move |tx_bin| {
-					// All wallet api interaction explicitly uses protocol version 1 for now.
-					let version = ProtocolVersion(1);
+					let tx_pool = pool_arc_read.read();
+					let header = tx_pool
+						.blockchain
+						.chain_head()
+						.context(ErrorKind::Internal("Failed to get chain head".to_owned()))?;
+					let version = if header.height+1 >= global::support_token_height() {
+						ProtocolVersion(2)
+					} else {
+						ProtocolVersion(1)
+					};
 
 					ser::deserialize(&mut &tx_bin[..], version)
 						.map_err(|e| ErrorKind::RequestError(format!("Bad request: {}", e)).into())
@@ -84,11 +94,14 @@ impl PoolPushHandler {
 				.and_then(move |tx: Transaction| {
 					let source = pool::TxSource::PushApi;
 					info!(
-						"Pushing transaction {} to pool (inputs: {}, outputs: {}, kernels: {})",
+						"Pushing transaction {} to pool (inputs: {}, outputs: {}, kernels: {}, token_inputs: {}, token_outputs: {}, token_kernels: {})",
 						tx.hash(),
 						tx.inputs().len(),
 						tx.outputs().len(),
 						tx.kernels().len(),
+						tx.token_inputs().len(),
+						tx.token_outputs().len(),
+						tx.token_kernels().len(),
 					);
 
 					//  Push to tx pool.

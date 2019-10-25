@@ -85,6 +85,7 @@ pub enum Error {
 	PeerException,
 	Internal,
 	FraudNode,
+	LowProtocolVersion,
 }
 
 impl From<ser::Error> for Error {

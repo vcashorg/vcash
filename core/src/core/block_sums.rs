@@ -94,10 +94,17 @@ impl<'a> Committed for (BlockSums, &'a dyn Committed) {
 	}
 }
 
+/// The token_utxo_sum and token_kernel_sum for a given block.
+/// This is used to validate the next block being processed by applying
+/// the token_inputs, token_outputs and token_kernels from the new block
+/// and checking everything sums correctly.
 #[derive(Debug, Clone)]
 pub struct BlockTokenSums {
+	/// The token issue commit map
 	pub token_issue_commit_map: HashMap<TokenKey, Commitment>,
+	/// The sum of the unspent token outputs map
 	pub token_utxo_sum_map: HashMap<TokenKey, Commitment>,
+	/// The sum of all token kernels map
 	pub token_kernel_sum_map: HashMap<TokenKey, Commitment>,
 }
 

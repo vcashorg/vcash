@@ -166,7 +166,7 @@ impl GlobalConfig {
 				defaults.api_http_addr = "127.0.0.1:13513".to_owned();
 				defaults.pool_server_config.pool_server_addr = "127.0.0.1:13517".to_owned();
 				defaults.pool_server_config.wallet_listener_url =
-					Some("127.0.0.1:13515".to_owned());
+					Some("http://127.0.0.1:13515".to_owned());
 				defaults.p2p_config.port = 13514;
 				defaults
 					.stratum_mining_config
@@ -183,7 +183,7 @@ impl GlobalConfig {
 				defaults.api_http_addr = "127.0.0.1:23513".to_owned();
 				defaults.pool_server_config.pool_server_addr = "127.0.0.1:23517".to_owned();
 				defaults.pool_server_config.wallet_listener_url =
-					Some("127.0.0.1:23515".to_owned());
+					Some("http://127.0.0.1:23515".to_owned());
 				defaults.p2p_config.port = 23514;
 				defaults.p2p_config.seeding_type = p2p::Seeding::None;
 				defaults

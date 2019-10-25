@@ -14,9 +14,10 @@
 
 //! Implements storage primitives required by the chain
 
-use crate::core::consensus::{HeaderInfo, SUPPORT_TOKEN_HEIGHT};
+use crate::core::consensus::HeaderInfo;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::{Block, BlockHeader, BlockSums, BlockTokenSums, TokenKey};
+use crate::core::global;
 use crate::core::pow::Difficulty;
 use crate::core::ser::ProtocolVersion;
 use crate::types::Tip;
@@ -121,7 +122,7 @@ impl ChainStore {
 	/// Get block_token_sums for the block hash.
 	pub fn get_block_token_sums(&self, h: &Hash) -> Result<BlockTokenSums, Error> {
 		let header = self.get_block_header(h)?;
-		if header.height < SUPPORT_TOKEN_HEIGHT {
+		if header.height < global::support_token_height() {
 			return Ok(BlockTokenSums::default());
 		}
 
@@ -186,14 +187,14 @@ impl ChainStore {
 		)
 	}
 
-	/// Get PMMR pos for the given token output commitment.
-	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+	/// Get PMMR pos and block height for the given output commitment.
+	pub fn get_token_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
 		option_to_not_found(
 			self.db.get_ser(&to_key(
 				TOKEN_COMMIT_POS_PREFIX,
 				&mut commit.as_ref().to_vec(),
 			)),
-			|| format!("Output position for: {:?}", commit),
+			|| format!("Token Output position for: {:?}", commit),
 		)
 	}
 
@@ -401,16 +402,21 @@ impl<'a> Batch<'a> {
 		Ok(())
 	}
 
-	/// Save token_output_pos to index.
-	pub fn save_token_output_pos(&self, commit: &Commitment, pos: u64) -> Result<(), Error> {
+	/// Save token_output_pos and block height to index.
+	pub fn save_token_output_pos_height(
+		&self,
+		commit: &Commitment,
+		pos: u64,
+		height: u64,
+	) -> Result<(), Error> {
 		self.db.put_ser(
 			&to_key(TOKEN_COMMIT_POS_PREFIX, &mut commit.as_ref().to_vec())[..],
-			&pos,
+			&(pos, height),
 		)
 	}
 
-	/// Get token_output_pos from index.
-	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+	/// Get token_output_pos and block height from index.
+	pub fn get_token_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
 		option_to_not_found(
 			self.db.get_ser(&to_key(
 				TOKEN_COMMIT_POS_PREFIX,
@@ -421,7 +427,7 @@ impl<'a> Batch<'a> {
 	}
 
 	/// Clear all entries from the token_output_pos index (must be rebuilt after).
-	pub fn clear_token_output_pos(&self) -> Result<(), Error> {
+	pub fn clear_token_output_pos_height(&self) -> Result<(), Error> {
 		let key = to_key(TOKEN_COMMIT_POS_PREFIX, &mut "".to_string().into_bytes());
 		for (k, _) in self.db.iter::<u64>(&key)? {
 			self.db.delete(&k)?;
@@ -527,7 +533,7 @@ impl<'a> Batch<'a> {
 	/// Save token_block_sums for the block.
 	pub fn save_block_token_sums(&self, h: &Hash, sums: &BlockTokenSums) -> Result<(), Error> {
 		let header = self.get_block_header(h)?;
-		if header.height < SUPPORT_TOKEN_HEIGHT {
+		if header.height < global::support_token_height() {
 			return Ok(());
 		}
 
@@ -540,21 +546,21 @@ impl<'a> Batch<'a> {
 	/// Get token_excess_sums for the block.
 	pub fn get_block_token_sums(&self, h: &Hash) -> Result<BlockTokenSums, Error> {
 		let header = self.get_block_header(h)?;
-		if header.height < SUPPORT_TOKEN_HEIGHT {
+		if header.height < global::support_token_height() {
 			return Ok(BlockTokenSums::default());
 		}
 
 		option_to_not_found(
 			self.db
 				.get_ser(&to_key(TOKEN_EXCESS_SUMS_PREFIX, &mut h.to_vec())),
-			|| format!("Block sums for block: {}", h),
+			|| format!("Block token sums for block: {}", h),
 		)
 	}
 
 	/// Delete the token_excess_sums for the block.
 	fn delete_block_token_sums(&self, bh: &Hash) -> Result<(), Error> {
 		let header = self.get_block_header(bh)?;
-		if header.height < SUPPORT_TOKEN_HEIGHT {
+		if header.height < global::support_token_height() {
 			return Ok(());
 		}
 
@@ -608,8 +614,8 @@ impl<'a> Batch<'a> {
 		let bitmap = block
 			.token_inputs()
 			.iter()
-			.filter_map(|x| self.get_token_output_pos(&x.commitment()).ok())
-			.map(|x| x as u32)
+			.filter_map(|x| self.get_token_output_pos_height(&x.commitment()).ok())
+			.map(|x| x.0 as u32)
 			.collect();
 		Ok(bitmap)
 	}

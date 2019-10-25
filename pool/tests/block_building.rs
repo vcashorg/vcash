@@ -17,6 +17,7 @@ pub mod common;
 use self::core::core::hash::Hashed;
 use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{Block, BlockHeader, TokenKey, Transaction};
+use self::core::global::{self, ChainTypes};
 use self::core::libtx;
 use self::core::pow::Difficulty;
 use self::keychain::{ExtKeychain, Keychain};
@@ -29,6 +30,7 @@ use std::sync::Arc;
 
 #[test]
 fn test_transaction_pool_block_building() {
+	global::set_mining_mode(ChainTypes::AutomatedTesting);
 	util::init_test_logger();
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 

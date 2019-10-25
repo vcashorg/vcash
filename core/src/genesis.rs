@@ -35,7 +35,9 @@ use crate::keychain::BlindingFactor;
 /// is small enough to mine it on the fly, so it does not contain its own
 /// proof of work solution. Can also be easily mutated for different tests.
 pub fn genesis_dev() -> core::Block {
+	let genesis_dev_header_version = core::HeaderVersion::new(2);
 	core::Block::with_header(core::BlockHeader {
+		version: genesis_dev_header_version,
 		height: 0,
 		// previous: core::hash::Hash([0xff; 32]),
 		timestamp: Utc.ymd(1997, 8, 4).and_hms(0, 0, 0),
@@ -265,7 +267,6 @@ mod test {
 	use crate::ser::{self, ProtocolVersion};
 
 	#[test]
-	#[ignore]
 	fn floonet_genesis_hash() {
 		let gen_hash = genesis_floo().hash();
 		println!("floonet genesis hash: {}", gen_hash.to_hex());
@@ -277,12 +278,11 @@ mod test {
 		);
 		assert_eq!(
 			gen_bin.hash().to_hex(),
-			"d76bd125d72d9c37b4a549f1840ccef79f461f59ff170f8e9fab93b36422658f"
+			"9004317d03f5406884ed07b79dc73158aa2b838c1d8f058b80f9504a59c0d8cb"
 		);
 	}
 
 	#[test]
-	#[ignore]
 	fn mainnet_genesis_hash() {
 		let gen_hash = genesis_main().hash();
 		println!("mainnet genesis hash: {}", gen_hash.to_hex());
@@ -294,7 +294,7 @@ mod test {
 		);
 		assert_eq!(
 			gen_bin.hash().to_hex(),
-			"7c4e3988a5df6a4d76cd6a65306bbc4989a76b4b9ab1767796e03d305fe90030"
+			"40b95d6df8eb1e734b6539e63c7256ee5144a18e7d6381361c90651a110a9796"
 		);
 	}
 }
