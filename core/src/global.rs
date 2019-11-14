@@ -18,7 +18,7 @@
 
 use crate::consensus::{
 	HeaderInfo, BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT,
-	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
+	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD, YEAR_HEIGHT,
 };
 use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
 /// An enum collecting sets of parameters used throughout the
@@ -90,10 +90,16 @@ pub const PEER_EXPIRATION_REMOVE_TIME: i64 = PEER_EXPIRATION_DAYS * 24 * 3600;
 pub const COMPACTION_CHECK: u64 = DAY_HEIGHT;
 
 /// Subsidy amount half height
-pub const HALVINGINTERVAL: u64 = 210000;
+const HALVINGINTERVAL: u64 = 210000;
 
 /// Testing Subsidy amount half height
-pub const AUTOTEST_HALVINGINTERVAL: u64 = 50;
+const AUTOTEST_HALVINGINTERVAL: u64 = DAY_HEIGHT;
+
+/// Support issue token tx height
+const SUPPORT_TOKEN_HEIGHT: u64 = YEAR_HEIGHT;
+
+/// Testing support issue token tx height
+const FLOONET_SUPPORT_TOKEN_HEIGHT: u64 = 160;
 
 /// Number of blocks to reuse a txhashset zip for (automated testing and user testing).
 pub const TESTING_TXHASHSET_ARCHIVE_INTERVAL: u64 = 10;
@@ -190,8 +196,18 @@ where
 pub fn halving_interval() -> u64 {
 	let param_ref = CHAIN_TYPE.read();
 	match *param_ref {
-		ChainTypes::AutomatedTesting => AUTOTEST_HALVINGINTERVAL,
-		_ => HALVINGINTERVAL,
+		ChainTypes::Mainnet => HALVINGINTERVAL,
+		_ => AUTOTEST_HALVINGINTERVAL,
+	}
+}
+
+/// The havling interval
+pub fn support_token_height() -> u64 {
+	let param_ref = CHAIN_TYPE.read();
+	match *param_ref {
+		ChainTypes::Floonet => FLOONET_SUPPORT_TOKEN_HEIGHT,
+		ChainTypes::Mainnet => SUPPORT_TOKEN_HEIGHT,
+		_ => 0,
 	}
 }
 

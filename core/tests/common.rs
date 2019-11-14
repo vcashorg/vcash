@@ -15,9 +15,11 @@
 //! Common test functions
 
 use crate::keychain::{Identifier, Keychain};
-use grin_core::core::{Block, BlockHeader, KernelFeatures, Transaction};
+use grin_core::core::{
+	Block, BlockHeader, KernelFeatures, TokenKernelFeatures, TokenKey, Transaction,
+};
 use grin_core::libtx::{
-	build::{self, input, output},
+	build::{self, input, output, token_input, token_output},
 	proof::{ProofBuild, ProofBuilder},
 	reward,
 };
@@ -34,6 +36,7 @@ pub fn tx2i1o() -> Transaction {
 
 	build::transaction(
 		KernelFeatures::Plain { fee: 2 },
+		None,
 		vec![input(10, key_id1), input(11, key_id2), output(19, key_id3)],
 		&keychain,
 		&builder,
@@ -50,6 +53,7 @@ pub fn tx1i1o() -> Transaction {
 
 	build::transaction(
 		KernelFeatures::Plain { fee: 2 },
+		None,
 		vec![input(5, key_id1), output(3, key_id2)],
 		&keychain,
 		&builder,
@@ -69,7 +73,57 @@ pub fn tx1i2o() -> Transaction {
 
 	build::transaction(
 		KernelFeatures::Plain { fee: 2 },
+		None,
 		vec![input(6, key_id1), output(3, key_id2), output(1, key_id3)],
+		&keychain,
+		&builder,
+	)
+	.unwrap()
+}
+
+// utility producing a issue token transaction
+pub fn txissuetoken() -> Transaction {
+	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
+	let builder = ProofBuilder::new(&keychain);
+	let key_id1 = keychain::ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+	let key_id2 = keychain::ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
+	let key_id3 = keychain::ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
+
+	build::transaction(
+		KernelFeatures::Plain { fee: 4 },
+		Some(TokenKernelFeatures::IssueToken),
+		vec![
+			input(10, key_id1),
+			output(6, key_id2),
+			token_output(100, TokenKey::new_token_key(), true, key_id3),
+		],
+		&keychain,
+		&builder,
+	)
+	.unwrap()
+}
+
+// utility producing a token transaction
+pub fn tokentx1i2o() -> Transaction {
+	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
+	let builder = ProofBuilder::new(&keychain);
+	let key_id1 = keychain::ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+	let key_id2 = keychain::ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
+	let key_id3 = keychain::ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
+	let key_id4 = keychain::ExtKeychain::derive_key_id(1, 4, 0, 0, 0);
+	let key_id5 = keychain::ExtKeychain::derive_key_id(1, 5, 0, 0, 0);
+
+	let token_key = TokenKey::new_token_key();
+	build::transaction(
+		KernelFeatures::Plain { fee: 4 },
+		Some(TokenKernelFeatures::PlainToken),
+		vec![
+			input(10, key_id1),
+			output(6, key_id2),
+			token_input(100, token_key, false, key_id3),
+			token_output(60, token_key, false, key_id4),
+			token_output(40, token_key, false, key_id5),
+		],
 		&keychain,
 		&builder,
 	)
@@ -115,6 +169,7 @@ where
 {
 	build::transaction(
 		KernelFeatures::Plain { fee: 2 },
+		None,
 		vec![input(v, key_id1), output(3, key_id2)],
 		keychain,
 		builder,

@@ -213,6 +213,14 @@ pub struct TxHashSetRoots {
 	pub rproof_root: Hash,
 	/// Kernel root
 	pub kernel_root: Hash,
+	/// Token Output root
+	pub token_output_root: Hash,
+	/// Token Range Proof root
+	pub token_rproof_root: Hash,
+	/// Token Issue Proof root
+	pub token_issue_proof_root: Hash,
+	/// Token Kernel root
+	pub token_kernel_root: Hash,
 }
 
 /// A helper to hold the output pmmr position of the txhashset in order to keep them

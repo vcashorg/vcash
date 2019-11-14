@@ -18,6 +18,7 @@ use grin_p2p as p2p;
 use grin_util as util;
 use grin_util::StopState;
 
+use self::core::global::{self, ChainTypes};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::{thread, time};
@@ -45,6 +46,7 @@ fn open_port() -> u16 {
 #[test]
 fn peer_handshake() {
 	util::init_test_logger();
+	global::set_mining_mode(ChainTypes::AutomatedTesting);
 
 	let p2p_config = p2p::P2PConfig {
 		host: "127.0.0.1".parse().unwrap(),

@@ -16,7 +16,9 @@
 
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::pmmr::{self, ReadonlyPMMR};
-use crate::core::core::{Block, BlockHeader, Input, Output, Transaction};
+use crate::core::core::{
+	Block, BlockHeader, Input, Output, TokenInput, TokenIssueProof, TokenOutput, Transaction,
+};
 use crate::core::global;
 use crate::core::ser::PMMRIndexHashable;
 use crate::error::{Error, ErrorKind};
@@ -26,6 +28,8 @@ use grin_store::pmmr::PMMRBackend;
 /// Readonly view of the UTXO set (based on output MMR).
 pub struct UTXOView<'a> {
 	output_pmmr: ReadonlyPMMR<'a, Output, PMMRBackend<Output>>,
+	token_output_pmmr: ReadonlyPMMR<'a, TokenOutput, PMMRBackend<TokenOutput>>,
+	issue_token_pmmr: ReadonlyPMMR<'a, TokenIssueProof, PMMRBackend<TokenIssueProof>>,
 	header_pmmr: ReadonlyPMMR<'a, BlockHeader, PMMRBackend<BlockHeader>>,
 	batch: &'a Batch<'a>,
 }
@@ -34,11 +38,15 @@ impl<'a> UTXOView<'a> {
 	/// Build a new UTXO view.
 	pub fn new(
 		output_pmmr: ReadonlyPMMR<'a, Output, PMMRBackend<Output>>,
+		token_output_pmmr: ReadonlyPMMR<'a, TokenOutput, PMMRBackend<TokenOutput>>,
+		issue_token_pmmr: ReadonlyPMMR<'a, TokenIssueProof, PMMRBackend<TokenIssueProof>>,
 		header_pmmr: ReadonlyPMMR<'a, BlockHeader, PMMRBackend<BlockHeader>>,
 		batch: &'a Batch<'_>,
 	) -> UTXOView<'a> {
 		UTXOView {
 			output_pmmr,
+			token_output_pmmr,
+			issue_token_pmmr,
 			header_pmmr,
 			batch,
 		}
@@ -55,6 +63,15 @@ impl<'a> UTXOView<'a> {
 		for input in block.inputs() {
 			self.validate_input(input)?;
 		}
+
+		for output in block.token_outputs() {
+			self.validate_token_output(output)?;
+		}
+
+		for input in block.token_inputs() {
+			self.validate_token_input(input)?;
+		}
+
 		Ok(())
 	}
 
@@ -69,6 +86,15 @@ impl<'a> UTXOView<'a> {
 		for input in tx.inputs() {
 			self.validate_input(input)?;
 		}
+
+		for output in tx.token_outputs() {
+			self.validate_token_output(output)?;
+		}
+
+		for input in tx.token_inputs() {
+			self.validate_token_input(input)?;
+		}
+
 		Ok(())
 	}
 
@@ -95,6 +121,52 @@ impl<'a> UTXOView<'a> {
 				}
 			}
 		}
+		Ok(())
+	}
+
+	// TokenInput is valid if it is spending an (unspent) output
+	// that currently exists in the token_output MMR.
+	// Compare the hash in the token_output MMR at the expected pos.
+	fn validate_token_input(&self, token_input: &TokenInput) -> Result<(), Error> {
+		if let Ok((pos, _)) = self
+			.batch
+			.get_token_output_pos_height(&token_input.commitment())
+		{
+			if let Some(hash) = self.token_output_pmmr.get_hash(pos) {
+				if hash == token_input.hash_with_index(pos - 1) {
+					return Ok(());
+				}
+			}
+		}
+		Err(ErrorKind::AlreadySpent(token_input.commitment()).into())
+	}
+
+	// Token_Output is valid if it would not result in a duplicate commitment in the token_output MMR.
+	fn validate_token_output(&self, token_output: &TokenOutput) -> Result<(), Error> {
+		if let Ok((pos, _)) = self
+			.batch
+			.get_token_output_pos_height(&token_output.commitment())
+		{
+			if let Some(out_mmr) = self.token_output_pmmr.get_data(pos) {
+				if out_mmr.commitment() == token_output.commitment() {
+					return Err(ErrorKind::DuplicateCommitment(token_output.commitment()).into());
+				}
+			}
+		}
+
+		if token_output.is_tokenissue() {
+			if let Ok(pos) = self
+				.batch
+				.get_token_issue_proof_pos(&token_output.token_type())
+			{
+				if let Some(out_mmr) = self.issue_token_pmmr.get_data(pos) {
+					if out_mmr.token_type() == token_output.token_type() {
+						return Err(ErrorKind::DuplicateTokenKey(token_output.token_type()).into());
+					}
+				}
+			}
+		}
+
 		Ok(())
 	}
 

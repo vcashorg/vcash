@@ -28,6 +28,7 @@ use self::chain_api::ChainHandler;
 use self::chain_api::ChainValidationHandler;
 use self::chain_api::KernelHandler;
 use self::chain_api::OutputHandler;
+use self::chain_api::TokenOutputHandler;
 use self::peers_api::PeerHandler;
 use self::peers_api::PeersAllHandler;
 use self::peers_api::PeersConnectedHandler;
@@ -127,6 +128,11 @@ pub fn build_router(
 	let output_handler = OutputHandler {
 		chain: Arc::downgrade(&chain),
 	};
+
+	let token_output_handler = TokenOutputHandler {
+		chain: Arc::downgrade(&chain),
+	};
+
 	let kernel_handler = KernelHandler {
 		chain: Arc::downgrade(&chain),
 	};
@@ -183,6 +189,7 @@ pub fn build_router(
 	router.add_route("/v1/chain", Arc::new(chain_tip_handler))?;
 	router.add_route("/v1/chain/outputs/*", Arc::new(output_handler))?;
 	router.add_route("/v1/chain/kernels/*", Arc::new(kernel_handler))?;
+	router.add_route("/v1/chain/tokenoutputs/*", Arc::new(token_output_handler))?;
 	router.add_route("/v1/chain/compact", Arc::new(chain_compact_handler))?;
 	router.add_route("/v1/chain/validate", Arc::new(chain_validation_handler))?;
 	router.add_route("/v1/txhashset/*", Arc::new(txhashset_handler))?;

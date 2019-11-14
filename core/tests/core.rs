@@ -29,7 +29,7 @@ use self::core::ser;
 use self::keychain::{BlindingFactor, ExtKeychain, Keychain};
 use self::util::static_secp_instance;
 use self::util::RwLock;
-use crate::common::{new_block, tx1i1o, tx1i2o, tx2i1o};
+use crate::common::{new_block, tokentx1i2o, tx1i1o, tx1i2o, tx2i1o};
 use grin_core as core;
 use grin_keychain as keychain;
 use grin_util as util;
@@ -43,7 +43,7 @@ fn simple_tx_ser() {
 	{
 		let mut vec = Vec::new();
 		ser::serialize_default(&mut vec, &tx).expect("serialization failed");
-		assert_eq!(vec.len(), 947);
+		assert_eq!(vec.len(), 971);
 	}
 
 	// Explicit protocol version 1.
@@ -57,7 +57,7 @@ fn simple_tx_ser() {
 	{
 		let mut vec = Vec::new();
 		ser::serialize(&mut vec, ser::ProtocolVersion(2), &tx).expect("serialization failed");
-		assert_eq!(vec.len(), 947);
+		assert_eq!(vec.len(), 971);
 	}
 }
 
@@ -100,6 +100,7 @@ fn test_zero_commit_fails() {
 	// blinding should fail as signing with a zero r*G shouldn't work
 	build::transaction(
 		KernelFeatures::Plain { fee: 0 },
+		None,
 		vec![input(10, key_id1.clone()), output(10, key_id1.clone())],
 		&keychain,
 		&builder,
@@ -122,6 +123,7 @@ fn build_tx_kernel() {
 	// first build a valid tx with corresponding blinding factor
 	let tx = build::transaction(
 		KernelFeatures::Plain { fee: 2 },
+		None,
 		vec![input(10, key_id1), output(5, key_id2), output(3, key_id3)],
 		&keychain,
 		&builder,
@@ -166,10 +168,10 @@ fn transaction_cut_through() {
 // Attempt to deaggregate a multi-kernel transaction in a different way
 #[test]
 fn multi_kernel_transaction_deaggregation() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
-	let tx4 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
+	let tx4 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -204,9 +206,9 @@ fn multi_kernel_transaction_deaggregation() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_2() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -229,9 +231,9 @@ fn multi_kernel_transaction_deaggregation_2() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_3() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -255,11 +257,11 @@ fn multi_kernel_transaction_deaggregation_3() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_4() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
-	let tx4 = tx1i1o();
-	let tx5 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
+	let tx4 = tokentx1i2o();
+	let tx5 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -294,11 +296,11 @@ fn multi_kernel_transaction_deaggregation_4() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_5() {
-	let tx1 = tx1i1o();
-	let tx2 = tx1i1o();
-	let tx3 = tx1i1o();
-	let tx4 = tx1i1o();
-	let tx5 = tx1i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
+	let tx3 = tokentx1i2o();
+	let tx4 = tokentx1i2o();
+	let tx5 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -333,8 +335,8 @@ fn multi_kernel_transaction_deaggregation_5() {
 // Attempt to deaggregate a multi-kernel transaction
 #[test]
 fn basic_transaction_deaggregation() {
-	let tx1 = tx1i2o();
-	let tx2 = tx2i1o();
+	let tx1 = tokentx1i2o();
+	let tx2 = tokentx1i2o();
 
 	let vc = verifier_cache();
 
@@ -371,6 +373,7 @@ fn hash_output() {
 
 	let tx = build::transaction(
 		KernelFeatures::Plain { fee: 1 },
+		None,
 		vec![input(75, key_id1), output(42, key_id2), output(32, key_id3)],
 		&keychain,
 		&builder,
@@ -434,7 +437,7 @@ fn tx_build_exchange() {
 		// of blinding factors before they're obscured.
 		let tx = Transaction::empty()
 			.with_kernel(TxKernel::with_features(KernelFeatures::Plain { fee: 2 }));
-		let (tx, sum) =
+		let (tx, sum, _token_sum) =
 			build::partial_transaction(tx, vec![in1, in2, output(1, key_id3)], &keychain, &builder)
 				.unwrap();
 
@@ -446,6 +449,7 @@ fn tx_build_exchange() {
 	// ready for broadcast.
 	let tx_final = build::transaction(
 		KernelFeatures::Plain { fee: 2 },
+		None,
 		vec![
 			initial_tx(tx_alice),
 			with_excess(blind_sum),
@@ -544,6 +548,7 @@ fn test_block_with_timelocked_tx() {
 			fee: 2,
 			lock_height: 1,
 		},
+		None,
 		vec![input(5, key_id1.clone()), output(3, key_id2.clone())],
 		&keychain,
 		&builder,
@@ -568,6 +573,7 @@ fn test_block_with_timelocked_tx() {
 			fee: 2,
 			lock_height: 2,
 		},
+		None,
 		vec![input(5, key_id1.clone()), output(3, key_id2.clone())],
 		&keychain,
 		&builder,

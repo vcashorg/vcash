@@ -84,23 +84,29 @@ struct EventLogger;
 impl NetEvents for EventLogger {
 	fn on_transaction_received(&self, tx: &core::Transaction) {
 		debug!(
-			"Received tx {}, [in/out/kern: {}/{}/{}] going to process.",
+			"Received tx {}, [in/out/kern: {}/{}/{}， tokenin/tokenout/tokenkern: {}/{}/{}] going to process.",
 			tx.hash(),
 			tx.inputs().len(),
 			tx.outputs().len(),
 			tx.kernels().len(),
+			tx.token_inputs().len(),
+			tx.token_outputs().len(),
+			tx.token_kernels().len(),
 		);
 	}
 
 	fn on_block_received(&self, block: &core::Block, addr: &PeerAddr) {
 		debug!(
-			"Received block {} at {} from {} [in/out/kern: {}/{}/{}] going to process.",
+			"Received block {} at {} from {} [in/out/kern: {}/{}/{}， tokenin/tokenout/tokenkern: {}/{}/{}] going to process.",
 			block.hash(),
 			block.header.height,
 			addr,
 			block.inputs().len(),
 			block.outputs().len(),
 			block.kernels().len(),
+			block.token_inputs().len(),
+			block.token_outputs().len(),
+			block.token_kernels().len(),
 		);
 	}
 

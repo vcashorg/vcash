@@ -16,6 +16,7 @@ use crate::chain;
 use crate::conn::{Message, MessageHandler, Tracker};
 use crate::core::core::{self, hash::Hash, hash::Hashed, CompactBlock};
 
+use crate::core::global;
 use crate::msg::{
 	BanReason, GetPeerAddrs, Headers, KernelDataResponse, Locator, Msg, PeerAddrs, Ping, Pong,
 	TxHashSetArchive, TxHashSetRequest, Type,
@@ -49,6 +50,15 @@ impl Protocol {
 			state_sync_requested,
 		}
 	}
+
+	fn check_protocol_version(&self) -> Result<(), Error> {
+		if self.adapter.total_height()? >= global::support_token_height() {
+			if self.peer_info.version.value() < 2 {
+				return Err(Error::LowProtocolVersion);
+			}
+		}
+		Ok(())
+	}
 }
 
 impl MessageHandler for Protocol {
@@ -65,6 +75,8 @@ impl MessageHandler for Protocol {
 			);
 			return Ok(None);
 		}
+
+		self.check_protocol_version()?;
 
 		match msg.header.msg_type {
 			Type::Ping => {

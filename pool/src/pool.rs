@@ -202,13 +202,16 @@ impl Pool {
 
 	fn log_pool_add(&self, entry: &PoolEntry, header: &BlockHeader) {
 		debug!(
-			"add_to_pool [{}]: {} ({:?}) [in/out/kern: {}/{}/{}] pool: {} (at block {})",
+			"add_to_pool [{}]: {} ({:?}) [in/out/kern: {}/{}/{}, tokenin/tokenout/tokenkern: {}/{}/{}] pool: {} (at block {})",
 			self.name,
 			entry.tx.hash(),
 			entry.src,
 			entry.tx.inputs().len(),
 			entry.tx.outputs().len(),
 			entry.tx.kernels().len(),
+			entry.tx.token_inputs().len(),
+			entry.tx.token_outputs().len(),
+			entry.tx.token_kernels().len(),
 			self.size(),
 			header.hash(),
 		);
@@ -228,6 +231,8 @@ impl Pool {
 		// Check all inputs are in the current UTXO set.
 		// Check all outputs are unique in current UTXO set.
 		self.blockchain.validate_tx(tx)?;
+
+		self.apply_tx_to_block_token_sums(tx, header)?;
 
 		let new_sums = self.apply_tx_to_block_sums(tx, header)?;
 		Ok(new_sums)
@@ -281,6 +286,20 @@ impl Pool {
 			utxo_sum,
 			kernel_sum,
 		})
+	}
+
+	fn apply_tx_to_block_token_sums(
+		&self,
+		tx: &Transaction,
+		header: &BlockHeader,
+	) -> Result<(), PoolError> {
+		let block_token_sums = self.blockchain.get_block_token_sums(&header.hash())?;
+
+		// Verify the kernel sums for the block_sums with the new tx applied,
+		// accounting for overage and offset.
+		(block_token_sums, tx as &dyn Committed).verify_token_kernel_sum()?;
+
+		Ok(())
 	}
 
 	pub fn reconcile(
@@ -438,6 +457,17 @@ impl Pool {
 		self.entries.retain(|x| {
 			!x.tx.kernels().iter().any(|y| block.kernels().contains(y))
 				&& !x.tx.inputs().iter().any(|y| block.inputs().contains(y))
+		});
+		self.entries.retain(|x| {
+			!x.tx
+				.token_kernels()
+				.iter()
+				.any(|y| block.token_kernels().contains(y))
+				&& !x
+					.tx
+					.token_inputs()
+					.iter()
+					.any(|y| block.token_inputs().contains(y))
 		});
 	}
 

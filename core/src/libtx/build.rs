@@ -31,7 +31,10 @@
 //!   ]
 //! )
 
-use crate::core::{Input, KernelFeatures, Output, OutputFeatures, Transaction, TxKernel};
+use crate::core::{
+	Input, KernelFeatures, Output, OutputFeatures, TokenInput, TokenKernelFeatures, TokenKey,
+	TokenOutput, TokenTxKernel, Transaction, TxKernel,
+};
 use crate::keychain::{BlindSum, BlindingFactor, Identifier, Keychain};
 use crate::libtx::proof::{self, ProofBuild};
 use crate::libtx::{aggsig, Error};
@@ -54,8 +57,8 @@ where
 /// Will return an Err if seomthing went wrong at any point during transaction building.
 pub type Append<K, B> = dyn for<'a> Fn(
 	&'a mut Context<'_, K, B>,
-	Result<(Transaction, BlindSum), Error>,
-) -> Result<(Transaction, BlindSum), Error>;
+	Result<(Transaction, BlindSum, BlindSum), Error>,
+) -> Result<(Transaction, BlindSum, BlindSum), Error>;
 
 /// Adds an input with the provided value and blinding key to the transaction
 /// being built.
@@ -65,8 +68,8 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |build, acc| -> Result<(Transaction, BlindSum), Error> {
-			if let Ok((tx, sum)) = acc {
+		move |build, acc| -> Result<(Transaction, BlindSum, BlindSum), Error> {
+			if let Ok((tx, sum, token_sum)) = acc {
 				let commit =
 					build
 						.keychain
@@ -76,6 +79,44 @@ where
 				Ok((
 					tx.with_input(input),
 					sum.sub_key_id(key_id.to_value_path(value)),
+					token_sum,
+				))
+			} else {
+				acc
+			}
+		},
+	)
+}
+
+/// Adds an token input with the provided value and blinding key to the transaction
+/// being built.
+pub fn build_token_input<K, B>(
+	value: u64,
+	token_type: TokenKey,
+	is_issue_token: bool,
+	key_id: Identifier,
+) -> Box<Append<K, B>>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	Box::new(
+		move |build, acc| -> Result<(Transaction, BlindSum, BlindSum), Error> {
+			if let Ok((tx, sum, token_sum)) = acc {
+				let commit =
+					build
+						.keychain
+						.commit(value, &key_id, &SwitchCommitmentType::Regular)?;
+				let features = if is_issue_token {
+					OutputFeatures::TokenIssue
+				} else {
+					OutputFeatures::Token
+				};
+				let input = TokenInput::new(features, token_type, commit);
+				Ok((
+					tx.with_token_input(input),
+					sum,
+					token_sum.sub_key_id(key_id.to_value_path(value)),
 				))
 			} else {
 				acc
@@ -98,6 +139,25 @@ where
 	build_input(value, OutputFeatures::Plain, key_id)
 }
 
+/// Adds an token input with the provided value and blinding key to the transaction
+/// being built.
+pub fn token_input<K, B>(
+	value: u64,
+	token_type: TokenKey,
+	is_issue_token: bool,
+	key_id: Identifier,
+) -> Box<Append<K, B>>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	debug!(
+		"Building token input (spending regular output): {}, {}, {}",
+		value, token_type, key_id
+	);
+	build_token_input(value, token_type, is_issue_token, key_id)
+}
+
 /// Adds a coinbase input spending a coinbase output.
 pub fn coinbase_input<K, B>(value: u64, key_id: Identifier) -> Box<Append<K, B>>
 where
@@ -116,8 +176,8 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |build, acc| -> Result<(Transaction, BlindSum), Error> {
-			let (tx, sum) = acc?;
+		move |build, acc| -> Result<(Transaction, BlindSum, BlindSum), Error> {
+			let (tx, sum, token_sum) = acc?;
 
 			// TODO: proper support for different switch commitment schemes
 			let switch = &SwitchCommitmentType::Regular;
@@ -143,6 +203,62 @@ where
 					proof: rproof,
 				}),
 				sum.add_key_id(key_id.to_value_path(value)),
+				token_sum,
+			))
+		},
+	)
+}
+
+/// Adds an output with the provided value and key identifier from the
+/// keychain.
+pub fn token_output<K, B>(
+	value: u64,
+	token_type: TokenKey,
+	is_token_issue: bool,
+	key_id: Identifier,
+) -> Box<Append<K, B>>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	Box::new(
+		move |build, acc| -> Result<(Transaction, BlindSum, BlindSum), Error> {
+			let (tx, sum, token_sum) = acc?;
+
+			// TODO: proper support for different switch commitment schemes
+			let switch = &SwitchCommitmentType::Regular;
+
+			let commit = build.keychain.commit(value, &key_id, switch)?;
+
+			debug!(
+				"Building token output: {}, {}, {:?}",
+				token_type.clone(),
+				value,
+				commit
+			);
+
+			let rproof = proof::create(
+				build.keychain,
+				build.builder,
+				value,
+				&key_id,
+				switch,
+				commit.clone(),
+				None,
+			)?;
+
+			Ok((
+				tx.with_token_output(TokenOutput {
+					features: match is_token_issue {
+						true => OutputFeatures::TokenIssue,
+						false => OutputFeatures::Token,
+					},
+					token_type,
+					commit,
+					proof: rproof,
+				}),
+				sum,
+				token_sum.add_key_id(key_id.to_value_path(value)),
 			))
 		},
 	)
@@ -157,8 +273,8 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |_build, acc| -> Result<(Transaction, BlindSum), Error> {
-			acc.map(|(tx, sum)| (tx, sum.add_blinding_factor(excess.clone())))
+		move |_build, acc| -> Result<(Transaction, BlindSum, BlindSum), Error> {
+			acc.map(|(tx, sum, token_sum)| (tx, sum.add_blinding_factor(excess.clone()), token_sum))
 		},
 	)
 }
@@ -170,8 +286,8 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |_build, acc| -> Result<(Transaction, BlindSum), Error> {
-			acc.map(|(_, sum)| (tx.clone(), sum))
+		move |_build, acc| -> Result<(Transaction, BlindSum, BlindSum), Error> {
+			acc.map(|(_, sum, token_sum)| (tx.clone(), sum, token_sum))
 		},
 	)
 }
@@ -186,22 +302,26 @@ pub fn partial_transaction<K, B>(
 	elems: Vec<Box<Append<K, B>>>,
 	keychain: &K,
 	builder: &B,
-) -> Result<(Transaction, BlindingFactor), Error>
+) -> Result<(Transaction, BlindingFactor, BlindingFactor), Error>
 where
 	K: Keychain,
 	B: ProofBuild,
 {
 	let mut ctx = Context { keychain, builder };
-	let (tx, sum) = elems
+	let (tx, sum, token_sum) = elems
 		.iter()
-		.fold(Ok((tx, BlindSum::new())), |acc, elem| elem(&mut ctx, acc))?;
+		.fold(Ok((tx, BlindSum::new(), BlindSum::new())), |acc, elem| {
+			elem(&mut ctx, acc)
+		})?;
 	let blind_sum = ctx.keychain.blind_sum(&sum)?;
-	Ok((tx, blind_sum))
+	let token_blind_sum = ctx.keychain.blind_sum(&token_sum)?;
+	Ok((tx, blind_sum, token_blind_sum))
 }
 
 /// Builds a complete transaction.
 pub fn transaction<K, B>(
 	features: KernelFeatures,
+	token_featrues: Option<TokenKernelFeatures>,
 	elems: Vec<Box<Append<K, B>>>,
 	keychain: &K,
 	builder: &B,
@@ -211,11 +331,10 @@ where
 	B: ProofBuild,
 {
 	let mut ctx = Context { keychain, builder };
-	let (mut tx, sum) = elems
-		.iter()
-		.fold(Ok((Transaction::empty(), BlindSum::new())), |acc, elem| {
-			elem(&mut ctx, acc)
-		})?;
+	let (mut tx, sum, token_sum) = elems.iter().fold(
+		Ok((Transaction::empty(), BlindSum::new(), BlindSum::new())),
+		|acc, elem| elem(&mut ctx, acc),
+	)?;
 	let blind_sum = ctx.keychain.blind_sum(&sum)?;
 
 	// Split the key so we can generate an offset for the tx.
@@ -240,6 +359,27 @@ where
 
 	// Set the kernel on the tx.
 	let tx = tx.replace_kernel(kern);
+
+	if token_featrues.is_some() {
+		let mut token_kern = TokenTxKernel::with_features(token_featrues.unwrap());
+		token_kern.token_type = tx.token_outputs()[0].token_type.clone();
+		let token_blind_sum = ctx.keychain.blind_sum(&token_sum)?;
+		let token_msg = token_kern.msg_to_sign()?;
+		let token_key = token_blind_sum.secret_key(&keychain.secp())?;
+		token_kern.excess = ctx.keychain.secp().commit(0, token_key)?;
+		let pubkey = &token_kern.excess.to_pubkey(&keychain.secp())?;
+		token_kern.excess_sig = aggsig::sign_with_blinding(
+			&keychain.secp(),
+			&token_msg,
+			&token_blind_sum,
+			Some(&pubkey),
+		)
+		.unwrap();
+
+		let tx = tx.replace_token_kernel(token_kern);
+
+		return Ok(tx);
+	}
 
 	Ok(tx)
 }
@@ -272,6 +412,7 @@ mod test {
 
 		let tx = transaction(
 			KernelFeatures::Plain { fee: 2 },
+			None,
 			vec![input(10, key_id1), input(12, key_id2), output(20, key_id3)],
 			&keychain,
 			&builder,
@@ -293,6 +434,7 @@ mod test {
 
 		let tx = transaction(
 			KernelFeatures::Plain { fee: 2 },
+			None,
 			vec![input(10, key_id1), input(12, key_id2), output(20, key_id3)],
 			&keychain,
 			&builder,
@@ -313,6 +455,7 @@ mod test {
 
 		let tx = transaction(
 			KernelFeatures::Plain { fee: 4 },
+			None,
 			vec![input(6, key_id1), output(2, key_id2)],
 			&keychain,
 			&builder,

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Error types for chain
-use crate::core::core::{block, committed, transaction};
+use crate::core::core::{block, committed, transaction, TokenKey};
 use crate::core::ser;
 use crate::keychain;
 use crate::util::secp;
@@ -95,6 +95,9 @@ pub enum ErrorKind {
 	/// An output with that commitment already exists (should be unique)
 	#[fail(display = "Duplicate Commitment: {:?}", _0)]
 	DuplicateCommitment(Commitment),
+	/// An token_issue_output with that token_key already exists (should be unique)
+	#[fail(display = "Duplicate TokenKey: {:?}", _0)]
+	DuplicateTokenKey(TokenKey),
 	/// Attempt to spend a coinbase output before it sufficiently matures.
 	#[fail(display = "Attempt to spend immature coinbase")]
 	ImmatureCoinbase,

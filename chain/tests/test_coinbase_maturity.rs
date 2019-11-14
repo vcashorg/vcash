@@ -22,7 +22,7 @@ use self::core::pow::Difficulty;
 use self::core::{consensus, pow};
 use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
 use self::util::RwLock;
-use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
+use crate::core::core::hash::Hashed;
 use chrono::Duration;
 use env_logger;
 use grin_chain as chain;
@@ -49,7 +49,7 @@ fn test_coinbase_maturity() {
 
 	{
 		let chain = chain::Chain::init(
-			".grin".to_string(),
+			".grin_coinbase".to_string(),
 			Arc::new(NoopAdapter {}),
 			genesis_block,
 			pow::verify_size,
@@ -110,6 +110,7 @@ fn test_coinbase_maturity() {
 		// this is not a valid tx as the coinbase output cannot be spent yet
 		let coinbase_txn = build::transaction(
 			KernelFeatures::Plain { fee: 2 },
+			None,
 			vec![
 				build::coinbase_input(amount, key_id1.clone()),
 				build::output(amount - 2, key_id2.clone()),
@@ -203,6 +204,7 @@ fn test_coinbase_maturity() {
 			// this is not a valid tx as the coinbase output cannot be spent yet
 			let coinbase_txn = build::transaction(
 				KernelFeatures::Plain { fee: 2 },
+				None,
 				vec![
 					build::coinbase_input(amount, key_id1.clone()),
 					build::output(amount - 2, key_id2.clone()),

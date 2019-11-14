@@ -19,7 +19,8 @@ use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
 use crate::core::core::merkle_proof::MerkleProof;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{
-	Block, BlockHeader, BlockSums, Committed, Output, OutputIdentifier, Transaction, TxKernel,
+	Block, BlockHeader, BlockSums, BlockTokenSums, Committed, Output, OutputIdentifier,
+	TokenIssueProof, TokenOutput, TokenOutputIdentifier, Transaction, TxKernel,
 };
 use crate::core::global;
 use crate::core::pow;
@@ -532,6 +533,20 @@ impl Chain {
 		txhashset.is_unspent(output_ref)
 	}
 
+	/// TODO - where do we call this from? And do we need a rewind first?
+	/// For the given commitment find the unspent output and return the
+	/// associated Return an error if the output does not exist or has been
+	/// spent. This querying is done in a way that is consistent with the
+	/// current chain state, specifically the current winning (valid, most
+	/// work) fork.
+	pub fn is_token_unspent(
+		&self,
+		output_ref: &TokenOutputIdentifier,
+	) -> Result<OutputMMRPosition, Error> {
+		let txhashset = self.txhashset.read();
+		txhashset.is_token_unspent(output_ref)
+	}
+
 	/// Validate the tx against the current UTXO set.
 	pub fn validate_tx(&self, tx: &Transaction) -> Result<(), Error> {
 		let header_pmmr = self.header_pmmr.read();
@@ -623,13 +638,28 @@ impl Chain {
 		b.header.output_root = roots.output_root;
 		b.header.range_proof_root = roots.rproof_root;
 		b.header.kernel_root = roots.kernel_root;
+		b.header.token_output_root = roots.token_output_root;
+		b.header.token_range_proof_root = roots.token_rproof_root;
+		b.header.token_issue_proof_root = roots.token_issue_proof_root;
+		b.header.token_kernel_root = roots.token_kernel_root;
 
 		// Set the output and kernel MMR sizes.
 		{
 			// Carefully destructure these correctly...
-			let (output_mmr_size, _, kernel_mmr_size) = sizes;
+			let (
+				output_mmr_size,
+				_,
+				kernel_mmr_size,
+				token_output_mmr_size,
+				_,
+				token_issue_proof_mmr_size,
+				token_kernel_mmr_size,
+			) = sizes;
 			b.header.output_mmr_size = output_mmr_size;
 			b.header.kernel_mmr_size = kernel_mmr_size;
+			b.header.token_output_mmr_size = token_output_mmr_size;
+			b.header.token_issue_proof_mmr_size = token_issue_proof_mmr_size;
+			b.header.token_kernel_mmr_size = token_kernel_mmr_size;
 		}
 
 		Ok(())
@@ -658,6 +688,13 @@ impl Chain {
 	pub fn get_merkle_proof_for_pos(&self, commit: Commitment) -> Result<MerkleProof, Error> {
 		let mut txhashset = self.txhashset.write();
 		txhashset.merkle_proof(commit)
+	}
+
+	/// Return a merkle proof valid for the current token output pmmr state at the
+	/// given pos
+	pub fn get_token_merkle_proof_for_pos(&self, commit: Commitment) -> Result<MerkleProof, Error> {
+		let mut txhashset = self.txhashset.write();
+		txhashset.token_merkle_proof(commit)
 	}
 
 	/// Returns current txhashset roots.
@@ -690,7 +727,7 @@ impl Chain {
 	/// Provides a reading view into the current txhashset state as well as
 	/// the required indexes for a consumer to rewind to a consistent state
 	/// at the provided block hash.
-	pub fn txhashset_read(&self, h: Hash) -> Result<(u64, u64, File), Error> {
+	pub fn txhashset_read(&self, h: Hash) -> Result<(u64, u64, u64, u64, File), Error> {
 		// now we want to rewind the txhashset extension and
 		// sync a "rewound" copy of the leaf_set files to disk
 		// so we can send these across as part of the zip file.
@@ -713,6 +750,8 @@ impl Chain {
 		Ok((
 			header.output_mmr_size,
 			header.kernel_mmr_size,
+			header.token_output_mmr_size,
+			header.token_issue_proof_mmr_size,
 			txhashset_reader,
 		))
 	}
@@ -986,7 +1025,8 @@ impl Chain {
 
 			// Validate the extension, generating the utxo_sum and kernel_sum.
 			// Full validation, including rangeproofs and kernel signature verification.
-			let (utxo_sum, kernel_sum) = extension.validate(&self.genesis, false, status)?;
+			let (utxo_sum, kernel_sum, block_token_sums) =
+				extension.validate(&self.genesis, false, status)?;
 
 			// Save the block_sums (utxo_sum, kernel_sum) to the db for use later.
 			extension.batch.save_block_sums(
@@ -996,6 +1036,9 @@ impl Chain {
 					kernel_sum,
 				},
 			)?;
+			extension
+				.batch
+				.save_block_token_sums(&header.hash(), &block_token_sums)?;
 
 			Ok(())
 		})?;
@@ -1179,6 +1222,26 @@ impl Chain {
 		self.txhashset.read().last_n_kernel(distance)
 	}
 
+	/// returns the last n nodes inserted into the token output sum tree
+	pub fn get_last_n_token_output(&self, distance: u64) -> Vec<(Hash, TokenOutputIdentifier)> {
+		self.txhashset.read().last_n_token_output(distance)
+	}
+
+	/// as above, for token rangeproofs
+	pub fn get_last_n_token_rangeproof(&self, distance: u64) -> Vec<(Hash, RangeProof)> {
+		self.txhashset.read().last_n_token_rangeproof(distance)
+	}
+
+	/// as above, for token issue proof
+	pub fn get_last_n_token_issue_proof(&self, distance: u64) -> Vec<(Hash, TokenIssueProof)> {
+		self.txhashset.read().last_n_token_issue_proof(distance)
+	}
+
+	/// as above, for kernels
+	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+		Ok(self.txhashset.read().get_token_output_pos(commit)?)
+	}
+
 	/// Return Commit's MMR position
 	pub fn get_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
 		Ok(self.txhashset.read().get_output_pos(commit)?)
@@ -1234,6 +1297,39 @@ impl Chain {
 			prev_to_start_header.output_mmr_size + 1,
 			end_header.output_mmr_size,
 		))
+	}
+
+	/// outputs by insertion index
+	pub fn unspent_token_outputs_by_pmmr_index(
+		&self,
+		start_index: u64,
+		max_count: u64,
+		max_pmmr_index: Option<u64>,
+	) -> Result<(u64, u64, Vec<TokenOutput>), Error> {
+		let txhashset = self.txhashset.read();
+		let last_index = match max_pmmr_index {
+			Some(i) => i,
+			None => txhashset.highest_token_output_insertion_index(),
+		};
+		let outputs = txhashset.token_outputs_by_pmmr_index(start_index, max_count, max_pmmr_index);
+		let rangeproofs =
+			txhashset.token_rangeproofs_by_pmmr_index(start_index, max_count, max_pmmr_index);
+		if outputs.0 != rangeproofs.0 || outputs.1.len() != rangeproofs.1.len() {
+			return Err(ErrorKind::TxHashSetErr(String::from(
+				"Output and rangeproof sets don't match",
+			))
+			.into());
+		}
+		let mut output_vec: Vec<TokenOutput> = vec![];
+		for (ref x, &y) in outputs.1.iter().zip(rangeproofs.1.iter()) {
+			output_vec.push(TokenOutput {
+				commit: x.commit,
+				features: x.features,
+				proof: y,
+				token_type: x.token_type,
+			});
+		}
+		Ok((outputs.0, last_index, output_vec))
 	}
 
 	/// Orphans pool size
@@ -1295,6 +1391,13 @@ impl Chain {
 		self.store
 			.get_block_sums(h)
 			.map_err(|e| ErrorKind::StoreErr(e, "chain get block_sums".to_owned()).into())
+	}
+
+	/// Get block_token_sums by header hash.
+	pub fn get_block_token_sums(&self, h: &Hash) -> Result<BlockTokenSums, Error> {
+		self.store
+			.get_block_token_sums(h)
+			.map_err(|e| ErrorKind::StoreErr(e, "chain get block_token_sums".to_owned()).into())
 	}
 
 	/// Gets the block header at the provided height.
@@ -1454,6 +1557,18 @@ impl Chain {
 		}
 	}
 
+	/// Gets the block header in which a given token output appears in the txhashset.
+	pub fn get_header_for_token_output(
+		&self,
+		output_ref: &TokenOutputIdentifier,
+	) -> Result<BlockHeader, Error> {
+		let header_pmmr = self.header_pmmr.read();
+		let txhashset = self.txhashset.read();
+		let output_pos = txhashset.is_token_unspent(output_ref)?;
+		let hash = header_pmmr.get_header_hash_by_height(output_pos.height)?;
+		Ok(self.get_block_header(&hash)?)
+	}
+
 	/// Verifies the given block header is actually on the current chain.
 	/// Checks the header_by_height index to verify the header is where we say
 	/// it is
@@ -1562,6 +1677,27 @@ fn setup_head(
 						)?;
 					}
 
+					if extension
+						.batch
+						.get_block_token_sums(&header.hash())
+						.is_err()
+					{
+						debug!(
+							"init: building (missing) block token sums for {} @ {}",
+							header.height,
+							header.hash()
+						);
+
+						// Do a full (and slow) validation of the txhashset extension
+						// to calculate the block_token_sums at this block height.
+						let block_token_sums = extension.validate_token_kernel_sums()?;
+
+						// Save the block_token_sums to the db for use later.
+						extension
+							.batch
+							.save_block_token_sums(&header.hash(), &block_token_sums)?;
+					}
+
 					debug!(
 						"init: rewinding and validating before we start... {} at {}",
 						header.hash(),
@@ -1612,6 +1748,7 @@ fn setup_head(
 
 			// Save the block_sums to the db for use later.
 			batch.save_block_sums(&genesis.hash(), &sums)?;
+			batch.save_block_token_sums(&genesis.hash(), &BlockTokenSums::default())?;
 
 			info!("init: saved genesis: {:?}", genesis.hash());
 		}

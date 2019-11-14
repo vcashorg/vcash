@@ -16,7 +16,8 @@
 
 use crate::core::consensus::HeaderInfo;
 use crate::core::core::hash::{Hash, Hashed};
-use crate::core::core::{Block, BlockHeader, BlockSums};
+use crate::core::core::{Block, BlockHeader, BlockSums, BlockTokenSums, TokenKey};
+use crate::core::global;
 use crate::core::pow::Difficulty;
 use crate::core::ser::ProtocolVersion;
 use crate::types::Tip;
@@ -35,7 +36,11 @@ const TAIL_PREFIX: u8 = 'T' as u8;
 const COMMIT_POS_PREFIX: u8 = 'c' as u8;
 const COMMIT_POS_HGT_PREFIX: u8 = 'p' as u8;
 const BLOCK_INPUT_BITMAP_PREFIX: u8 = 'B' as u8;
+const BLOCK_TOKEN_INPUT_BITMAP_PREFIX: u8 = 'C' as u8;
 const BLOCK_SUMS_PREFIX: u8 = 'M' as u8;
+const TOKEN_COMMIT_POS_PREFIX: u8 = 't' as u8;
+const TOKEN_ISSUE_PROOF_POS_PREFIX: u8 = 'P' as u8;
+const TOKEN_EXCESS_SUMS_PREFIX: u8 = 'S' as u8;
 
 /// All chain-related database operations
 pub struct ChainStore {
@@ -98,6 +103,20 @@ impl ChainStore {
 		)
 	}
 
+	/// Get block_token_sums for the block hash.
+	pub fn get_block_token_sums(&self, h: &Hash) -> Result<BlockTokenSums, Error> {
+		let header = self.get_block_header(h)?;
+		if header.height < global::support_token_height() {
+			return Ok(BlockTokenSums::default());
+		}
+
+		option_to_not_found(
+			self.db
+				.get_ser(&to_key(TOKEN_EXCESS_SUMS_PREFIX, &mut h.to_vec())),
+			|| format!("Block token sums for block: {}", h),
+		)
+	}
+
 	/// Get previous header.
 	pub fn get_previous_header(&self, header: &BlockHeader) -> Result<BlockHeader, Error> {
 		self.get_block_header(&header.prev_hash)
@@ -149,6 +168,17 @@ impl ChainStore {
 				&mut commit.as_ref().to_vec(),
 			)),
 			|| format!("Output position for: {:?}", commit),
+		)
+	}
+
+	/// Get PMMR pos and block height for the given output commitment.
+	pub fn get_token_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
+		option_to_not_found(
+			self.db.get_ser(&to_key(
+				TOKEN_COMMIT_POS_PREFIX,
+				&mut commit.as_ref().to_vec(),
+			)),
+			|| format!("Token Output position for: {:?}", commit),
 		)
 	}
 
@@ -210,6 +240,7 @@ impl<'a> Batch<'a> {
 	pub fn save_block(&self, b: &Block) -> Result<(), Error> {
 		// Build the "input bitmap" for this new block and store it in the db.
 		self.build_and_store_block_input_bitmap(&b)?;
+		self.build_and_store_block_token_input_bitmap(&b)?;
 
 		// Save the block itself to the db.
 		self.db
@@ -239,7 +270,9 @@ impl<'a> Batch<'a> {
 		// Not an error if these fail.
 		{
 			let _ = self.delete_block_sums(bh);
+			let _ = self.delete_block_token_sums(bh);
 			let _ = self.delete_block_input_bitmap(bh);
+			let _ = self.delete_block_token_input_bitmap(bh);
 		}
 
 		Ok(())
@@ -317,6 +350,73 @@ impl<'a> Batch<'a> {
 		Ok(())
 	}
 
+	/// Save token_output_pos and block height to index.
+	pub fn save_token_output_pos_height(
+		&self,
+		commit: &Commitment,
+		pos: u64,
+		height: u64,
+	) -> Result<(), Error> {
+		self.db.put_ser(
+			&to_key(TOKEN_COMMIT_POS_PREFIX, &mut commit.as_ref().to_vec())[..],
+			&(pos, height),
+		)
+	}
+
+	/// Get token_output_pos and block height from index.
+	pub fn get_token_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
+		option_to_not_found(
+			self.db.get_ser(&to_key(
+				TOKEN_COMMIT_POS_PREFIX,
+				&mut commit.as_ref().to_vec(),
+			)),
+			|| format!("Output position for commit: {:?}", commit),
+		)
+	}
+
+	/// Clear all entries from the token_output_pos index (must be rebuilt after).
+	pub fn clear_token_output_pos_height(&self) -> Result<(), Error> {
+		let key = to_key(TOKEN_COMMIT_POS_PREFIX, &mut "".to_string().into_bytes());
+		for (k, _) in self.db.iter::<u64>(&key)? {
+			self.db.delete(&k)?;
+		}
+		Ok(())
+	}
+
+	/// Save token_issue_proof_pos to index.
+	pub fn save_token_issue_proof_pos(&self, token_key: &TokenKey, pos: u64) -> Result<(), Error> {
+		self.db.put_ser(
+			&to_key(
+				TOKEN_ISSUE_PROOF_POS_PREFIX,
+				&mut token_key.as_ref().to_vec(),
+			)[..],
+			&pos,
+		)
+	}
+
+	/// Get token_issue_proof_pos from index.
+	pub fn get_token_issue_proof_pos(&self, token_key: &TokenKey) -> Result<u64, Error> {
+		option_to_not_found(
+			self.db.get_ser(&to_key(
+				TOKEN_ISSUE_PROOF_POS_PREFIX,
+				&mut token_key.as_ref().to_vec(),
+			)),
+			|| format!("Output position for commit: {:?}", token_key),
+		)
+	}
+
+	/// Clear all entries from the token_issue_proof_pos index (must be rebuilt after).
+	pub fn clear_token_issue_proof_pos(&self) -> Result<(), Error> {
+		let key = to_key(
+			TOKEN_ISSUE_PROOF_POS_PREFIX,
+			&mut "".to_string().into_bytes(),
+		);
+		for (k, _) in self.db.iter::<u64>(&key)? {
+			self.db.delete(&k)?;
+		}
+		Ok(())
+	}
+
 	/// Get the previous header.
 	pub fn get_previous_header(&self, header: &BlockHeader) -> Result<BlockHeader, Error> {
 		self.get_block_header(&header.prev_hash)
@@ -345,6 +445,20 @@ impl<'a> Batch<'a> {
 			.delete(&to_key(BLOCK_INPUT_BITMAP_PREFIX, &mut bh.to_vec()))
 	}
 
+	/// Save the input bitmap for the block.
+	fn save_block_token_input_bitmap(&self, bh: &Hash, bm: &Bitmap) -> Result<(), Error> {
+		self.db.put(
+			&to_key(BLOCK_TOKEN_INPUT_BITMAP_PREFIX, &mut bh.to_vec())[..],
+			&bm.serialize(),
+		)
+	}
+
+	/// Delete the block input bitmap.
+	fn delete_block_token_input_bitmap(&self, bh: &Hash) -> Result<(), Error> {
+		self.db
+			.delete(&to_key(BLOCK_TOKEN_INPUT_BITMAP_PREFIX, &mut bh.to_vec()))
+	}
+
 	/// Save block_sums for the block.
 	pub fn save_block_sums(&self, h: &Hash, sums: &BlockSums) -> Result<(), Error> {
 		self.db
@@ -362,6 +476,44 @@ impl<'a> Batch<'a> {
 	/// Delete the block_sums for the block.
 	fn delete_block_sums(&self, bh: &Hash) -> Result<(), Error> {
 		self.db.delete(&to_key(BLOCK_SUMS_PREFIX, &mut bh.to_vec()))
+	}
+
+	/// Save token_block_sums for the block.
+	pub fn save_block_token_sums(&self, h: &Hash, sums: &BlockTokenSums) -> Result<(), Error> {
+		let header = self.get_block_header(h)?;
+		if header.height < global::support_token_height() {
+			return Ok(());
+		}
+
+		self.db.put_ser(
+			&to_key(TOKEN_EXCESS_SUMS_PREFIX, &mut h.to_vec())[..],
+			&sums,
+		)
+	}
+
+	/// Get token_excess_sums for the block.
+	pub fn get_block_token_sums(&self, h: &Hash) -> Result<BlockTokenSums, Error> {
+		let header = self.get_block_header(h)?;
+		if header.height < global::support_token_height() {
+			return Ok(BlockTokenSums::default());
+		}
+
+		option_to_not_found(
+			self.db
+				.get_ser(&to_key(TOKEN_EXCESS_SUMS_PREFIX, &mut h.to_vec())),
+			|| format!("Block token sums for block: {}", h),
+		)
+	}
+
+	/// Delete the token_excess_sums for the block.
+	fn delete_block_token_sums(&self, bh: &Hash) -> Result<(), Error> {
+		let header = self.get_block_header(bh)?;
+		if header.height < global::support_token_height() {
+			return Ok(());
+		}
+
+		self.db
+			.delete(&to_key(TOKEN_EXCESS_SUMS_PREFIX, &mut bh.to_vec()))
 	}
 
 	/// Build the input bitmap for the given block.
@@ -398,6 +550,47 @@ impl<'a> Batch<'a> {
 			match self.get_block(bh) {
 				Ok(block) => {
 					let bitmap = self.build_and_store_block_input_bitmap(&block)?;
+					Ok(bitmap)
+				}
+				Err(e) => Err(e),
+			}
+		}
+	}
+
+	/// Build the token_input bitmap for the given block.
+	fn build_block_token_input_bitmap(&self, block: &Block) -> Result<Bitmap, Error> {
+		let bitmap = block
+			.token_inputs()
+			.iter()
+			.filter_map(|x| self.get_token_output_pos_height(&x.commitment()).ok())
+			.map(|x| x.0 as u32)
+			.collect();
+		Ok(bitmap)
+	}
+
+	/// Build and store the input bitmap for the given block.
+	fn build_and_store_block_token_input_bitmap(&self, block: &Block) -> Result<Bitmap, Error> {
+		// Build the bitmap.
+		let bitmap = self.build_block_token_input_bitmap(block)?;
+
+		// Save the bitmap to the db (via the batch).
+		self.save_block_token_input_bitmap(&block.hash(), &bitmap)?;
+
+		Ok(bitmap)
+	}
+
+	/// Get the block input bitmap from the db or build the bitmap from
+	/// the full block from the db (if the block is found).
+	pub fn get_block_token_input_bitmap(&self, bh: &Hash) -> Result<Bitmap, Error> {
+		if let Ok(Some(bytes)) = self
+			.db
+			.get(&to_key(BLOCK_TOKEN_INPUT_BITMAP_PREFIX, &mut bh.to_vec()))
+		{
+			Ok(Bitmap::deserialize(&bytes))
+		} else {
+			match self.get_block(bh) {
+				Ok(block) => {
+					let bitmap = self.build_and_store_block_token_input_bitmap(&block)?;
 					Ok(bitmap)
 				}
 				Err(e) => Err(e),

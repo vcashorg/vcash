@@ -16,7 +16,7 @@ pub mod common;
 
 use self::core::core::hash::Hash;
 use self::core::core::verifier_cache::LruVerifierCache;
-use self::core::core::{BlockHeader, BlockSums, Transaction};
+use self::core::core::{BlockHeader, BlockSums, BlockTokenSums, Transaction};
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::types::{BlockChain, PoolError};
 use self::util::RwLock;
@@ -46,6 +46,10 @@ impl BlockChain for CoinbaseMaturityErrorChainAdapter {
 	}
 
 	fn get_block_sums(&self, _hash: &Hash) -> Result<BlockSums, PoolError> {
+		unimplemented!();
+	}
+
+	fn get_block_token_sums(&self, _hash: &Hash) -> Result<BlockTokenSums, PoolError> {
 		unimplemented!();
 	}
 

@@ -68,6 +68,30 @@ impl TxHashSetHandler {
 		Ok(TxHashSetNode::get_last_n_kernel(w(&self.chain)?, distance))
 	}
 
+	// gets last n token outputs inserted in to the tree
+	fn get_last_n_token_output(&self, distance: u64) -> Result<Vec<TxHashSetNode>, Error> {
+		Ok(TxHashSetNode::get_last_n_token_output(
+			w(&self.chain)?,
+			distance,
+		))
+	}
+
+	// gets last n token outputs inserted in to the tree
+	fn get_last_n_token_rangeproof(&self, distance: u64) -> Result<Vec<TxHashSetNode>, Error> {
+		Ok(TxHashSetNode::get_last_n_token_rangeproof(
+			w(&self.chain)?,
+			distance,
+		))
+	}
+
+	// gets last n token outputs inserted in to the tree
+	fn get_last_n_token_issue_proof(&self, distance: u64) -> Result<Vec<TxHashSetNode>, Error> {
+		Ok(TxHashSetNode::get_last_n_token_issue_proof(
+			w(&self.chain)?,
+			distance,
+		))
+	}
+
 	// allows traversal of utxo set
 	fn outputs(
 		&self,
@@ -114,6 +138,34 @@ impl TxHashSetHandler {
 		Ok(out)
 	}
 
+	// allows traversal of utxo set
+	fn token_outputs(
+		&self,
+		start_index: u64,
+		end_index: Option<u64>,
+		mut max: u64,
+	) -> Result<OutputListing, Error> {
+		//set a limit here
+		if max > 1000 {
+			max = 1000;
+		}
+		let chain = w(&self.chain)?;
+		let outputs = chain
+			.unspent_token_outputs_by_pmmr_index(start_index, max, end_index)
+			.context(ErrorKind::NotFound)?;
+		let out = OutputListing {
+			last_retrieved_index: outputs.0,
+			highest_index: outputs.1,
+			outputs: outputs
+				.2
+				.iter()
+				.map(|x| OutputPrintable::from_token_output(x, chain.clone(), None, true, true))
+				.collect::<Result<Vec<_>, _>>()
+				.context(ErrorKind::Internal("cain error".to_owned()))?,
+		};
+		Ok(out)
+	}
+
 	// return a dummy output with merkle proof for position filled out
 	// (to avoid having to create a new type to pass around)
 	fn get_merkle_proof_for_output(&self, id: &str) -> Result<OutputPrintable, Error> {
@@ -128,6 +180,7 @@ impl TxHashSetHandler {
 			.map_err(|_| ErrorKind::NotFound)?;
 		Ok(OutputPrintable {
 			output_type: OutputType::Coinbase,
+			token_type: None,
 			commit: Commitment::from_vec(vec![]),
 			spent: false,
 			proof: None,
@@ -137,6 +190,31 @@ impl TxHashSetHandler {
 			mmr_index: output_pos,
 		})
 	}
+
+	// return a dummy output with merkle proof for position filled out
+	// (to avoid having to create a new type to pass around)
+	//	fn get_merkle_proof_for_token_output(&self, id: &str) -> Result<OutputPrintable, Error> {
+	//		let c = util::from_hex(String::from(id)).context(ErrorKind::Argument(format!(
+	//			"Not a valid commitment: {}",
+	//			id
+	//		)))?;
+	//		let commit = Commitment::from_vec(c);
+	//		let chain = w(&self.chain)?;
+	//		let output_pos = chain.get_token_output_pos(&commit).context(ErrorKind::NotFound)?;
+	//		let merkle_proof = chain::Chain::get_token_merkle_proof_for_pos(&chain, commit)
+	//			.map_err(|_| ErrorKind::NotFound)?;
+	//		Ok(OutputPrintable {
+	//			output_type: OutputType::Coinbase,
+	//			token_type:None,
+	//			commit: Commitment::from_vec(vec![]),
+	//			spent: false,
+	//			proof: None,
+	//			proof_hash: "".to_string(),
+	//			block_height: None,
+	//			merkle_proof: Some(merkle_proof),
+	//			mmr_index: output_pos,
+	//		})
+	//	}
 }
 
 impl Handler for TxHashSetHandler {
@@ -167,6 +245,11 @@ impl Handler for TxHashSetHandler {
 				self.block_height_range_to_pmmr_indices(start_height, end_height),
 			),
 			"merkleproof" => result_to_response(self.get_merkle_proof_for_output(&id)),
+			"lasttokenoutputs" => result_to_response(self.get_last_n_token_output(last_n)),
+			"lasttokenrangeproofs" => result_to_response(self.get_last_n_token_rangeproof(last_n)),
+			"lasttokenissueproofs" => result_to_response(self.get_last_n_token_issue_proof(last_n)),
+			"tokenoutputs" => result_to_response(self.token_outputs(start_index, end_index, max)),
+			//"tokenmerkleproof" => result_to_response(self.get_merkle_proof_for_token_output(&id)),
 			_ => response(StatusCode::BAD_REQUEST, ""),
 		}
 	}

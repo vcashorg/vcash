@@ -18,7 +18,10 @@ use self::chain::store::ChainStore;
 use self::chain::types::Tip;
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::verifier_cache::VerifierCache;
-use self::core::core::{Block, BlockHeader, BlockSums, Committed, KernelFeatures, Transaction};
+use self::core::core::{
+	Block, BlockHeader, BlockSums, BlockTokenSums, Committed, KernelFeatures, TokenKernelFeatures,
+	TokenKey, Transaction,
+};
 use self::core::libtx;
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::types::*;
@@ -30,7 +33,7 @@ use grin_core as core;
 use grin_keychain as keychain;
 use grin_pool as pool;
 use grin_util as util;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::Arc;
 
@@ -38,6 +41,7 @@ use std::sync::Arc;
 pub struct ChainAdapter {
 	pub store: Arc<RwLock<ChainStore>>,
 	pub utxo: Arc<RwLock<HashSet<Commitment>>>,
+	pub token_utxo: Arc<RwLock<HashMap<TokenKey, HashSet<Commitment>>>>,
 }
 
 impl ChainAdapter {
@@ -47,8 +51,13 @@ impl ChainAdapter {
 			.map_err(|e| format!("failed to init chain_store, {:?}", e))?;
 		let store = Arc::new(RwLock::new(chain_store));
 		let utxo = Arc::new(RwLock::new(HashSet::new()));
+		let token_utxo = Arc::new(RwLock::new(HashMap::new()));
 
-		Ok(ChainAdapter { store, utxo })
+		Ok(ChainAdapter {
+			store,
+			utxo,
+			token_utxo,
+		})
 	}
 
 	pub fn update_db_for_block(&self, block: &Block) {
@@ -85,6 +94,22 @@ impl ChainAdapter {
 		};
 		batch.save_block_sums(&header.hash(), &block_sums).unwrap();
 
+		let prev_token_sums =
+			if let Ok(prev_token_sums) = batch.get_block_token_sums(&tip.prev_block_h) {
+				prev_token_sums
+			} else {
+				BlockTokenSums::default()
+			};
+
+		// Verify the kernel sums for the block_sums with the new block applied.
+		let token_kernel_sum = (prev_token_sums, block as &dyn Committed)
+			.verify_token_kernel_sum()
+			.unwrap();
+
+		batch
+			.save_block_token_sums(&header.hash(), &token_kernel_sum)
+			.unwrap();
+
 		batch.commit().unwrap();
 
 		{
@@ -94,6 +119,18 @@ impl ChainAdapter {
 			}
 			for x in block.outputs() {
 				utxo.insert(x.commitment());
+			}
+		}
+
+		{
+			let mut token_utxo = self.token_utxo.write();
+			for x in block.token_inputs() {
+				let vec = token_utxo.entry(x.token_type).or_insert(HashSet::new());
+				vec.remove(&x.commitment());
+			}
+			for x in block.token_outputs() {
+				let vec = token_utxo.entry(x.token_type).or_insert(HashSet::new());
+				vec.insert(x.commitment());
 			}
 		}
 	}
@@ -118,6 +155,12 @@ impl BlockChain for ChainAdapter {
 			.map_err(|_| PoolError::Other(format!("failed to get block sums")))
 	}
 
+	fn get_block_token_sums(&self, hash: &Hash) -> Result<BlockTokenSums, PoolError> {
+		let s = self.store.read();
+		s.get_block_token_sums(hash)
+			.map_err(|_| PoolError::Other(format!("failed to get block token sums")))
+	}
+
 	fn validate_tx(&self, tx: &Transaction) -> Result<(), pool::PoolError> {
 		let utxo = self.utxo.read();
 
@@ -130,6 +173,24 @@ impl BlockChain for ChainAdapter {
 		for x in tx.inputs() {
 			if !utxo.contains(&x.commitment()) {
 				return Err(PoolError::Other(format!("not in utxo set")));
+			}
+		}
+
+		let token_utxo = self.token_utxo.read();
+		for x in tx.token_outputs() {
+			let vec = token_utxo.get(&x.token_type);
+			if vec.is_some() && vec.unwrap().contains(&x.commitment()) {
+				return Err(PoolError::Other(format!(
+					"token output commitment not unique"
+				)));
+			}
+		}
+
+		for x in tx.token_inputs() {
+			let vec = token_utxo.get(&x.token_type);
+
+			if vec.is_none() || !vec.unwrap().contains(&x.commitment()) {
+				return Err(PoolError::Other(format!("not in token utxo set")));
 			}
 		}
 
@@ -195,6 +256,7 @@ where
 
 	libtx::build::transaction(
 		KernelFeatures::Plain { fee: fees as u64 },
+		None,
 		tx_elements,
 		keychain,
 		&libtx::ProofBuilder::new(keychain),
@@ -230,6 +292,93 @@ where
 
 	libtx::build::transaction(
 		KernelFeatures::Plain { fee: fees as u64 },
+		None,
+		tx_elements,
+		keychain,
+		&libtx::ProofBuilder::new(keychain),
+	)
+	.unwrap()
+}
+
+pub fn test_issue_token_transaction<K>(
+	keychain: &K,
+	input_value: u64,
+	output_value: u64,
+	token_type: TokenKey,
+	amount: u64,
+) -> Transaction
+where
+	K: Keychain,
+{
+	let fees: i64 = (input_value - output_value) as i64;
+	assert!(fees >= 0);
+
+	let mut tx_elements = Vec::new();
+
+	let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::input(input_value, key_id));
+
+	let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::output(output_value, key_id));
+
+	let key_id = ExtKeychain::derive_key_id(1, amount as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::token_output(amount, token_type, true, key_id));
+
+	libtx::build::transaction(
+		KernelFeatures::Plain { fee: fees as u64 },
+		Some(TokenKernelFeatures::IssueToken),
+		tx_elements,
+		keychain,
+		&libtx::ProofBuilder::new(keychain),
+	)
+	.unwrap()
+}
+
+pub fn test_token_transaction<K>(
+	keychain: &K,
+	input_value: u64,
+	output_value: u64,
+	token_type: TokenKey,
+	token_input_values: Vec<u64>,
+	token_output_values: Vec<u64>,
+) -> Transaction
+where
+	K: Keychain,
+{
+	let fees: i64 = (input_value - output_value) as i64;
+	assert!(fees >= 0);
+
+	let mut tx_elements = Vec::new();
+
+	let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::input(input_value, key_id));
+
+	let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
+	tx_elements.push(libtx::build::output(output_value, key_id));
+
+	for token_input_value in token_input_values {
+		let key_id = ExtKeychain::derive_key_id(1, token_input_value as u32, 0, 0, 0);
+		tx_elements.push(libtx::build::token_input(
+			token_input_value,
+			token_type,
+			false,
+			key_id,
+		));
+	}
+
+	for token_output_value in token_output_values {
+		let key_id = ExtKeychain::derive_key_id(1, token_output_value as u32, 0, 0, 0);
+		tx_elements.push(libtx::build::token_output(
+			token_output_value,
+			token_type,
+			false,
+			key_id,
+		));
+	}
+
+	libtx::build::transaction(
+		KernelFeatures::Plain { fee: fees as u64 },
+		Some(TokenKernelFeatures::PlainToken),
 		tx_elements,
 		keychain,
 		&libtx::ProofBuilder::new(keychain),

@@ -14,13 +14,14 @@
 
 //! The Committed trait and associated errors.
 
+use crate::core::{BlockTokenSums, TokenKey};
 use crate::keychain;
 use crate::keychain::BlindingFactor;
-
 use crate::util::secp::key::SecretKey;
 use crate::util::secp::pedersen::Commitment;
 use crate::util::{secp, secp_static, static_secp_instance};
 use failure::Fail;
+use std::collections::HashMap;
 
 /// Errors from summing and verifying kernel excesses via committed trait.
 #[derive(Debug, Clone, PartialEq, Eq, Fail)]
@@ -37,6 +38,9 @@ pub enum Error {
 	/// Committed overage (fee or reward) is invalid
 	#[fail(display = "Invalid value")]
 	InvalidValue,
+	/// Token input sums do not equal output sums.
+	#[fail(display = "Token sum mismatch")]
+	TokenSumMismatch,
 }
 
 impl From<secp::Error> for Error {
@@ -118,6 +122,15 @@ pub trait Committed {
 	/// Vector of kernel excesses to verify.
 	fn kernels_committed(&self) -> Vec<Commitment>;
 
+	/// Vector of token input commitments to verify.
+	fn token_inputs_committed(&self) -> HashMap<crate::core::TokenKey, Vec<Commitment>>;
+
+	/// Vector of token output commitments to verify.
+	fn token_outputs_committed(&self) -> HashMap<crate::core::TokenKey, Vec<Commitment>>;
+
+	/// Vector of token kernel excesses to verify.
+	fn token_kernels_committed(&self) -> HashMap<crate::core::TokenKey, Vec<Commitment>>;
+
 	/// Verify the sum of the kernel excesses equals the
 	/// sum of the outputs, taking into account both
 	/// the kernel_offset and overage.
@@ -137,6 +150,63 @@ pub trait Committed {
 		}
 
 		Ok((utxo_sum, kernel_sum))
+	}
+
+	/// Verify the sum of the token kernel excesses equals the
+	/// sum of the token outputs, taking into account token issue commit
+	fn verify_token_kernel_sum(&self) -> Result<BlockTokenSums, Error> {
+		let token_input_commit_vec = self.token_inputs_committed();
+		let token_output_commit_vec = self.token_outputs_committed();
+		let token_kernel_commit_vec = self.token_kernels_committed();
+
+		if token_input_commit_vec.len() != token_output_commit_vec.len()
+			|| token_output_commit_vec.len() != token_kernel_commit_vec.len()
+		{
+			return Err(Error::TokenSumMismatch);
+		}
+
+		let mut token_input_commit_map: HashMap<TokenKey, Commitment> = HashMap::new();
+		for (input_token_key, input_commits) in token_input_commit_vec {
+			let commit_sum = sum_commits(input_commits, vec![])?;
+			token_input_commit_map.insert(input_token_key, commit_sum);
+		}
+
+		let mut token_output_commit_map: HashMap<TokenKey, Commitment> = HashMap::new();
+		for (output_token_key, output_commits) in token_output_commit_vec {
+			let commit_sum = sum_commits(output_commits, vec![])?;
+			token_output_commit_map.insert(output_token_key, commit_sum);
+		}
+
+		let mut token_kernel_commit_map: HashMap<TokenKey, Commitment> = HashMap::new();
+		for (output_token_key, kernel_commits) in token_kernel_commit_vec {
+			let commit_sum = sum_commits(kernel_commits, vec![])?;
+			token_kernel_commit_map.insert(output_token_key, commit_sum);
+		}
+
+		for (input_token_key, input_commit) in token_input_commit_map.iter() {
+			match token_output_commit_map.get(&input_token_key) {
+				Some(output_commit) => match token_kernel_commit_map.get(input_token_key) {
+					Some(kernel_commit) => {
+						let commit_sum =
+							sum_commits(vec![output_commit.clone()], vec![input_commit.clone()])?;
+						if commit_sum != *kernel_commit {
+							return Err(Error::TokenSumMismatch);
+						}
+					}
+					None => {
+						return Err(Error::TokenSumMismatch);
+					}
+				},
+				None => {
+					return Err(Error::TokenSumMismatch);
+				}
+			}
+		}
+		Ok(BlockTokenSums {
+			token_issue_commit_map: token_input_commit_map,
+			token_utxo_sum_map: token_output_commit_map,
+			token_kernel_sum_map: token_kernel_commit_map,
+		})
 	}
 }
 

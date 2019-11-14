@@ -146,6 +146,9 @@ impl TransactionPool {
 			return acceptability;
 		}
 
+		tx.validate_token_height(header.height)
+			.map_err(PoolError::InvalidTx)?;
+
 		// Make sure the transaction is valid before anything else.
 		// Validate tx accounting for max tx weight.
 		tx.validate(Weighting::AsTransaction, self.verifier_cache.clone())

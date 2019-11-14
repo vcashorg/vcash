@@ -18,7 +18,7 @@ use crate::core::consensus;
 use crate::core::core::hash::Hashed;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::Committed;
-use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader, BlockSums};
+use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader, BlockSums, BlockTokenSums};
 use crate::core::global;
 use crate::core::pow::{self, compact_to_biguint, hash_to_biguint};
 use crate::error::{Error, ErrorKind};
@@ -143,12 +143,15 @@ fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result
 /// Returns new head if chain head updated.
 pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip>, Error> {
 	debug!(
-		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}]",
+		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}] token [in/out/kern: {}/{}/{}]",
 		b.hash(),
 		b.header.height,
 		b.inputs().len(),
 		b.outputs().len(),
 		b.kernels().len(),
+		b.token_inputs().len(),
+		b.token_outputs().len(),
+		b.token_kernels().len(),
 	);
 
 	// Check if we have already processed this block previously.
@@ -187,44 +190,47 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	let ref mut header_pmmr = &mut ctx.header_pmmr;
 	let ref mut txhashset = &mut ctx.txhashset;
 	let ref mut batch = &mut ctx.batch;
-	let block_sums = txhashset::extending(header_pmmr, txhashset, batch, |ext| {
-		rewind_and_apply_fork(&prev, ext)?;
+	let (block_sums, block_token_sums) =
+		txhashset::extending(header_pmmr, txhashset, batch, |ext| {
+			rewind_and_apply_fork(&prev, ext)?;
 
-		// Check any coinbase being spent have matured sufficiently.
-		// This needs to be done within the context of a potentially
-		// rewound txhashset extension to reflect chain state prior
-		// to applying the new block.
-		verify_coinbase_maturity(b, ext)?;
+			// Check any coinbase being spent have matured sufficiently.
+			// This needs to be done within the context of a potentially
+			// rewound txhashset extension to reflect chain state prior
+			// to applying the new block.
+			verify_coinbase_maturity(b, ext)?;
 
-		// Validate the block against the UTXO set.
-		validate_utxo(b, ext)?;
+			// Validate the block against the UTXO set.
+			validate_utxo(b, ext)?;
 
-		// Using block_sums (utxo_sum, kernel_sum) for the previous block from the db
-		// we can verify_kernel_sums across the full UTXO sum and full kernel sum
-		// accounting for inputs/outputs/kernels in this new block.
-		// We know there are no double-spends etc. if this verifies successfully.
-		// Remember to save these to the db later on (regardless of extension rollback)
-		let block_sums = verify_block_sums(b, ext.batch())?;
+			// Using block_sums (utxo_sum, kernel_sum) for the previous block from the db
+			// we can verify_kernel_sums across the full UTXO sum and full kernel sum
+			// accounting for inputs/outputs/kernels in this new block.
+			// We know there are no double-spends etc. if this verifies successfully.
+			// Remember to save these to the db later on (regardless of extension rollback)
+			let block_sums = verify_block_sums(b, ext.batch())?;
 
-		// Apply the block to the txhashset state.
-		// Validate the txhashset roots and sizes against the block header.
-		// Block is invalid if there are any discrepencies.
-		apply_block_to_txhashset(b, ext)?;
+			let block_token_sums = verify_block_token_sums(b, ext.batch())?;
 
-		// If applying this block does not increase the work on the chain then
-		// we know we have not yet updated the chain to produce a new chain head.
-		let head = ext.batch().head()?;
-		if !has_more_work(&b.header, &head) {
-			ext.extension.force_rollback();
-		}
+			// Apply the block to the txhashset state.
+			// Validate the txhashset roots and sizes against the block header.
+			// Block is invalid if there are any discrepencies.
+			apply_block_to_txhashset(b, ext)?;
 
-		Ok(block_sums)
-	})?;
+			// If applying this block does not increase the work on the chain then
+			// we know we have not yet updated the chain to produce a new chain head.
+			let head = ext.batch().head()?;
+			if !has_more_work(&b.header, &head) {
+				ext.extension.force_rollback();
+			}
+
+			Ok((block_sums, block_token_sums))
+		})?;
 
 	// Add the validated block to the db along with the corresponding block_sums.
 	// We do this even if we have not increased the total cumulative work
 	// so we can maintain multiple (in progress) forks.
-	add_block(b, &block_sums, &ctx.batch)?;
+	add_block(b, &block_sums, &block_token_sums, &ctx.batch)?;
 
 	// If we have no "tail" then set it now.
 	if ctx.batch.tail().is_err() {
@@ -482,6 +488,16 @@ fn verify_block_sums(b: &Block, batch: &store::Batch<'_>) -> Result<BlockSums, E
 	})
 }
 
+fn verify_block_token_sums(b: &Block, batch: &store::Batch<'_>) -> Result<BlockTokenSums, Error> {
+	// Retrieve the block_token_sums for the previous block.
+	let block_token_sums = batch.get_block_token_sums(&b.header.prev_hash)?;
+
+	// Verify the kernel sums for the block_sums with the new block applied.
+	let block_token_sums = (block_token_sums, b as &dyn Committed).verify_token_kernel_sum()?;
+
+	Ok(block_token_sums)
+}
+
 /// Fully validate the block by applying it to the txhashset extension.
 /// Check both the txhashset roots and sizes are correct after applying the block.
 fn apply_block_to_txhashset(
@@ -497,11 +513,17 @@ fn apply_block_to_txhashset(
 
 /// Officially adds the block to our chain.
 /// Header must be added separately (assume this has been done previously).
-fn add_block(b: &Block, block_sums: &BlockSums, batch: &store::Batch<'_>) -> Result<(), Error> {
+fn add_block(
+	b: &Block,
+	block_sums: &BlockSums,
+	block_token_sums: &BlockTokenSums,
+	batch: &store::Batch<'_>,
+) -> Result<(), Error> {
 	batch
 		.save_block(b)
 		.map_err(|e| ErrorKind::StoreErr(e, "pipe save block".to_owned()))?;
 	batch.save_block_sums(&b.hash(), block_sums)?;
+	batch.save_block_token_sums(&b.hash(), block_token_sums)?;
 	Ok(())
 }
 
@@ -535,7 +557,7 @@ fn update_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Error> {
 
 // Whether the provided block totals more work than the chain tip
 fn has_more_work(header: &BlockHeader, head: &Tip) -> bool {
-	header.total_difficulty() > head.total_difficulty
+	header.height > head.height
 }
 
 /// Rewind the header chain and reapply headers on a fork.
@@ -613,6 +635,8 @@ pub fn rewind_and_apply_fork(
 		validate_utxo(&fb, ext)?;
 		// Re-verify block_sums to set the block_sums up on this fork correctly.
 		verify_block_sums(&fb, batch)?;
+
+		verify_block_token_sums(&fb, batch)?;
 		// Re-apply the blocks.
 		apply_block_to_txhashset(&fb, ext)?;
 	}

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::chain;
 use crate::core::core::hash::Hashed;
 use crate::core::core::merkle_proof::MerkleProof;
-use crate::core::core::{KernelFeatures, TxKernel};
+use crate::core::core::{KernelFeatures, TokenKey, TxKernel};
 use crate::core::{core, ser};
 use crate::p2p;
 use crate::util;
@@ -113,6 +113,12 @@ pub struct TxHashSet {
 	pub range_proof_root_hash: String,
 	// Kernel set root hash
 	pub kernel_root_hash: String,
+
+	pub token_output_root_hash: String,
+
+	pub token_rproof_root_hash: String,
+
+	pub token_issue_proof_root_hash: String,
 }
 
 impl TxHashSet {
@@ -122,6 +128,9 @@ impl TxHashSet {
 			output_root_hash: roots.output_root.to_hex(),
 			range_proof_root_hash: roots.rproof_root.to_hex(),
 			kernel_root_hash: roots.kernel_root.to_hex(),
+			token_output_root_hash: roots.token_output_root.to_hex(),
+			token_rproof_root_hash: roots.token_rproof_root.to_hex(),
+			token_issue_proof_root_hash: roots.token_issue_proof_root.to_hex(),
 		}
 	}
 }
@@ -167,12 +176,53 @@ impl TxHashSetNode {
 		}
 		return_vec
 	}
+
+	pub fn get_last_n_token_output(chain: Arc<chain::Chain>, distance: u64) -> Vec<TxHashSetNode> {
+		let mut return_vec = Vec::new();
+		let last_n = chain.get_last_n_token_output(distance);
+		for x in last_n {
+			return_vec.push(TxHashSetNode {
+				hash: util::to_hex(x.0.to_vec()),
+			});
+		}
+		return_vec
+	}
+
+	pub fn get_last_n_token_rangeproof(
+		head: Arc<chain::Chain>,
+		distance: u64,
+	) -> Vec<TxHashSetNode> {
+		let mut return_vec = Vec::new();
+		let last_n = head.get_last_n_token_rangeproof(distance);
+		for elem in last_n {
+			return_vec.push(TxHashSetNode {
+				hash: util::to_hex(elem.0.to_vec()),
+			});
+		}
+		return_vec
+	}
+
+	pub fn get_last_n_token_issue_proof(
+		head: Arc<chain::Chain>,
+		distance: u64,
+	) -> Vec<TxHashSetNode> {
+		let mut return_vec = Vec::new();
+		let last_n = head.get_last_n_token_issue_proof(distance);
+		for elem in last_n {
+			return_vec.push(TxHashSetNode {
+				hash: util::to_hex(elem.0.to_vec()),
+			});
+		}
+		return_vec
+	}
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum OutputType {
 	Coinbase,
 	Transaction,
+	TokenIsuue,
+	TokenTransaction,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -191,6 +241,35 @@ impl Output {
 			commit: PrintableCommitment {
 				commit: commit.clone(),
 			},
+			height: height,
+			mmr_index: mmr_index,
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TokenOutput {
+	/// The output commitment representing the amount
+	pub commit: PrintableCommitment,
+	pub token_type: TokenKey,
+	/// Height of the block which contains the output
+	pub height: u64,
+	/// MMR Index of output
+	pub mmr_index: u64,
+}
+
+impl TokenOutput {
+	pub fn new(
+		commit: &pedersen::Commitment,
+		token_type: TokenKey,
+		height: u64,
+		mmr_index: u64,
+	) -> TokenOutput {
+		TokenOutput {
+			commit: PrintableCommitment {
+				commit: commit.clone(),
+			},
+			token_type,
 			height: height,
 			mmr_index: mmr_index,
 		}
@@ -256,6 +335,8 @@ impl<'de> serde::de::Visitor<'de> for PrintableCommitmentVisitor {
 pub struct OutputPrintable {
 	/// The type of output Coinbase|Transaction
 	pub output_type: OutputType,
+	/// The type of token
+	pub token_type: Option<String>,
 	/// The homomorphic commitment representing the output's amount
 	/// (as hex string)
 	pub commit: pedersen::Commitment,
@@ -316,12 +397,57 @@ impl OutputPrintable {
 
 		Ok(OutputPrintable {
 			output_type,
+			token_type: None,
 			commit: output.commit,
 			spent,
 			proof,
 			proof_hash: util::to_hex(output.proof.hash().to_vec()),
 			block_height,
 			merkle_proof,
+			mmr_index: output_pos,
+		})
+	}
+
+	/// not
+	pub fn from_token_output(
+		token_output: &core::TokenOutput,
+		chain: Arc<chain::Chain>,
+		_block_header: Option<&core::BlockHeader>,
+		include_proof: bool,
+		_include_merkle_proof: bool,
+	) -> Result<OutputPrintable, chain::Error> {
+		let output_type = if token_output.is_tokenissue() {
+			OutputType::TokenIsuue
+		} else {
+			OutputType::TokenTransaction
+		};
+
+		let out_id = core::TokenOutputIdentifier::from_output(&token_output);
+		let spent = chain.is_token_unspent(&out_id).is_err();
+		let block_height = match spent {
+			true => None,
+			false => Some(chain.get_header_for_token_output(&out_id)?.height),
+		};
+
+		let proof = if include_proof {
+			Some(util::to_hex(token_output.proof.proof.to_vec()))
+		} else {
+			None
+		};
+
+		let output_pos = chain
+			.get_token_output_pos(&token_output.commit)
+			.unwrap_or(0);
+
+		Ok(OutputPrintable {
+			output_type,
+			token_type: Some(token_output.token_type.to_hex()),
+			commit: token_output.commit,
+			spent,
+			proof,
+			proof_hash: util::to_hex(token_output.proof.hash().to_vec()),
+			block_height,
+			merkle_proof: None,
 			mmr_index: output_pos,
 		})
 	}
@@ -356,6 +482,7 @@ impl serde::ser::Serialize for OutputPrintable {
 	{
 		let mut state = serializer.serialize_struct("OutputPrintable", 7)?;
 		state.serialize_field("output_type", &self.output_type)?;
+		state.serialize_field("token_type", &self.token_type)?;
 		state.serialize_field("commit", &util::to_hex(self.commit.0.to_vec()))?;
 		state.serialize_field("spent", &self.spent)?;
 		state.serialize_field("proof", &self.proof)?;
@@ -379,6 +506,7 @@ impl<'de> serde::de::Deserialize<'de> for OutputPrintable {
 		#[serde(field_identifier, rename_all = "snake_case")]
 		enum Field {
 			OutputType,
+			TokenType,
 			Commit,
 			Spent,
 			Proof,
@@ -402,6 +530,7 @@ impl<'de> serde::de::Deserialize<'de> for OutputPrintable {
 				A: MapAccess<'de>,
 			{
 				let mut output_type = None;
+				let mut token_type = None;
 				let mut commit = None;
 				let mut spent = None;
 				let mut proof = None;
@@ -415,6 +544,10 @@ impl<'de> serde::de::Deserialize<'de> for OutputPrintable {
 						Field::OutputType => {
 							no_dup!(output_type);
 							output_type = Some(map.next_value()?)
+						}
+						Field::TokenType => {
+							no_dup!(token_type);
+							token_type = map.next_value()?
 						}
 						Field::Commit => {
 							no_dup!(commit);
@@ -438,7 +571,7 @@ impl<'de> serde::de::Deserialize<'de> for OutputPrintable {
 						}
 						Field::BlockHeight => {
 							no_dup!(block_height);
-							block_height = Some(map.next_value()?)
+							block_height = map.next_value()?
 						}
 						Field::MerkleProof => {
 							no_dup!(merkle_proof);
@@ -467,12 +600,13 @@ impl<'de> serde::de::Deserialize<'de> for OutputPrintable {
 
 				Ok(OutputPrintable {
 					output_type: output_type.unwrap(),
+					token_type,
 					commit: commit.unwrap(),
 					spent: spent.unwrap(),
-					proof: proof,
+					proof,
 					proof_hash: proof_hash.unwrap(),
-					block_height: block_height,
-					merkle_proof: merkle_proof,
+					block_height,
+					merkle_proof,
 					mmr_index: mmr_index.unwrap(),
 				})
 			}
@@ -480,6 +614,7 @@ impl<'de> serde::de::Deserialize<'de> for OutputPrintable {
 
 		const FIELDS: &'static [&'static str] = &[
 			"output_type",
+			"token_type",
 			"commit",
 			"spent",
 			"proof",
@@ -559,6 +694,12 @@ pub struct BlockHeaderPrintable {
 	pub range_proof_root: String,
 	/// Merklish root of all transaction kernels in the TxHashSet
 	pub kernel_root: String,
+	/// Merklish root of all transaction kernels in the TxHashSet
+	pub token_output_root: String,
+	/// Merklish root of all transaction kernels in the TxHashSet
+	pub token_range_proof_root: String,
+	/// Merklish root of all transaction kernels in the TxHashSet
+	pub token_issue_proof_root: String,
 	/// mergemining diff
 	pub bits: u32,
 	/// Nonce increment used to mine this block.
@@ -587,6 +728,9 @@ impl BlockHeaderPrintable {
 			output_root: util::to_hex(header.output_root.to_vec()),
 			range_proof_root: util::to_hex(header.range_proof_root.to_vec()),
 			kernel_root: util::to_hex(header.kernel_root.to_vec()),
+			token_output_root: util::to_hex(header.token_output_root.to_vec()),
+			token_range_proof_root: util::to_hex(header.token_range_proof_root.to_vec()),
+			token_issue_proof_root: util::to_hex(header.token_issue_proof_root.to_vec()),
 			bits: header.bits,
 			nonce: header.pow.nonce,
 			edge_bits: header.pow.edge_bits(),
@@ -626,12 +770,16 @@ impl BlockAuxHeaderPrintable {
 pub struct BlockPrintable {
 	/// The block header
 	pub header: BlockHeaderPrintable,
-	// Input transactions
+	/// Input transactions
 	pub inputs: Vec<String>,
 	/// A printable version of the outputs
 	pub outputs: Vec<OutputPrintable>,
 	/// A printable version of the transaction kernels
 	pub kernels: Vec<TxKernelPrintable>,
+	/// Input token transactions
+	pub token_inputs: Vec<String>,
+	/// A printable version of the token outputs
+	pub token_outputs: Vec<OutputPrintable>,
 	///aux data for verify diffcuilty
 	pub aux_data: BlockAuxHeaderPrintable,
 }
@@ -667,11 +815,34 @@ impl BlockPrintable {
 			.iter()
 			.map(|kernel| TxKernelPrintable::from_txkernel(kernel))
 			.collect();
+
+		let token_inputs = block
+			.token_inputs()
+			.iter()
+			.map(|x| util::to_hex(x.commitment().0.to_vec()))
+			.collect();
+
+		let token_outputs = block
+			.token_outputs()
+			.iter()
+			.map(|output| {
+				OutputPrintable::from_token_output(
+					output,
+					chain.clone(),
+					Some(&block.header),
+					include_proof,
+					include_merkle_proof,
+				)
+			})
+			.collect::<Result<Vec<_>, _>>()?;
+
 		Ok(BlockPrintable {
 			header: BlockHeaderPrintable::from_header(&block.header),
-			inputs: inputs,
-			outputs: outputs,
-			kernels: kernels,
+			inputs,
+			outputs,
+			kernels,
+			token_inputs,
+			token_outputs,
 			aux_data: BlockAuxHeaderPrintable::from_block_aux_date(&block.aux_data),
 		})
 	}
@@ -763,6 +934,23 @@ mod test {
 		let hex_output =
 			"{\
 			 \"output_type\":\"Coinbase\",\
+			 \"token_type\":null,\
+			 \"commit\":\"083eafae5d61a85ab07b12e1a51b3918d8e6de11fc6cde641d54af53608aa77b9f\",\
+			 \"spent\":false,\
+			 \"proof\":null,\
+			 \"proof_hash\":\"ed6ba96009b86173bade6a9227ed60422916593fa32dd6d78b25b7a4eeef4946\",\
+			 \"block_height\":0,\
+			 \"merkle_proof\":null,\
+			 \"mmr_index\":0\
+			 }";
+		let deserialized: OutputPrintable = serde_json::from_str(&hex_output).unwrap();
+		let serialized = serde_json::to_string(&deserialized).unwrap();
+		assert_eq!(serialized, hex_output);
+
+		let hex_output =
+			"{\
+			 \"output_type\":\"Coinbase\",\
+			 \"token_type\":\"5e330f8564155e85414b49017280c0e5a0bd896261ac02c1b0f5292339aad438\",\
 			 \"commit\":\"083eafae5d61a85ab07b12e1a51b3918d8e6de11fc6cde641d54af53608aa77b9f\",\
 			 \"spent\":false,\
 			 \"proof\":null,\
