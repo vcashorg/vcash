@@ -295,7 +295,7 @@ impl serde::Serialize for ChildNumber {
 }
 
 /// A BIP32 error
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Error {
 	/// A pk->pk derivation was attempted on a hardened key
 	CannotDeriveFromHardenedKey,
@@ -385,7 +385,7 @@ impl ExtendedPrivKey {
 			Err(e) => return Err(Error::MnemonicError(e)),
 		};
 		let mut hasher = BIP32GrinHasher::new(is_floo);
-		let key = r#try!(ExtendedPrivKey::new_master(secp, &mut hasher, &seed));
+		let key = ExtendedPrivKey::new_master(secp, &mut hasher, &seed)?;
 		Ok(key)
 	}
 
