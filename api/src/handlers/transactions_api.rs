@@ -166,6 +166,24 @@ impl TxHashSetHandler {
 		Ok(out)
 	}
 
+	// allows traversal of token utxo set bounded within a block range
+	fn block_height_range_to_token_pmmr_indices(
+		&self,
+		start_block_height: u64,
+		end_block_height: Option<u64>,
+	) -> Result<OutputListing, Error> {
+		let chain = w(&self.chain)?;
+		let range = chain
+			.block_height_range_to_token_pmmr_indices(start_block_height, end_block_height)
+			.context(ErrorKind::NotFound)?;
+		let out = OutputListing {
+			last_retrieved_index: range.0,
+			highest_index: range.1,
+			outputs: vec![],
+		};
+		Ok(out)
+	}
+
 	// return a dummy output with merkle proof for position filled out
 	// (to avoid having to create a new type to pass around)
 	fn get_merkle_proof_for_output(&self, id: &str) -> Result<OutputPrintable, Error> {
@@ -249,6 +267,9 @@ impl Handler for TxHashSetHandler {
 			"lasttokenrangeproofs" => result_to_response(self.get_last_n_token_rangeproof(last_n)),
 			"lasttokenissueproofs" => result_to_response(self.get_last_n_token_issue_proof(last_n)),
 			"tokenoutputs" => result_to_response(self.token_outputs(start_index, end_index, max)),
+			"heightstotokenpmmr" => result_to_response(
+				self.block_height_range_to_token_pmmr_indices(start_height, end_height),
+			),
 			//"tokenmerkleproof" => result_to_response(self.get_merkle_proof_for_token_output(&id)),
 			_ => response(StatusCode::BAD_REQUEST, ""),
 		}

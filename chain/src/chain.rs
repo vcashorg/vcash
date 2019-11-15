@@ -1332,6 +1332,26 @@ impl Chain {
 		Ok((outputs.0, last_index, output_vec))
 	}
 
+	/// Return unspent outputs as above, but bounded between a particular range of blocks
+	pub fn block_height_range_to_token_pmmr_indices(
+		&self,
+		start_block_height: u64,
+		end_block_height: Option<u64>,
+	) -> Result<(u64, u64), Error> {
+		let end_block_height = match end_block_height {
+			Some(h) => h,
+			None => self.head_header()?.height,
+		};
+		// Return headers at the given heights
+		let prev_to_start_header =
+			self.get_header_by_height(start_block_height.saturating_sub(1))?;
+		let end_header = self.get_header_by_height(end_block_height)?;
+		Ok((
+			prev_to_start_header.token_output_mmr_size + 1,
+			end_header.token_output_mmr_size,
+		))
+	}
+
 	/// Orphans pool size
 	pub fn orphans_len(&self) -> usize {
 		self.orphans.len()

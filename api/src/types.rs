@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::chain;
 use crate::core::core::hash::Hashed;
 use crate::core::core::merkle_proof::MerkleProof;
-use crate::core::core::{KernelFeatures, TokenKey, TxKernel};
+use crate::core::core::{KernelFeatures, TokenKernelFeatures, TokenKey, TxKernel};
 use crate::core::{core, ser};
 use crate::p2p;
 use crate::util;
@@ -653,6 +653,34 @@ impl TxKernelPrintable {
 	}
 }
 
+// Printable representation of a block
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TokenTxKernelPrintable {
+	pub features: String,
+	pub token_type: String,
+	pub lock_height: u64,
+	pub excess: String,
+	pub excess_sig: String,
+}
+
+impl TokenTxKernelPrintable {
+	pub fn from_tokentxkernel(k: &core::TokenTxKernel) -> TokenTxKernelPrintable {
+		let features = k.features.as_string();
+		let token_type = k.token_type.to_hex();
+		let lock_height = match k.features {
+			TokenKernelFeatures::HeightLockedToken { lock_height } => lock_height,
+			_ => 0,
+		};
+		TokenTxKernelPrintable {
+			features,
+			token_type,
+			lock_height,
+			excess: util::to_hex(k.excess.0.to_vec()),
+			excess_sig: util::to_hex(k.excess_sig.to_raw_data().to_vec()),
+		}
+	}
+}
+
 // Just the information required for wallet reconstruction
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockHeaderInfo {
@@ -694,12 +722,14 @@ pub struct BlockHeaderPrintable {
 	pub range_proof_root: String,
 	/// Merklish root of all transaction kernels in the TxHashSet
 	pub kernel_root: String,
-	/// Merklish root of all transaction kernels in the TxHashSet
+	/// Merklish root of all the token commitments in the TxHashSet
 	pub token_output_root: String,
-	/// Merklish root of all transaction kernels in the TxHashSet
+	/// Merklish root of all token range proofs in the TxHashSet
 	pub token_range_proof_root: String,
-	/// Merklish root of all transaction kernels in the TxHashSet
+	/// Merklish root of all token issue proof in the TxHashSet
 	pub token_issue_proof_root: String,
+	/// Merklish root of all token transaction kernels in the TxHashSet
+	pub token_kernel_root: String,
 	/// mergemining diff
 	pub bits: u32,
 	/// Nonce increment used to mine this block.
@@ -731,6 +761,7 @@ impl BlockHeaderPrintable {
 			token_output_root: util::to_hex(header.token_output_root.to_vec()),
 			token_range_proof_root: util::to_hex(header.token_range_proof_root.to_vec()),
 			token_issue_proof_root: util::to_hex(header.token_issue_proof_root.to_vec()),
+			token_kernel_root: util::to_hex(header.token_kernel_root.to_vec()),
 			bits: header.bits,
 			nonce: header.pow.nonce,
 			edge_bits: header.pow.edge_bits(),
@@ -738,6 +769,21 @@ impl BlockHeaderPrintable {
 			total_difficulty: header.pow.total_difficulty.to_num(),
 			secondary_scaling: header.pow.secondary_scaling,
 			total_kernel_offset: header.total_kernel_offset.to_hex(),
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TokenInputPrintable {
+	pub token_type: String,
+	pub commitment: String,
+}
+
+impl TokenInputPrintable {
+	pub fn from_token_input(token_input: &core::TokenInput) -> TokenInputPrintable {
+		TokenInputPrintable {
+			token_type: token_input.token_type.to_hex(),
+			commitment: util::to_hex(token_input.commit.0.to_vec()),
 		}
 	}
 }
@@ -777,9 +823,11 @@ pub struct BlockPrintable {
 	/// A printable version of the transaction kernels
 	pub kernels: Vec<TxKernelPrintable>,
 	/// Input token transactions
-	pub token_inputs: Vec<String>,
+	pub token_inputs: Vec<TokenInputPrintable>,
 	/// A printable version of the token outputs
 	pub token_outputs: Vec<OutputPrintable>,
+	/// A printable version of the transaction kernels
+	pub token_kernels: Vec<TokenTxKernelPrintable>,
 	///aux data for verify diffcuilty
 	pub aux_data: BlockAuxHeaderPrintable,
 }
@@ -819,7 +867,7 @@ impl BlockPrintable {
 		let token_inputs = block
 			.token_inputs()
 			.iter()
-			.map(|x| util::to_hex(x.commitment().0.to_vec()))
+			.map(|x| TokenInputPrintable::from_token_input(x))
 			.collect();
 
 		let token_outputs = block
@@ -836,6 +884,12 @@ impl BlockPrintable {
 			})
 			.collect::<Result<Vec<_>, _>>()?;
 
+		let token_kernels = block
+			.token_kernels()
+			.iter()
+			.map(|kernel| TokenTxKernelPrintable::from_tokentxkernel(kernel))
+			.collect();
+
 		Ok(BlockPrintable {
 			header: BlockHeaderPrintable::from_header(&block.header),
 			inputs,
@@ -843,6 +897,7 @@ impl BlockPrintable {
 			kernels,
 			token_inputs,
 			token_outputs,
+			token_kernels,
 			aux_data: BlockAuxHeaderPrintable::from_block_aux_date(&block.aux_data),
 		})
 	}

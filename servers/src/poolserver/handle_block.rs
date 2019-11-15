@@ -213,6 +213,7 @@ impl BlockHandler {
 			if let Ok(proofs) = ctx.find_cycles() {
 				b.header.pow.proof = proofs[0].clone();
 				let proof_diff = b.header.pow.to_difficulty(b.header.height);
+				warn!("--------{}", proof_diff);
 				if proof_diff >= (b.header.total_difficulty() - head.total_difficulty()) {
 					debug!(
 						"PoolServer found solution for height = {} before deadline in {}, iter_count = {}",b.header.height,

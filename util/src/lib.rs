@@ -36,7 +36,7 @@ pub use secp256k1zkp as secp;
 
 // Logging related
 pub mod logger;
-pub use crate::logger::{init_logger, init_test_logger};
+pub use crate::logger::{init_logger, init_test_logger, LoggingConfig};
 
 // Static secp instance
 pub mod secp_static;
