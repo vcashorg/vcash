@@ -18,14 +18,17 @@
 
 use crate::consensus::{
 	HeaderInfo, BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT,
-	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD, YEAR_HEIGHT,
+	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
 };
 use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
+use util::RwLock;
+
+use crate::consensus::YEAR_HEIGHT;
+
 /// An enum collecting sets of parameters used throughout the
 /// code wherever mining is needed. This should allow for
 /// different sets of parameters for different purposes,
 /// e.g. CI, User testing, production values
-use crate::util::RwLock;
 /// Define these here, as they should be developer-set, not really tweakable
 /// by users
 

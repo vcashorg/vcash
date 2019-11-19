@@ -28,6 +28,11 @@
 #![deny(unused_mut)]
 #![warn(missing_docs)]
 
+pub use self::common::EdgeType;
+pub use self::types::*;
+use crate::core::{Block, BlockHeader};
+use crate::genesis;
+use crate::global;
 use chrono;
 use num;
 
@@ -42,20 +47,15 @@ pub mod lean;
 mod siphash;
 mod types;
 
-use crate::core::{Block, BlockHeader};
-use crate::genesis;
-use crate::global;
-use chrono::prelude::{DateTime, NaiveDateTime, Utc};
-
-pub use self::common::EdgeType;
-pub use self::types::*;
-pub use crate::pow::common::{
-	biguint_to_compact, biguint_to_hash, compact_to_biguint, compact_to_diff, hash_to_biguint,
-};
 pub use crate::pow::cuckaroo::{new_cuckaroo_ctx, CuckarooContext};
 pub use crate::pow::cuckarood::{new_cuckarood_ctx, CuckaroodContext};
 pub use crate::pow::cuckatoo::{new_cuckatoo_ctx, CuckatooContext};
 pub use crate::pow::error::Error;
+use chrono::prelude::{DateTime, NaiveDateTime, Utc};
+
+pub use crate::pow::common::{
+	biguint_to_compact, biguint_to_hash, compact_to_biguint, compact_to_diff, hash_to_biguint,
+};
 
 const MAX_SOLS: u32 = 10;
 

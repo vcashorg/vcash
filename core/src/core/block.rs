@@ -14,32 +14,33 @@
 
 //! Blocks and blockheaders
 
-use crate::util::RwLock;
-use chrono::naive::{MAX_DATE, MIN_DATE};
-use chrono::prelude::{DateTime, NaiveDateTime, Utc};
-use chrono::Duration;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::fmt;
-use std::iter::FromIterator;
-use std::sync::Arc;
-
-use crate::consensus::{self, reward, total_reward};
+use crate::consensus::{self, reward};
 use crate::core::committed::{self, Committed};
 use crate::core::compact_block::{CompactBlock, CompactBlockBody};
 use crate::core::hash::{DefaultHashable, Hash, Hashed, ZERO_HASH};
 use crate::core::verifier_cache::VerifierCache;
 use crate::core::{
-	transaction, Commitment, Input, KernelFeatures, Output, TokenInput, TokenKernelFeatures,
-	TokenKey, TokenOutput, TokenTxKernel, Transaction, TransactionBody, TxKernel, Weighting,
+	transaction, Commitment, Input, KernelFeatures, Output, Transaction, TransactionBody, TxKernel,
+	Weighting,
 };
-
 use crate::global;
-use crate::keychain::{self, BlindingFactor};
 use crate::pow::{verify_size, Difficulty, Proof, ProofOfWork};
-use crate::ser::{self, read_multi, FixedLength, PMMRable, Readable, Reader, Writeable, Writer};
-use crate::util;
-use crate::util::{secp, static_secp_instance};
+use crate::ser::{self, FixedLength, PMMRable, Readable, Reader, Writeable, Writer};
+use chrono::naive::{MAX_DATE, MIN_DATE};
+use chrono::prelude::{DateTime, NaiveDateTime, Utc};
+use chrono::Duration;
+use keychain::{self, BlindingFactor};
+use std::collections::HashSet;
+use std::fmt;
+use std::iter::FromIterator;
+use std::sync::Arc;
+use util::RwLock;
+use util::{secp, static_secp_instance};
+
+use crate::consensus::total_reward;
+use crate::core::{TokenInput, TokenKernelFeatures, TokenKey, TokenOutput, TokenTxKernel};
+use crate::ser::read_multi;
+use std::collections::HashMap;
 
 /// Get Magic data in coinbase
 pub fn get_grin_magic_data_str(header_hash: Hash) -> String {

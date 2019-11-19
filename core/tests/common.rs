@@ -14,17 +14,17 @@
 
 //! Common test functions
 
-use crate::keychain::{Identifier, Keychain};
-use grin_core::core::{
-	Block, BlockHeader, KernelFeatures, TokenKernelFeatures, TokenKey, Transaction,
-};
+use grin_core::core::{Block, BlockHeader, KernelFeatures, Transaction};
 use grin_core::libtx::{
-	build::{self, input, output, token_input, token_output},
+	build::{self, input, output},
 	proof::{ProofBuild, ProofBuilder},
 	reward,
 };
 use grin_core::pow::Difficulty;
-use grin_keychain as keychain;
+use keychain::{Identifier, Keychain};
+
+use grin_core::core::{TokenKernelFeatures, TokenKey};
+use grin_core::libtx::build::{token_input, token_output};
 
 // utility producing a transaction with 2 inputs and a single outputs
 pub fn tx2i1o() -> Transaction {

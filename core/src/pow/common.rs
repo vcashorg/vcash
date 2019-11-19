@@ -14,18 +14,19 @@
 
 //! Common types and traits for cuckoo family of solvers
 
-use crate::blake2::blake2b::blake2b;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-
-use crate::core::hash::Hash as BitHash;
-use crate::num_bigint::BigUint;
 use crate::pow::error::{Error, ErrorKind};
-use crate::pow::num::{FromPrimitive, PrimInt, ToPrimitive};
+use crate::pow::num::{PrimInt, ToPrimitive};
 use crate::pow::siphash::siphash24;
+use blake2::blake2b::blake2b;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fmt;
 use std::hash::Hash;
 use std::io::Cursor;
 use std::ops::{BitOrAssign, Mul};
+
+use crate::core::hash::Hash as BitHash;
+use crate::num_bigint::BigUint;
+use crate::pow::num::FromPrimitive;
 
 /// Operations needed for edge type (going to be u32 or u64)
 pub trait EdgeType: PrimInt + ToPrimitive + Mul + BitOrAssign + Hash {}

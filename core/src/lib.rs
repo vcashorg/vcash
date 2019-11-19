@@ -21,23 +21,18 @@
 #![deny(unused_mut)]
 #![warn(missing_docs)]
 
-extern crate num_bigint;
-use blake2_rfc as blake2;
 #[macro_use]
 extern crate enum_primitive;
-use grin_keychain as keychain;
-use grin_util as util;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
-extern crate serde;
+use serde;
 #[macro_use]
 extern crate log;
 use failure;
 #[macro_use]
 extern crate failure_derive;
-extern crate zeroize;
 #[macro_use]
 pub mod macros;
 
@@ -48,3 +43,5 @@ pub mod global;
 pub mod libtx;
 pub mod pow;
 pub mod ser;
+
+extern crate num_bigint;

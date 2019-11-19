@@ -18,12 +18,12 @@
 //! enough, consensus-relevant constants and short functions should be kept
 //! here.
 
-use std::cmp::{max, min};
-
 use crate::core::block::HeaderVersion;
 use crate::core::hash::{Hash, ZERO_HASH};
 use crate::global;
 use crate::pow::Difficulty;
+use std::cmp::{max, min};
+
 use crate::pow::{biguint_to_compact, compact_to_biguint};
 
 /// A grin is divisible to 10^9, following the SI prefixes

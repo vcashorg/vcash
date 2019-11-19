@@ -16,10 +16,11 @@
 //! Allows fast "full" verification of kernel sums at a given block height.
 
 use crate::core::committed::Committed;
-use crate::core::transaction::TokenKey;
 use crate::ser::{self, Readable, Reader, Writeable, Writer};
-use crate::util::secp::pedersen::Commitment;
-use crate::util::secp_static;
+use util::secp::pedersen::Commitment;
+use util::secp_static;
+
+use crate::core::transaction::TokenKey;
 use std::collections::HashMap;
 
 /// The output_sum and kernel_sum for a given block.

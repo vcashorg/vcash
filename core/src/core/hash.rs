@@ -17,18 +17,17 @@
 //! Primary hash function used in the protocol
 //!
 
+use crate::ser::{
+	self, AsFixedBytes, Error, FixedLength, ProtocolVersion, Readable, Reader, Writeable, Writer,
+};
+use blake2::blake2b::Blake2b;
 use byteorder::{BigEndian, ByteOrder};
 use std::cmp::min;
 use std::convert::AsRef;
 use std::ops::Add;
 use std::{fmt, ops};
+use util;
 
-use crate::blake2::blake2b::Blake2b;
-
-use crate::ser::{
-	self, AsFixedBytes, Error, FixedLength, ProtocolVersion, Readable, Reader, Writeable, Writer,
-};
-use crate::util;
 use digest::Digest;
 use sha2::Sha256;
 
@@ -313,7 +312,7 @@ impl<D: DefaultHashable, E: DefaultHashable> DefaultHashable for (D, E) {}
 impl<D: DefaultHashable, E: DefaultHashable, F: DefaultHashable> DefaultHashable for (D, E, F) {}
 
 /// Implement Hashed trait for external types here
-impl DefaultHashable for crate::util::secp::pedersen::RangeProof {}
+impl DefaultHashable for util::secp::pedersen::RangeProof {}
 impl DefaultHashable for Vec<u8> {}
 impl DefaultHashable for u8 {}
 impl DefaultHashable for u64 {}
