@@ -262,10 +262,12 @@ pub fn genesis_main() -> core::Block {
 mod test {
 	use super::*;
 	use crate::core::hash::Hashed;
+	use crate::global::{self, ChainTypes};
 	use crate::ser::{self, ProtocolVersion};
 
 	#[test]
 	fn floonet_genesis_hash() {
+		global::set_mining_mode(ChainTypes::Floonet);
 		let gen_hash = genesis_floo().hash();
 		println!("floonet genesis hash: {}", gen_hash.to_hex());
 		let gen_bin = ser::ser_vec(&genesis_floo(), ProtocolVersion(1)).unwrap();
@@ -276,12 +278,13 @@ mod test {
 		);
 		assert_eq!(
 			gen_bin.hash().to_hex(),
-			"9004317d03f5406884ed07b79dc73158aa2b838c1d8f058b80f9504a59c0d8cb"
+			"d76bd125d72d9c37b4a549f1840ccef79f461f59ff170f8e9fab93b36422658f"
 		);
 	}
 
 	#[test]
 	fn mainnet_genesis_hash() {
+		global::set_mining_mode(ChainTypes::Mainnet);
 		let gen_hash = genesis_main().hash();
 		println!("mainnet genesis hash: {}", gen_hash.to_hex());
 		let gen_bin = ser::ser_vec(&genesis_main(), ProtocolVersion(1)).unwrap();
@@ -292,7 +295,7 @@ mod test {
 		);
 		assert_eq!(
 			gen_bin.hash().to_hex(),
-			"40b95d6df8eb1e734b6539e63c7256ee5144a18e7d6381361c90651a110a9796"
+			"7c4e3988a5df6a4d76cd6a65306bbc4989a76b4b9ab1767796e03d305fe90030"
 		);
 	}
 }

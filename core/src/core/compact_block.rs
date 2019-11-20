@@ -22,6 +22,7 @@ use crate::ser::{self, read_multi, Readable, Reader, VerifySortedAndUnique, Writ
 use rand::{thread_rng, Rng};
 
 use crate::core::block::BlockAuxData;
+use crate::global;
 
 /// Container for full (full) outputs and kernels and kern_ids for a compact block.
 #[derive(Debug, Clone)]
@@ -210,7 +211,9 @@ impl Writeable for CompactBlock {
 
 		if writer.serialization_mode() != ser::SerializationMode::Hash {
 			writer.write_u64(self.nonce)?;
-			self.aux_data.write(writer)?;
+			if self.header.height < global::refactor_header_height() {
+				self.aux_data.write(writer)?;
+			}
 			self.body.write(writer)?;
 		}
 
@@ -224,7 +227,11 @@ impl Readable for CompactBlock {
 	fn read(reader: &mut dyn Reader) -> Result<CompactBlock, ser::Error> {
 		let header = BlockHeader::read(reader)?;
 		let nonce = reader.read_u64()?;
-		let aux_data = BlockAuxData::read(reader)?;
+		let aux_data = if header.height >= global::refactor_header_height() {
+			BlockAuxData::default()
+		} else {
+			BlockAuxData::read(reader)?
+		};
 		let body = CompactBlockBody::read(reader)?;
 
 		Ok(CompactBlock {
@@ -251,12 +258,17 @@ pub struct UntrustedCompactBlock(CompactBlock);
 impl Readable for UntrustedCompactBlock {
 	fn read(reader: &mut dyn Reader) -> Result<UntrustedCompactBlock, ser::Error> {
 		let header = UntrustedBlockHeader::read(reader)?;
+		let header: BlockHeader = header.into();
 		let nonce = reader.read_u64()?;
-		let aux_data = BlockAuxData::read(reader)?;
+		let aux_data = if header.height >= global::refactor_header_height() {
+			BlockAuxData::default()
+		} else {
+			BlockAuxData::read(reader)?
+		};
 		let body = CompactBlockBody::read(reader)?;
 
 		let cb = CompactBlock {
-			header: header.into(),
+			header,
 			nonce,
 			aux_data,
 			body,

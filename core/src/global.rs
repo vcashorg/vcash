@@ -18,7 +18,7 @@
 
 use crate::consensus::{
 	HeaderInfo, BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT,
-	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
+	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD, WEEK_HEIGHT,
 };
 use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
 use util::RwLock;
@@ -103,6 +103,12 @@ const SUPPORT_TOKEN_HEIGHT: u64 = YEAR_HEIGHT;
 
 /// Testing support issue token tx height
 const FLOONET_SUPPORT_TOKEN_HEIGHT: u64 = 160;
+
+/// Support header without Cuckoo Cycle Proof
+const REFACTOR_HEADER_HEIGHT: u64 = (YEAR_HEIGHT + WEEK_HEIGHT);
+
+/// Testing support header without Cuckoo Cycle Proof
+const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
 
 /// Number of blocks to reuse a txhashset zip for (automated testing and user testing).
 pub const TESTING_TXHASHSET_ARCHIVE_INTERVAL: u64 = 10;
@@ -204,12 +210,22 @@ pub fn halving_interval() -> u64 {
 	}
 }
 
-/// The havling interval
+/// Support token height
 pub fn support_token_height() -> u64 {
 	let param_ref = CHAIN_TYPE.read();
 	match *param_ref {
 		ChainTypes::Floonet => FLOONET_SUPPORT_TOKEN_HEIGHT,
 		ChainTypes::Mainnet => SUPPORT_TOKEN_HEIGHT,
+		_ => 0,
+	}
+}
+
+/// Refactor header height
+pub fn refactor_header_height() -> u64 {
+	let param_ref = CHAIN_TYPE.read();
+	match *param_ref {
+		ChainTypes::Floonet => FLOONET_REFACTOR_HEADER_HEIGHT,
+		ChainTypes::Mainnet => REFACTOR_HEADER_HEIGHT,
 		_ => 0,
 	}
 }

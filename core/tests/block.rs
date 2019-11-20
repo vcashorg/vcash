@@ -277,6 +277,7 @@ fn remove_coinbase_kernel_flag() {
 
 #[test]
 fn remove_issuetoken_output_flag() {
+	global::set_mining_mode(ChainTypes::AutomatedTesting);
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx = txissuetoken();
@@ -385,7 +386,7 @@ fn empty_block_serialized_size() {
 	let b = new_block(vec![], &keychain, &builder, &prev, &key_id);
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 1_359);
+	assert_eq!(vec.len(), 1_333);
 }
 
 #[test]
@@ -413,7 +414,7 @@ fn empty_compact_block_serialized_size() {
 	let cb: CompactBlock = b.into();
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &cb).expect("serialization failed");
-	assert_eq!(vec.len(), 1_343);
+	assert_eq!(vec.len(), 1_317);
 }
 
 #[test]
@@ -428,7 +429,7 @@ fn compact_block_single_tx_serialized_size() {
 	let cb: CompactBlock = b.into();
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &cb).expect("serialization failed");
-	assert_eq!(vec.len(), 1_349);
+	assert_eq!(vec.len(), 1_323);
 }
 
 #[test]
@@ -451,21 +452,21 @@ fn block_10_tx_serialized_size() {
 	{
 		let mut vec = Vec::new();
 		ser::serialize_default(&mut vec, &b).expect("serialization failed");
-		assert_eq!(vec.len(), 17_099);
+		assert_eq!(vec.len(), 17_073);
 	}
 
 	// Explicit protocol version 1
 	{
 		let mut vec = Vec::new();
 		ser::serialize(&mut vec, ser::ProtocolVersion(1), &b).expect("serialization failed");
-		assert_eq!(vec.len(), 17_171);
+		assert_eq!(vec.len(), 17_145);
 	}
 
 	// Explicit protocol version 2
 	{
 		let mut vec = Vec::new();
 		ser::serialize(&mut vec, ser::ProtocolVersion(2), &b).expect("serialization failed");
-		assert_eq!(vec.len(), 17_099);
+		assert_eq!(vec.len(), 17_073);
 	}
 }
 
@@ -486,7 +487,7 @@ fn compact_block_10_tx_serialized_size() {
 	let cb: CompactBlock = b.into();
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &cb).expect("serialization failed");
-	assert_eq!(vec.len(), 1_403);
+	assert_eq!(vec.len(), 1_377);
 }
 
 #[test]

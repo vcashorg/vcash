@@ -24,6 +24,8 @@ use crate::core::ser;
 use crate::error::Error;
 use crate::util::RwLock;
 
+use crate::core::global;
+
 bitflags! {
 /// Options for block validation
 	pub struct Options: u32 {
@@ -240,7 +242,7 @@ pub struct OutputMMRPosition {
 /// blockchain tree. References the max height and the latest and previous
 /// blocks
 /// for convenience and the total difficulty.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Tip {
 	/// Height of the tip (max height of the fork)
 	pub height: u64,
@@ -282,6 +284,21 @@ impl Default for Tip {
 			last_block_h: ZERO_HASH,
 			prev_block_h: ZERO_HASH,
 			total_difficulty: Difficulty::min(),
+		}
+	}
+}
+
+impl PartialEq for Tip {
+	fn eq(&self, other: &Self) -> bool {
+		if self.height >= global::support_token_height() {
+			(self.height == other.height
+				&& self.last_block_h == other.last_block_h
+				&& self.prev_block_h == other.prev_block_h)
+		} else {
+			(self.height == other.height
+				&& self.last_block_h == other.last_block_h
+				&& self.prev_block_h == other.prev_block_h
+				&& self.total_difficulty == other.total_difficulty)
 		}
 	}
 }

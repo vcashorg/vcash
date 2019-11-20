@@ -125,6 +125,7 @@ where
 		b.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
 		b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
 		b.aux_data.aux_header.nbits = b.header.bits;
+		b.header.btc_pow = b.aux_data.clone();
 		chain.process_block(b, Options::MINE).unwrap();
 
 		// checking our new head

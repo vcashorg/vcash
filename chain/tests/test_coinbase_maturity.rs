@@ -32,6 +32,8 @@ use grin_util as util;
 use std::fs;
 use std::sync::Arc;
 
+use crate::core::core::Block;
+
 fn clean_output_dir(dir_name: &str) {
 	let _ = fs::remove_dir_all(dir_name);
 }
@@ -90,10 +92,7 @@ fn test_coinbase_maturity() {
 		let coinbase_output = block.outputs()[0];
 		assert!(coinbase_output.is_coinbase());
 
-		let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
-		block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
-		block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
-		block.aux_data.aux_header.nbits = block.header.bits;
+		get_block_bit_diff(&mut block);
 
 		chain
 			.process_block(block.clone(), chain::Options::MINE)
@@ -184,10 +183,7 @@ fn test_coinbase_maturity() {
 			let coinbase_output = block.outputs()[0];
 			assert!(coinbase_output.is_coinbase());
 
-			let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
-			block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
-			block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
-			block.aux_data.aux_header.nbits = block.header.bits;
+			get_block_bit_diff(&mut block);
 
 			chain
 				.process_block(block.clone(), chain::Options::MINE)
@@ -274,10 +270,7 @@ fn test_coinbase_maturity() {
 				)
 				.unwrap();
 
-				let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
-				block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
-				block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
-				block.aux_data.aux_header.nbits = block.header.bits;
+				get_block_bit_diff(&mut block);
 				chain.process_block(block, chain::Options::MINE).unwrap();
 			}
 
@@ -309,10 +302,7 @@ fn test_coinbase_maturity() {
 			)
 			.unwrap();
 
-			let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
-			block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
-			block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
-			block.aux_data.aux_header.nbits = block.header.bits;
+			get_block_bit_diff(&mut block);
 
 			let result = chain.process_block(block, chain::Options::MINE);
 			match result {
@@ -323,4 +313,12 @@ fn test_coinbase_maturity() {
 	}
 	// Cleanup chain directory
 	clean_output_dir(chain_dir);
+}
+
+fn get_block_bit_diff(block: &mut Block) {
+	block.header.bits = 0x2100ffff;
+	let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
+	block.header.btc_pow.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+	block.header.btc_pow.aux_header.merkle_root = block.header.btc_pow.coinbase_tx.dhash();
+	block.header.btc_pow.aux_header.nbits = block.header.bits;
 }

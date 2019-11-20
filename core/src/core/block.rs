@@ -242,7 +242,7 @@ impl Readable for HeaderVersion {
 }
 
 /// Block header, fairly standard compared to other blockchains.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct BlockHeader {
 	/// Version of the block
 	pub version: HeaderVersion,
@@ -286,6 +286,8 @@ pub struct BlockHeader {
 	pub token_kernel_mmr_size: u64,
 	/// Proof of work and related
 	pub pow: ProofOfWork,
+	/// Work Proof of Bitcoin
+	pub btc_pow: BlockAuxData,
 }
 impl DefaultHashable for BlockHeader {}
 
@@ -312,6 +314,17 @@ impl Default for BlockHeader {
 			token_kernel_mmr_size: 0,
 			bits: 0,
 			pow: ProofOfWork::default(),
+			btc_pow: BlockAuxData::default(),
+		}
+	}
+}
+
+impl PartialEq for BlockHeader {
+	fn eq(&self, other: &Self) -> bool {
+		if self.height >= global::support_token_height() {
+			(self.is_pre_pow_equal(other) && self.btc_pow == other.btc_pow)
+		} else {
+			(self.is_pre_pow_equal(other) && self.pow == other.pow)
 		}
 	}
 }
@@ -333,10 +346,17 @@ impl PMMRable for BlockHeader {
 /// Serialization of a block header
 impl Writeable for BlockHeader {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		if writer.serialization_mode() != ser::SerializationMode::Hash {
+		if self.height >= global::refactor_header_height() {
 			self.write_pre_pow(writer)?;
+			if writer.serialization_mode() != ser::SerializationMode::Hash {
+				self.btc_pow.write(writer)?;
+			}
+		} else {
+			if writer.serialization_mode() != ser::SerializationMode::Hash {
+				self.write_pre_pow(writer)?;
+			}
+			self.pow.write(writer)?;
 		}
-		self.pow.write(writer)?;
 		Ok(())
 	}
 }
@@ -381,7 +401,14 @@ fn read_block_header(reader: &mut dyn Reader) -> Result<BlockHeader, ser::Error>
 		(ZERO_HASH, ZERO_HASH, ZERO_HASH, ZERO_HASH, 0, 0, 0)
 	};
 
-	let pow = ProofOfWork::read(reader)?;
+	let (pow, btc_pow) = if height >= global::refactor_header_height() {
+		let mut pow = ProofOfWork::default();
+		let btc_pow = BlockAuxData::read(reader)?;
+		pow.total_difficulty = Difficulty::from_num(height + 1);
+		(pow, btc_pow)
+	} else {
+		(ProofOfWork::read(reader)?, BlockAuxData::default())
+	};
 
 	if timestamp > MAX_DATE.and_hms(0, 0, 0).timestamp()
 		|| timestamp < MIN_DATE.and_hms(0, 0, 0).timestamp()
@@ -410,6 +437,7 @@ fn read_block_header(reader: &mut dyn Reader) -> Result<BlockHeader, ser::Error>
 		token_kernel_mmr_size,
 		bits,
 		pow,
+		btc_pow,
 	})
 }
 
@@ -492,10 +520,32 @@ impl BlockHeader {
 	pub fn total_kernel_offset(&self) -> BlindingFactor {
 		self.total_kernel_offset.clone()
 	}
+
+	fn is_pre_pow_equal(&self, other: &Self) -> bool {
+		(self.version == other.version
+			&& self.height == other.height
+			&& self.prev_hash == other.prev_hash
+			&& self.prev_root == other.prev_root
+			&& self.timestamp == other.timestamp
+			&& self.output_root == other.output_root
+			&& self.range_proof_root == other.range_proof_root
+			&& self.kernel_root == other.kernel_root
+			&& self.total_kernel_offset == other.total_kernel_offset
+			&& self.output_mmr_size == other.output_mmr_size
+			&& self.kernel_mmr_size == other.kernel_mmr_size
+			&& self.bits == other.bits
+			&& self.token_output_root == other.token_output_root
+			&& self.token_range_proof_root == other.token_range_proof_root
+			&& self.token_issue_proof_root == other.token_issue_proof_root
+			&& self.token_kernel_root == other.token_kernel_root
+			&& self.token_output_mmr_size == other.token_output_mmr_size
+			&& self.token_issue_proof_mmr_size == other.token_issue_proof_mmr_size
+			&& self.token_kernel_mmr_size == other.token_kernel_mmr_size)
+	}
 }
 
 /// bit header data
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct AuxBitHeader {
 	/// btc version
 	pub version: i32,
@@ -567,7 +617,7 @@ impl Readable for AuxBitHeader {
 }
 
 /// bit proof data
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct BlockAuxData {
 	/// btc header
 	pub aux_header: AuxBitHeader,
@@ -609,6 +659,23 @@ impl Readable for BlockAuxData {
 	}
 }
 
+impl BlockAuxData {
+	/// Serialize the BlockAuxData as a hex string
+	pub fn to_hex(&self) -> String {
+		let mut vec = Vec::new();
+		ser::serialize_default(&mut vec, &self).expect("serialization failed");
+		util::to_hex(vec)
+	}
+
+	/// Convert hex string representation back to BlockAuxData
+	pub fn from_hex(hex: &str) -> Result<BlockAuxData, String> {
+		let bytes = util::from_hex(hex.to_string()).unwrap();
+		let res = ser::deserialize_default(&mut &bytes[..])
+			.map_err(|_| "failed to deserialize a AuxBitHeader".to_string())?;
+		Ok(res)
+	}
+}
+
 impl From<UntrustedBlockHeader> for BlockHeader {
 	fn from(header: UntrustedBlockHeader) -> Self {
 		header.0
@@ -635,29 +702,32 @@ impl Readable for UntrustedBlockHeader {
 			return Err(ser::Error::CorruptedData);
 		}
 
-		// Check the block version before proceeding any further.
-		// We want to do this here because blocks can be pretty large
-		// and we want to halt processing as early as possible.
-		// If we receive an invalid block version then the peer is not on our hard-fork.
-		if !consensus::valid_header_version(header.height, header.version) {
-			return Err(ser::Error::InvalidBlockVersion);
+		if header.height < global::refactor_header_height() {
+			// Check the block version before proceeding any further.
+			// We want to do this here because blocks can be pretty large
+			// and we want to halt processing as early as possible.
+			// If we receive an invalid block version then the peer is not on our hard-fork.
+			if !consensus::valid_header_version(header.height, header.version) {
+				return Err(ser::Error::InvalidBlockVersion);
+			}
+
+			if !header.pow.is_primary() && !header.pow.is_secondary() {
+				error!(
+					"block header {} validation error: invalid edge bits",
+					header.hash()
+				);
+				return Err(ser::Error::CorruptedData);
+			}
+			if let Err(e) = verify_size(&header) {
+				error!(
+					"block header {} validation error: invalid POW: {}",
+					header.hash(),
+					e
+				);
+				return Err(ser::Error::CorruptedData);
+			}
 		}
 
-		if !header.pow.is_primary() && !header.pow.is_secondary() {
-			error!(
-				"block header {} validation error: invalid edge bits",
-				header.hash()
-			);
-			return Err(ser::Error::CorruptedData);
-		}
-		if let Err(e) = verify_size(&header) {
-			error!(
-				"block header {} validation error: invalid POW: {}",
-				header.hash(),
-				e
-			);
-			return Err(ser::Error::CorruptedData);
-		}
 		Ok(UntrustedBlockHeader(header))
 	}
 }
@@ -696,7 +766,9 @@ impl Writeable for Block {
 		self.header.write(writer)?;
 
 		if writer.serialization_mode() != ser::SerializationMode::Hash {
-			self.aux_data.write(writer)?;
+			if self.header.height < global::refactor_header_height() {
+				self.aux_data.write(writer)?;
+			}
 			self.body.write(writer)?;
 		}
 		Ok(())
@@ -709,7 +781,11 @@ impl Readable for Block {
 	fn read(reader: &mut dyn Reader) -> Result<Block, ser::Error> {
 		let header = BlockHeader::read(reader)?;
 
-		let aux_data = BlockAuxData::read(reader)?;
+		let aux_data = if header.height >= global::refactor_header_height() {
+			BlockAuxData::default()
+		} else {
+			BlockAuxData::read(reader)?
+		};
 
 		let body = TransactionBody::read(reader)?;
 		Ok(Block {
@@ -1152,7 +1228,11 @@ impl Readable for UntrustedBlock {
 	fn read(reader: &mut dyn Reader) -> Result<UntrustedBlock, ser::Error> {
 		// we validate header here before parsing the body
 		let header = UntrustedBlockHeader::read(reader)?;
-		let aux_data = BlockAuxData::read(reader)?;
+		let aux_data = if header.0.height >= global::refactor_header_height() {
+			BlockAuxData::default()
+		} else {
+			BlockAuxData::read(reader)?
+		};
 		let body = TransactionBody::read(reader)?;
 
 		// Now "lightweight" validation of the block.

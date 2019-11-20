@@ -10,6 +10,7 @@ use std::thread;
 use crate::api::{ApiServer, /*BasicAuthMiddleware,*/ Handler, ResponseFuture, Router, TLSConfig,};
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::{AuxBitHeader, Block};
+use crate::core::global;
 use crate::util;
 
 use crate::core::consensus::reward;
@@ -181,9 +182,16 @@ impl OwnerAPIHandler {
 							}
 
 							// This is a full solution, submit it to the network
-							block_data.aux_data.aux_header = btc_header_result.unwrap();
-							block_data.aux_data.merkle_branch = hash_vec;
-							block_data.aux_data.coinbase_tx = btc_coinbase_result.unwrap();
+							if block_data.header.height >= global::refactor_header_height() {
+								block_data.header.btc_pow.aux_header = btc_header_result.unwrap();
+								block_data.header.btc_pow.merkle_branch = hash_vec;
+								block_data.header.btc_pow.coinbase_tx =
+									btc_coinbase_result.unwrap();
+							} else {
+								block_data.aux_data.aux_header = btc_header_result.unwrap();
+								block_data.aux_data.merkle_branch = hash_vec;
+								block_data.aux_data.coinbase_tx = btc_coinbase_result.unwrap();
+							};
 							//pipe::validate_block_auxdata(&block_data);
 
 							let response = match clone_handler.submit_block(block_data) {

@@ -25,7 +25,7 @@ use crate::core::{BlockTokenSums, TokenKey};
 use std::collections::HashMap;
 
 /// Errors from summing and verifying kernel excesses via committed trait.
-#[derive(Debug, Clone, PartialEq, Eq, Fail)]
+#[derive(Debug, Clone, PartialEq, Eq, Fail, Serialize, Deserialize)]
 pub enum Error {
 	/// Keychain related error.
 	#[fail(display = "Keychain error {}", _0)]

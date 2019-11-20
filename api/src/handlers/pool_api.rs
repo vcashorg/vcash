@@ -82,7 +82,7 @@ impl PoolPushHandler {
 						.blockchain
 						.chain_head()
 						.context(ErrorKind::Internal("Failed to get chain head".to_owned()))?;
-					let version = if header.height+1 >= global::support_token_height() {
+					let version = if header.height >= global::support_token_height() {
 						ProtocolVersion(2)
 					} else {
 						ProtocolVersion(1)

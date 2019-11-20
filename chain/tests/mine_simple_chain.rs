@@ -327,9 +327,9 @@ fn test_block_a_header_b_header_b_fork_block_b_fork_block_b_block_c_fork() {
 fn get_block_bit_diff(block: &mut Block) {
 	block.header.bits = 0x2100ffff;
 	let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
-	block.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
-	block.aux_data.aux_header.merkle_root = block.aux_data.coinbase_tx.dhash();
-	block.aux_data.aux_header.nbits = block.header.bits;
+	block.header.btc_pow.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+	block.header.btc_pow.aux_header.merkle_root = block.header.btc_pow.coinbase_tx.dhash();
+	block.header.btc_pow.aux_header.nbits = block.header.bits;
 }
 
 #[test]
@@ -384,7 +384,8 @@ fn mine_reorg() {
 		let fork_head = chain
 			.get_header_by_height(NUM_BLOCKS_MAIN - REORG_DEPTH)
 			.unwrap();
-		let b = prepare_block(&kc, &fork_head, &chain, reorg_difficulty);
+		//add 10 because reorg_difficulty is always 1 and would cause Duplicate Commitment ERROR
+		let b = prepare_block(&kc, &fork_head, &chain, reorg_difficulty + 10);
 		//let reorg_head = b.header.clone();
 		chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 
@@ -746,11 +747,7 @@ fn output_header_mappings() {
 			)
 			.unwrap();
 			b.header.pow.proof.edge_bits = edge_bits;
-
-			let coin_base_str = core::core::get_grin_magic_data_str(b.header.hash());
-			b.aux_data.coinbase_tx = util::from_hex(coin_base_str).unwrap();
-			b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
-			b.aux_data.aux_header.nbits = b.header.bits;
+			get_block_bit_diff(&mut b);
 
 			chain.process_block(b, chain::Options::MINE).unwrap();
 

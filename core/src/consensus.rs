@@ -148,7 +148,7 @@ pub const BLOCK_KERNEL_WEIGHT: usize = 3;
 /// `(1 * 2) + (21 * 2) + (3 * 1) = 47` (weight per tx)
 /// `40_000 / 47 = 851` (txs per block)
 ///
-pub const MAX_BLOCK_WEIGHT: usize = 400_000;
+pub const MAX_BLOCK_WEIGHT: usize = 100_000;
 
 /// Fork every 6 months.
 pub const HARD_FORK_INTERVAL: u64 = YEAR_HEIGHT;

@@ -47,16 +47,16 @@ pub struct BlockContext<'a> {
 	pub verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 }
 
-fn validate_block_auxdata(b: &Block, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
+fn validate_block_auxdata(bheader: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
 	//prevent dos attack
-	if b.header.bits > global::min_bit_diff() {
+	if bheader.bits > global::min_bit_diff() {
 		return Err(ErrorKind::BitDifficultyTooLow.into());
 	}
 
 	//1,btc_header difficulty is bigger enough
-	let btc_header_hash = b.aux_data.aux_header.dhash();
+	let btc_header_hash = bheader.btc_pow.aux_header.dhash();
 	let cur_diff = hash_to_biguint(btc_header_hash);
-	let target_diff_option = compact_to_biguint(b.header.bits);
+	let target_diff_option = compact_to_biguint(bheader.bits);
 	if target_diff_option.is_none() {
 		return Err(ErrorKind::BitDifficultyTooLow.into());
 	}
@@ -67,24 +67,24 @@ fn validate_block_auxdata(b: &Block, ctx: &mut BlockContext<'_>) -> Result<(), E
 	}
 
 	//2,grin_header_hash is in btc_coinbase
-	let coinbase_str = util::to_hex(b.aux_data.coinbase_tx.clone());
-	let target_str = get_grin_magic_data_str(b.header.hash());
+	let coinbase_str = util::to_hex(bheader.btc_pow.coinbase_tx.clone());
+	let target_str = get_grin_magic_data_str(bheader.hash());
 	if !coinbase_str.contains(target_str.as_str()) {
 		return Err(ErrorKind::InvalidCoinbase.into());
 	}
 
 	// 3,btc_merkle_branch is valid
-	let hash_vec = b.aux_data.merkle_branch.clone();
-	let mut hash_value = b.aux_data.coinbase_tx.clone().dhash();
+	let hash_vec = bheader.btc_pow.merkle_branch.clone();
+	let mut hash_value = bheader.btc_pow.coinbase_tx.clone().dhash();
 	for hashitem in hash_vec {
 		hash_value = hash_value.dhash_with(hashitem);
 	}
-	if !(hash_value == b.aux_data.aux_header.merkle_root) {
+	if !(hash_value == bheader.btc_pow.aux_header.merkle_root) {
 		return Err(ErrorKind::InvalidMerklebranch.into());
 	}
 
 	// 4, diff context validate
-	let pre_header = prev_header_store(&b.header, &mut ctx.batch)?;
+	let pre_header = prev_header_store(bheader, &mut ctx.batch)?;
 	let nbits = if (pre_header.height + 1) % consensus::DIFFICULTY_ADJUST_WINDOW != 0 {
 		pre_header.bits
 	} else {
@@ -106,7 +106,7 @@ fn validate_block_auxdata(b: &Block, ctx: &mut BlockContext<'_>) -> Result<(), E
 		)
 	};
 
-	if nbits != b.header.bits {
+	if nbits != bheader.bits {
 		return Err(ErrorKind::BadBitDiffbits.into());
 	}
 
@@ -174,7 +174,13 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	}
 
 	//Validate bitcoin header's diff is enough first
-	validate_block_auxdata(b, ctx)?;
+	if b.header.height >= global::refactor_header_height() {
+		validate_block_auxdata(&b.header, ctx)?;
+	} else {
+		let mut header = b.header.clone();
+		header.btc_pow = b.aux_data.clone();
+		validate_block_auxdata(&header, ctx)?;
+	}
 
 	// Process the header for the block.
 	// Note: We still want to process the full block if we have seen this header before
@@ -408,37 +414,41 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 	// check the pow hash shows a difficulty at least as large
 	// as the target difficulty
 	if !ctx.opts.contains(Options::SKIP_POW) {
-		if header.total_difficulty() <= prev.total_difficulty() {
-			return Err(ErrorKind::DifficultyTooLow.into());
-		}
+		if header.height >= global::refactor_header_height() {
+			validate_block_auxdata(header, ctx)?;
+		} else {
+			if header.total_difficulty() <= prev.total_difficulty() {
+				return Err(ErrorKind::DifficultyTooLow.into());
+			}
 
-		let target_difficulty = header.total_difficulty() - prev.total_difficulty();
+			let target_difficulty = header.total_difficulty() - prev.total_difficulty();
 
-		if header.pow.to_difficulty(header.height) < target_difficulty {
-			return Err(ErrorKind::DifficultyTooLow.into());
-		}
+			if header.pow.to_difficulty(header.height) < target_difficulty {
+				return Err(ErrorKind::DifficultyTooLow.into());
+			}
 
-		// explicit check to ensure total_difficulty has increased by exactly
-		// the _network_ difficulty of the previous block
-		// (during testnet1 we use _block_ difficulty here)
-		let child_batch = ctx.batch.child()?;
-		let diff_iter = store::DifficultyIter::from_batch(prev.hash(), child_batch);
-		let next_header_info = consensus::next_difficulty(header.height, diff_iter);
-		if target_difficulty != next_header_info.difficulty {
-			info!(
-				"validate_header: header target difficulty {} != {}",
-				target_difficulty.to_num(),
-				next_header_info.difficulty.to_num()
-			);
-			return Err(ErrorKind::WrongTotalDifficulty.into());
-		}
-		// check the secondary PoW scaling factor if applicable
-		if header.pow.secondary_scaling != next_header_info.secondary_scaling {
-			info!(
-				"validate_header: header secondary scaling {} != {}",
-				header.pow.secondary_scaling, next_header_info.secondary_scaling
-			);
-			return Err(ErrorKind::InvalidScaling.into());
+			// explicit check to ensure total_difficulty has increased by exactly
+			// the _network_ difficulty of the previous block
+			// (during testnet1 we use _block_ difficulty here)
+			let child_batch = ctx.batch.child()?;
+			let diff_iter = store::DifficultyIter::from_batch(prev.hash(), child_batch);
+			let next_header_info = consensus::next_difficulty(header.height, diff_iter);
+			if target_difficulty != next_header_info.difficulty {
+				info!(
+					"validate_header: header target difficulty {} != {}",
+					target_difficulty.to_num(),
+					next_header_info.difficulty.to_num()
+				);
+				return Err(ErrorKind::WrongTotalDifficulty.into());
+			}
+			// check the secondary PoW scaling factor if applicable
+			if header.pow.secondary_scaling != next_header_info.secondary_scaling {
+				info!(
+					"validate_header: header secondary scaling {} != {}",
+					header.pow.secondary_scaling, next_header_info.secondary_scaling
+				);
+				return Err(ErrorKind::InvalidScaling.into());
+			}
 		}
 	}
 
