@@ -250,7 +250,7 @@ impl SyncRunner {
 				is_syncing = false;
 			}
 		} else {
-			// sum the last 5 difficulties to give us the threshold
+			// sum the last 1 difficulties to give us the threshold
 			let threshold = {
 				let diff_iter = match self.chain.difficulty_iter() {
 					Ok(v) => v,
@@ -262,7 +262,7 @@ impl SyncRunner {
 				};
 				diff_iter
 					.map(|x| x.difficulty)
-					.take(5)
+					.take(1)
 					.fold(Difficulty::zero(), |sum, val| sum + val)
 			};
 
