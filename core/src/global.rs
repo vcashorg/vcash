@@ -18,12 +18,10 @@
 
 use crate::consensus::{
 	HeaderInfo, BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT,
-	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD, WEEK_HEIGHT,
+	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
 };
 use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
 use util::RwLock;
-
-use crate::consensus::YEAR_HEIGHT;
 
 /// An enum collecting sets of parameters used throughout the
 /// code wherever mining is needed. This should allow for
@@ -99,13 +97,13 @@ const HALVINGINTERVAL: u64 = 210000;
 const AUTOTEST_HALVINGINTERVAL: u64 = DAY_HEIGHT;
 
 /// Support issue token tx height
-const SUPPORT_TOKEN_HEIGHT: u64 = YEAR_HEIGHT;
+const SUPPORT_TOKEN_HEIGHT: u64 = 45_120;
 
 /// Testing support issue token tx height
 const FLOONET_SUPPORT_TOKEN_HEIGHT: u64 = 160;
 
 /// Support header without Cuckoo Cycle Proof
-const REFACTOR_HEADER_HEIGHT: u64 = (YEAR_HEIGHT + WEEK_HEIGHT);
+const REFACTOR_HEADER_HEIGHT: u64 = (45_120 + 720);
 
 /// Testing support header without Cuckoo Cycle Proof
 const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
