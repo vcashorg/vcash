@@ -40,7 +40,7 @@ use std::collections::{HashMap, HashSet};
 use util::secp::constants::MAX_PROOF_SIZE;
 
 /// TokenKey can uniquely identify a token
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TokenKey(hash::Hash);
 
 impl TokenKey {
@@ -94,6 +94,41 @@ impl AsRef<[u8]> for TokenKey {
 impl fmt::Display for TokenKey {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		fmt::Debug::fmt(self, f)
+	}
+}
+
+impl serde::ser::Serialize for TokenKey {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: serde::ser::Serializer,
+	{
+		serializer.serialize_str(&self.to_hex())
+	}
+}
+
+impl<'de> serde::de::Deserialize<'de> for TokenKey {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: serde::de::Deserializer<'de>,
+	{
+		deserializer.deserialize_str(TokenKeyVisitor)
+	}
+}
+
+struct TokenKeyVisitor;
+
+impl<'de> serde::de::Visitor<'de> for TokenKeyVisitor {
+	type Value = TokenKey;
+
+	fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+		formatter.write_str("a token type")
+	}
+
+	fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+	where
+		E: serde::de::Error,
+	{
+		Ok(TokenKey::from_hex(v).map_err(serde::de::Error::custom)?)
 	}
 }
 

@@ -63,7 +63,7 @@ macro_rules! try_break {
 			| Err(Error::Internal)
 			| Err(Error::NoDandelionRelay) => None,
 			Err(ref e) => {
-				error!("try_break: exit the loop: {:?}", e);
+				warn!("try_break: exit the loop: {:?}", e);
 				break;
 				}
 			}
