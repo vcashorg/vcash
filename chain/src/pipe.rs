@@ -124,17 +124,22 @@ fn check_known(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), E
 // Validate only the proof of work in a block header.
 // Used to cheaply validate orphans in process_block before adding them to OrphanBlockPool.
 fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
-	if !header.pow.is_primary() && !header.pow.is_secondary() {
-		return Err(ErrorKind::LowEdgebits.into());
+	if header.height >= global::refactor_header_height() {
+		validate_block_auxdata(header, ctx)?;
+	} else {
+		if !header.pow.is_primary() && !header.pow.is_secondary() {
+			return Err(ErrorKind::LowEdgebits.into());
+		}
+		let edge_bits = header.pow.edge_bits();
+		if !(ctx.pow_verifier)(header).is_ok() {
+			error!(
+				"pipe: error validating header with cuckoo edge_bits {}",
+				edge_bits
+			);
+			return Err(ErrorKind::InvalidPow.into());
+		}
 	}
-	let edge_bits = header.pow.edge_bits();
-	if !(ctx.pow_verifier)(header).is_ok() {
-		error!(
-			"pipe: error validating header with cuckoo edge_bits {}",
-			edge_bits
-		);
-		return Err(ErrorKind::InvalidPow.into());
-	}
+
 	Ok(())
 }
 
