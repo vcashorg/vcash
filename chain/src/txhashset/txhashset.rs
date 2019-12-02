@@ -1209,9 +1209,8 @@ impl<'a> Committed for Extension<'a> {
 		for n in 1..self.token_kernel_pmmr.unpruned_size() + 1 {
 			if pmmr::is_leaf(n) {
 				if let Some(kernel) = self.token_kernel_pmmr.get_data(n) {
+					let commit_vec = token_kernels_map.entry(kernel.token_type).or_insert(vec![]);
 					if kernel.is_plain_token() {
-						let commit_vec =
-							token_kernels_map.entry(kernel.token_type).or_insert(vec![]);
 						commit_vec.push(kernel.excess());
 					}
 				}

@@ -323,6 +323,7 @@ pub fn cut_through_horizon() -> u32 {
 	match *param_ref {
 		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_CUT_THROUGH_HORIZON,
 		ChainTypes::UserTesting => USER_TESTING_CUT_THROUGH_HORIZON,
+		ChainTypes::Floonet => USER_TESTING_CUT_THROUGH_HORIZON,
 		_ => CUT_THROUGH_HORIZON,
 	}
 }
@@ -333,6 +334,7 @@ pub fn state_sync_threshold() -> u32 {
 	match *param_ref {
 		ChainTypes::AutomatedTesting => TESTING_STATE_SYNC_THRESHOLD,
 		ChainTypes::UserTesting => TESTING_STATE_SYNC_THRESHOLD,
+		ChainTypes::Floonet => TESTING_STATE_SYNC_THRESHOLD,
 		_ => STATE_SYNC_THRESHOLD,
 	}
 }
@@ -343,6 +345,7 @@ pub fn txhashset_archive_interval() -> u64 {
 	match *param_ref {
 		ChainTypes::AutomatedTesting => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
 		ChainTypes::UserTesting => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
+		ChainTypes::Floonet => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
 		_ => TXHASHSET_ARCHIVE_INTERVAL,
 	}
 }

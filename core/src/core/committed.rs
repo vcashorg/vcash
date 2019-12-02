@@ -188,10 +188,20 @@ pub trait Committed {
 			match token_output_commit_map.get(&input_token_key) {
 				Some(output_commit) => match token_kernel_commit_map.get(input_token_key) {
 					Some(kernel_commit) => {
-						let commit_sum =
-							sum_commits(vec![output_commit.clone()], vec![input_commit.clone()])?;
-						if commit_sum != *kernel_commit {
-							return Err(Error::TokenSumMismatch);
+						let zero_commit = secp_static::commit_to_zero_value();
+						// means token has no tx yet.
+						if *kernel_commit == zero_commit {
+							if *output_commit != *input_commit {
+								return Err(Error::TokenSumMismatch);
+							}
+						} else {
+							let commit_sum = sum_commits(
+								vec![output_commit.clone()],
+								vec![input_commit.clone()],
+							)?;
+							if commit_sum != *kernel_commit {
+								return Err(Error::TokenSumMismatch);
+							}
 						}
 					}
 					None => {
@@ -219,6 +229,9 @@ pub fn sum_commits(
 	let zero_commit = secp_static::commit_to_zero_value();
 	positive.retain(|x| *x != zero_commit);
 	negative.retain(|x| *x != zero_commit);
+	if positive.len() == 0 && negative.len() == 0 {
+		return Ok(zero_commit);
+	}
 	let secp = static_secp_instance();
 	let secp = secp.lock();
 	Ok(secp.commit_sum(positive, negative)?)
