@@ -588,6 +588,70 @@ impl TxHashSet {
 		Ok(())
 	}
 
+	/// Rebuild the index of block height & MMR positions to the corresponding token UTXOs.
+	/// This is a costly operation performed only when we receive a full new chain state.
+	/// Note: only called by compact.
+	pub fn rebuild_token_height_pos_index(
+		&self,
+		header_pmmr: &PMMRHandle<BlockHeader>,
+		batch: &mut Batch<'_>,
+	) -> Result<(), Error> {
+		let now = Instant::now();
+
+		let output_pmmr = ReadonlyPMMR::at(
+			&self.token_output_pmmr_h.backend,
+			self.token_output_pmmr_h.last_pos,
+		);
+
+		// clear it before rebuilding
+		batch.clear_token_output_pos_height()?;
+
+		let mut outputs_pos: Vec<(Commitment, u64)> = vec![];
+		for pos in output_pmmr.leaf_pos_iter() {
+			if let Some(out) = output_pmmr.get_data(pos) {
+				outputs_pos.push((out.commit, pos));
+			}
+		}
+		let total_outputs = outputs_pos.len();
+		if total_outputs == 0 {
+			debug!("rebuild_token_height_pos_index: nothing to be rebuilt");
+			return Ok(());
+		} else {
+			debug!(
+				"rebuild_token_height_pos_index: rebuilding {} token outputs position & height...",
+				total_outputs
+			);
+		}
+
+		let max_height = batch.head()?.height;
+
+		let mut i = 0;
+		for search_height in 0..max_height {
+			let hash = header_pmmr.get_header_hash_by_height(search_height + 1)?;
+			let h = batch.get_block_header(&hash)?;
+			while i < total_outputs {
+				let (commit, pos) = outputs_pos[i];
+				if pos > h.token_output_mmr_size {
+					// Note: MMR position is 1-based and not 0-based, so here must be '>' instead of '>='
+					break;
+				}
+				batch.save_token_output_pos_height(&commit, pos, h.height)?;
+				trace!(
+					"rebuild_token_height_pos_index: {:?}",
+					(commit, pos, h.height)
+				);
+				i += 1;
+			}
+		}
+
+		debug!(
+			"rebuild_token_height_pos_index: {} UTXOs, took {}s",
+			total_outputs,
+			now.elapsed().as_secs(),
+		);
+		Ok(())
+	}
+
 	/// returns outputs from the given insertion (leaf) index up to the
 	/// specified limit. Also returns the last index actually populated
 	pub fn token_outputs_by_pmmr_index(

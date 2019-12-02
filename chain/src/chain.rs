@@ -271,6 +271,7 @@ impl Chain {
 		let txhashset = self.txhashset.write();
 		let header_pmmr = self.header_pmmr.write();
 		txhashset.rebuild_height_pos_index(&header_pmmr, &mut batch)?;
+		txhashset.rebuild_token_height_pos_index(&header_pmmr, &mut batch)?;
 		batch.commit()?;
 
 		Ok(())
@@ -1058,6 +1059,7 @@ impl Chain {
 
 		// Rebuild our output_pos index in the db based on current UTXO set.
 		txhashset.rebuild_height_pos_index(&header_pmmr, &mut batch)?;
+		txhashset.rebuild_token_height_pos_index(&header_pmmr, &mut batch)?;
 
 		// Commit all the changes to the db.
 		batch.commit()?;
@@ -1195,6 +1197,7 @@ impl Chain {
 
 		// Rebuild our output_pos index in the db based on current UTXO set.
 		txhashset.rebuild_height_pos_index(&header_pmmr, &mut batch)?;
+		txhashset.rebuild_token_height_pos_index(&header_pmmr, &mut batch)?;
 
 		// If we are not in archival mode remove historical blocks from the db.
 		if !self.archive_mode {
