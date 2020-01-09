@@ -96,7 +96,7 @@ For help on vcash commands and their switches, try:
 
 ```sh
 vcash help
-vcash wallet --help
+vcash server --help
 vcash client --help
 ```
 

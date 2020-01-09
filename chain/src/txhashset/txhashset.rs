@@ -26,8 +26,9 @@ use crate::core::core::{
 use crate::core::ser::{PMMRIndexHashable, PMMRable, ProtocolVersion};
 use crate::error::{Error, ErrorKind};
 use crate::store::{Batch, ChainStore};
+use crate::txhashset::bitmap_accumulator::BitmapAccumulator;
 use crate::txhashset::{RewindableKernelView, UTXOView};
-use crate::types::{OutputMMRPosition, Tip, TxHashSetRoots, TxHashsetWriteStatus};
+use crate::types::{OutputMMRPosition, OutputRoots, Tip, TxHashSetRoots, TxHashsetWriteStatus};
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::{file, secp_static, zip};
 use croaring::Bitmap;
@@ -130,6 +131,8 @@ pub struct TxHashSet {
 	token_issue_proof_pmmr_h: PMMRHandle<TokenIssueProof>,
 	token_kernel_pmmr_h: PMMRHandle<TokenTxKernel>,
 
+	bitmap_accumulator: BitmapAccumulator,
+
 	// chain store used as index of commitments to MMR positions
 	commit_index: Arc<ChainStore>,
 }
@@ -197,6 +200,9 @@ impl TxHashSet {
 			None,
 		)?;
 
+		// Initialize the bitmap accumulator from the current output PMMR.
+		let bitmap_accumulator = TxHashSet::bitmap_accumulator(&output_pmmr_h)?;
+
 		let mut maybe_kernel_handle: Option<PMMRHandle<TxKernel>> = None;
 		let versions = vec![ProtocolVersion(2), ProtocolVersion(1)];
 		for version in versions {
@@ -248,11 +254,21 @@ impl TxHashSet {
 				token_rproof_pmmr_h,
 				token_issue_proof_pmmr_h,
 				token_kernel_pmmr_h,
+				bitmap_accumulator,
 				commit_index,
 			})
 		} else {
 			Err(ErrorKind::TxHashSetErr(format!("failed to open kernel PMMR")).into())
 		}
+	}
+
+	// Build a new bitmap accumulator for the provided output PMMR.
+	fn bitmap_accumulator(pmmr_h: &PMMRHandle<Output>) -> Result<BitmapAccumulator, Error> {
+		let pmmr = ReadonlyPMMR::at(&pmmr_h.backend, pmmr_h.last_pos);
+		let size = pmmr::n_leaves(pmmr_h.last_pos);
+		let mut bitmap_accumulator = BitmapAccumulator::new();
+		bitmap_accumulator.init(&mut pmmr.leaf_idx_iter(0), size)?;
+		Ok(bitmap_accumulator)
 	}
 
 	/// Close all backend file handles
@@ -468,7 +484,10 @@ impl TxHashSet {
 		);
 
 		TxHashSetRoots {
-			output_root: output_pmmr.root(),
+			output_roots: OutputRoots {
+				pmmr_root: output_pmmr.root(),
+				bitmap_root: self.bitmap_accumulator.root(),
+			},
 			rproof_root: rproof_pmmr.root(),
 			kernel_root: kernel_pmmr.root(),
 			token_output_root: token_output_pmmr.root(),
@@ -783,6 +802,14 @@ where
 			&trees.token_issue_proof_pmmr_h.backend,
 			trees.token_issue_proof_pmmr_h.last_pos,
 		);
+		let rproof_pmmr =
+			ReadonlyPMMR::at(&trees.rproof_pmmr_h.backend, trees.rproof_pmmr_h.last_pos);
+
+		let token_rproof_pmmr = ReadonlyPMMR::at(
+			&trees.token_rproof_pmmr_h.backend,
+			trees.token_rproof_pmmr_h.last_pos,
+		);
+
 		// Create a new batch here to pass into the utxo_view.
 		// Discard it (rollback) after we finish with the utxo_view.
 		let batch = trees.commit_index.batch()?;
@@ -791,6 +818,8 @@ where
 			token_output_pmmr,
 			token_issue_proof_pmmr,
 			header_pmmr,
+			rproof_pmmr,
+			token_rproof_pmmr,
 			&batch,
 		);
 		res = inner(&utxo);
@@ -846,6 +875,7 @@ where
 	let sizes: (u64, u64, u64, u64, u64, u64, u64);
 	let res: Result<T, Error>;
 	let rollback: bool;
+	let bitmap_accumulator: BitmapAccumulator;
 
 	let head = batch.head()?;
 
@@ -873,6 +903,7 @@ where
 
 		rollback = extension_pair.extension.rollback;
 		sizes = extension_pair.extension.sizes();
+		bitmap_accumulator = extension_pair.extension.bitmap_accumulator.clone();
 	}
 
 	// During an extension we do not want to modify the header_extension (and only read from it).
@@ -921,6 +952,9 @@ where
 				trees.token_rproof_pmmr_h.last_pos = sizes.4;
 				trees.token_issue_proof_pmmr_h.last_pos = sizes.5;
 				trees.token_kernel_pmmr_h.last_pos = sizes.6;
+
+				// Update our bitmap_accumulator based on our extension
+				trees.bitmap_accumulator = bitmap_accumulator;
 			}
 
 			trace!("TxHashSet extension done.");
@@ -1142,6 +1176,8 @@ pub struct Extension<'a> {
 	token_issue_proof_pmmr: PMMR<'a, TokenIssueProof, PMMRBackend<TokenIssueProof>>,
 	token_kernel_pmmr: PMMR<'a, TokenTxKernel, PMMRBackend<TokenTxKernel>>,
 
+	bitmap_accumulator: BitmapAccumulator,
+
 	/// Rollback flag.
 	rollback: bool,
 
@@ -1253,6 +1289,7 @@ impl<'a> Extension<'a> {
 				&mut trees.token_kernel_pmmr_h.backend,
 				trees.token_kernel_pmmr_h.last_pos,
 			),
+			bitmap_accumulator: trees.bitmap_accumulator.clone(),
 			rollback: false,
 			batch,
 		}
@@ -1271,21 +1308,26 @@ impl<'a> Extension<'a> {
 			self.token_output_pmmr.readonly_pmmr(),
 			self.token_issue_proof_pmmr.readonly_pmmr(),
 			header_ext.pmmr.readonly_pmmr(),
+			self.rproof_pmmr.readonly_pmmr(),
+			self.token_rproof_pmmr.readonly_pmmr(),
 			self.batch,
 		)
 	}
 
 	/// Apply a new block to the current txhashet extension (output, rangeproof, kernel MMRs).
 	pub fn apply_block(&mut self, b: &Block) -> Result<(), Error> {
+		let mut affected_pos = vec![];
+
 		for out in b.outputs() {
 			let pos = self.apply_output(out)?;
-			// Update the (output_pos,height) index for the new output.
+			affected_pos.push(pos);
 			self.batch
 				.save_output_pos_height(&out.commitment(), pos, b.header.height)?;
 		}
 
 		for input in b.inputs() {
-			self.apply_input(input)?;
+			let pos = self.apply_input(input)?;
+			affected_pos.push(pos);
 		}
 
 		for out in b.token_outputs() {
@@ -1313,13 +1355,35 @@ impl<'a> Extension<'a> {
 			self.apply_token_kernel(token_kernel)?;
 		}
 
+		// Update our BitmapAccumulator based on affected outputs (both spent and created).
+		self.apply_to_bitmap_accumulator(&affected_pos)?;
+
 		// Update the head of the extension to reflect the block we just applied.
 		self.head = Tip::from_header(&b.header);
 
 		Ok(())
 	}
 
-	fn apply_input(&mut self, input: &Input) -> Result<(), Error> {
+	fn apply_to_bitmap_accumulator(&mut self, output_pos: &[u64]) -> Result<(), Error> {
+		// if self.output_pmmr.is_empty() || output_pos.is_empty() {
+		// 	return Ok(());
+		// }
+		let mut output_idx: Vec<_> = output_pos
+			.iter()
+			.map(|x| pmmr::n_leaves(*x).saturating_sub(1))
+			.collect();
+		output_idx.sort_unstable();
+		let min_idx = output_idx.first().cloned().unwrap_or(0);
+		let size = pmmr::n_leaves(self.output_pmmr.last_pos);
+		self.bitmap_accumulator.apply(
+			output_idx,
+			self.output_pmmr
+				.leaf_idx_iter(BitmapAccumulator::chunk_start_idx(min_idx)),
+			size,
+		)
+	}
+
+	fn apply_input(&mut self, input: &Input) -> Result<u64, Error> {
 		let commit = input.commitment();
 		let pos_res = self.batch.get_output_pos(&commit);
 		if let Ok(pos) = pos_res {
@@ -1340,14 +1404,14 @@ impl<'a> Extension<'a> {
 					self.rproof_pmmr
 						.prune(pos)
 						.map_err(|e| ErrorKind::TxHashSetErr(e))?;
+					Ok(pos)
 				}
-				Ok(false) => return Err(ErrorKind::AlreadySpent(commit).into()),
-				Err(e) => return Err(ErrorKind::TxHashSetErr(e).into()),
+				Ok(false) => Err(ErrorKind::AlreadySpent(commit).into()),
+				Err(e) => Err(ErrorKind::TxHashSetErr(e).into()),
 			}
 		} else {
-			return Err(ErrorKind::AlreadySpent(commit).into());
+			Err(ErrorKind::AlreadySpent(commit).into())
 		}
-		Ok(())
 	}
 
 	fn apply_output(&mut self, out: &Output) -> Result<(u64), Error> {
@@ -1630,6 +1694,13 @@ impl<'a> Extension<'a> {
 		self.token_kernel_pmmr
 			.rewind(token_kernel_pos, &Bitmap::create())
 			.map_err(&ErrorKind::TxHashSetErr)?;
+
+		// Update our BitmapAccumulator based on affected outputs.
+		// We want to "unspend" every rewound spent output.
+		// Treat output_pos as an affected output to ensure we rebuild far enough back.
+		let mut affected_pos: Vec<_> = rewind_rm_pos.iter().map(|x| x as u64).collect();
+		affected_pos.push(output_pos);
+		self.apply_to_bitmap_accumulator(&affected_pos)?;
 		Ok(())
 	}
 
@@ -1637,10 +1708,13 @@ impl<'a> Extension<'a> {
 	/// and kernel sum trees.
 	pub fn roots(&self) -> Result<TxHashSetRoots, Error> {
 		Ok(TxHashSetRoots {
-			output_root: self
-				.output_pmmr
-				.root()
-				.map_err(|_| ErrorKind::InvalidRoot)?,
+			output_roots: OutputRoots {
+				pmmr_root: self
+					.output_pmmr
+					.root()
+					.map_err(|_| ErrorKind::InvalidRoot)?,
+				bitmap_root: self.bitmap_accumulator.root(),
+			},
 			rproof_root: self
 				.rproof_pmmr
 				.root()
@@ -1674,20 +1748,7 @@ impl<'a> Extension<'a> {
 			return Ok(());
 		}
 		let head_header = self.batch.get_block_header(&self.head.hash())?;
-		let header_roots = TxHashSetRoots {
-			output_root: head_header.output_root,
-			rproof_root: head_header.range_proof_root,
-			kernel_root: head_header.kernel_root,
-			token_output_root: head_header.token_output_root,
-			token_rproof_root: head_header.token_range_proof_root,
-			token_issue_proof_root: head_header.token_issue_proof_root,
-			token_kernel_root: head_header.token_kernel_root,
-		};
-		if header_roots != self.roots()? {
-			Err(ErrorKind::InvalidRoot.into())
-		} else {
-			Ok(())
-		}
+		self.roots()?.validate(&head_header)
 	}
 
 	/// Validate the header, output and kernel MMR sizes against the block header.
@@ -2086,6 +2147,12 @@ pub fn zip_read(root_dir: String, header: &BlockHeader) -> Result<File, Error> {
 	// if file exist, just re-use it
 	let zip_file = File::open(zip_path.clone());
 	if let Ok(zip) = zip_file {
+		debug!(
+			"zip_read: {} at {}: reusing existing zip file: {:?}",
+			header.hash(),
+			header.height,
+			zip_path
+		);
 		return Ok(zip);
 	} else {
 		// clean up old zips.
@@ -2125,6 +2192,13 @@ pub fn zip_read(root_dir: String, header: &BlockHeader) -> Result<File, Error> {
 
 		temp_txhashset_path
 	};
+
+	debug!(
+		"zip_read: {} at {}: created zip file: {:?}",
+		header.hash(),
+		header.height,
+		zip_path
+	);
 
 	// open it again to read it back
 	let zip_file = File::open(zip_path.clone())?;

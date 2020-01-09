@@ -25,7 +25,7 @@ For Pool who wants to mine Vcash, see the [mergedmining docs](doc/pool_merge_min
 
 ## Credits
 
-Tom Elvis Jedusor for the first formulation of MimbleWimble.
+Tom Elvis Jedusor for the first formulation of Mimblewimble.
 
 Andrew Poelstra for his related work and improvements.
 

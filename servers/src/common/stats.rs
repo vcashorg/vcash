@@ -63,7 +63,7 @@ pub struct ServerStats {
 	/// Difficulty calculation statistics
 	pub diff_stats: DiffStats,
 	/// Transaction pool statistics
-	pub tx_stats: TxStats,
+	pub tx_stats: Option<TxStats>,
 	/// Disk usage in GB
 	pub disk_usage_gb: String,
 }
@@ -191,6 +191,24 @@ pub struct PeerStats {
 	pub sent_bytes_per_sec: u64,
 	/// Number of bytes we've received from the peer.
 	pub received_bytes_per_sec: u64,
+}
+
+impl PartialEq for PeerStats {
+	fn eq(&self, other: &PeerStats) -> bool {
+		*self.addr == other.addr
+	}
+}
+
+impl PartialEq for WorkerStats {
+	fn eq(&self, other: &WorkerStats) -> bool {
+		*self.id == other.id
+	}
+}
+
+impl PartialEq for DiffBlock {
+	fn eq(&self, other: &DiffBlock) -> bool {
+		self.block_height == other.block_height
+	}
 }
 
 impl StratumStats {

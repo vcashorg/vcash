@@ -38,16 +38,24 @@ use std::{
 	thread::{self, JoinHandle},
 };
 
-const IO_TIMEOUT: Duration = Duration::from_millis(10000);
+pub const SEND_CHANNEL_CAP: usize = 100;
+
+const HEADER_IO_TIMEOUT: Duration = Duration::from_millis(2000);
+const CHANNEL_TIMEOUT: Duration = Duration::from_millis(1000);
+const BODY_IO_TIMEOUT: Duration = Duration::from_millis(60000);
 
 /// A trait to be implemented in order to receive messages from the
 /// connection. Allows providing an optional response.
 pub trait MessageHandler: Send + 'static {
-	fn consume<'a>(&self, msg: Message<'a>, tracker: Arc<Tracker>) -> Result<Option<Msg>, Error>;
+	fn consume<'a>(
+		&self,
+		msg: Message<'a>,
+		stopped: Arc<AtomicBool>,
+		tracker: Arc<Tracker>,
+	) -> Result<Option<Msg>, Error>;
 }
 
-// Macro to simplify the boilerplate around async I/O error handling,
-// especially with WouldBlock kind of errors.
+// Macro to simplify the boilerplate around I/O and Grin error handling
 macro_rules! try_break {
 	($inner:expr) => {
 		match $inner {
@@ -68,6 +76,15 @@ macro_rules! try_break {
 				}
 			}
 	};
+}
+
+macro_rules! try_header {
+	($res:expr, $conn: expr) => {{
+		$conn
+			.set_read_timeout(Some(HEADER_IO_TIMEOUT))
+			.expect("set timeout");
+		try_break!($res)
+		}};
 }
 
 /// A message as received by the connection. Provides access to the message
@@ -115,8 +132,6 @@ impl<'a> Message<'a> {
 	}
 }
 
-pub const SEND_CHANNEL_CAP: usize = 100;
-
 pub struct StopHandle {
 	/// Channel to close the connection
 	stopped: Arc<AtomicBool>,
@@ -163,9 +178,24 @@ pub struct ConnHandle {
 }
 
 impl ConnHandle {
+	/// Send msg via the synchronous, bounded channel (sync_sender).
+	/// Two possible failure cases -
+	/// * Disconnected: Propagate this up to the caller so the peer connection can be closed.
+	/// * Full: Our internal msg buffer is full. This is not a problem with the peer connection
+	/// and we do not want to close the connection. We drop the msg rather than blocking here.
+	/// If the buffer is full because there is an underlying issue with the peer
+	/// and potentially the peer connection. We assume this will be handled at the peer level.
 	pub fn send(&self, msg: Msg) -> Result<(), Error> {
-		self.send_channel.try_send(msg)?;
-		Ok(())
+		match self.send_channel.try_send(msg) {
+			Ok(()) => Ok(()),
+			Err(mpsc::TrySendError::Disconnected(_)) => {
+				Err(Error::Send("try_send disconnected".to_owned()))
+			}
+			Err(mpsc::TrySendError::Full(_)) => {
+				debug!("conn_handle: try_send but buffer is full, dropping msg");
+				Ok(())
+			}
+		}
 	}
 }
 
@@ -216,13 +246,6 @@ where
 	H: MessageHandler,
 {
 	let (send_tx, send_rx) = mpsc::sync_channel(SEND_CHANNEL_CAP);
-
-	stream
-		.set_read_timeout(Some(IO_TIMEOUT))
-		.expect("can't set read timeout");
-	stream
-		.set_write_timeout(Some(IO_TIMEOUT))
-		.expect("can't set read timeout");
 
 	let stopped = Arc::new(AtomicBool::new(false));
 
@@ -275,8 +298,11 @@ where
 		.spawn(move || {
 			loop {
 				// check the read end
-				match try_break!(read_header(&mut reader, version)) {
+				match try_header!(read_header(&mut reader, version), &mut reader) {
 					Some(MsgHeaderWrapper::Known(header)) => {
+						reader
+							.set_read_timeout(Some(BODY_IO_TIMEOUT))
+							.expect("set timeout");
 						let msg = Message::from_header(header, &mut reader, version);
 
 						trace!(
@@ -288,12 +314,20 @@ where
 						// Increase received bytes counter
 						reader_tracker.inc_received(MsgHeader::LEN as u64 + msg.header.msg_len);
 
-						let resp_msg = try_break!(handler.consume(msg, reader_tracker.clone()));
+						let resp_msg = try_break!(handler.consume(
+							msg,
+							reader_stopped.clone(),
+							reader_tracker.clone()
+						));
 						if let Some(Some(resp_msg)) = resp_msg {
 							try_break!(conn_handle.send(resp_msg));
 						}
 					}
-					Some(MsgHeaderWrapper::Unknown(msg_len)) => {
+					Some(MsgHeaderWrapper::Unknown(msg_len, type_byte)) => {
+						debug!(
+							"Received unknown message header, type {:?}, len {}.",
+							type_byte, msg_len
+						);
 						// Increase received bytes counter
 						reader_tracker.inc_received(MsgHeader::LEN as u64 + msg_len);
 
@@ -322,8 +356,11 @@ where
 		.name("peer_write".to_string())
 		.spawn(move || {
 			let mut retry_send = Err(());
+			writer
+				.set_write_timeout(Some(BODY_IO_TIMEOUT))
+				.expect("set timeout");
 			loop {
-				let maybe_data = retry_send.or_else(|_| send_rx.recv_timeout(IO_TIMEOUT));
+				let maybe_data = retry_send.or_else(|_| send_rx.recv_timeout(CHANNEL_TIMEOUT));
 				retry_send = Err(());
 				if let Ok(data) = maybe_data {
 					let written =

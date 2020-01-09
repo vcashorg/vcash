@@ -33,7 +33,7 @@ use util::secp::Signature;
 /// is small enough to mine it on the fly, so it does not contain its own
 /// proof of work solution. Can also be easily mutated for different tests.
 pub fn genesis_dev() -> core::Block {
-	let genesis_dev_header_version = core::HeaderVersion::new(2);
+	let genesis_dev_header_version = core::HeaderVersion(2);
 	core::Block::with_header(core::BlockHeader {
 		version: genesis_dev_header_version,
 		height: 0,

@@ -104,7 +104,7 @@ pub const PROOFSIZE: usize = 42;
 /// Default Cuckatoo Cycle edge_bits, used for mining and validating.
 pub const DEFAULT_MIN_EDGE_BITS: u8 = 31;
 
-/// Cuckaroo proof-of-work edge_bits, meant to be ASIC resistant.
+/// Cuckaroo* proof-of-work edge_bits, meant to be ASIC resistant.
 pub const SECOND_POW_EDGE_BITS: u8 = 29;
 
 /// Original reference edge_bits to compute difficulty factors for higher
@@ -155,10 +155,10 @@ pub const HARD_FORK_INTERVAL: u64 = YEAR_HEIGHT;
 
 /// Check whether the block version is valid at a given height, implements
 /// 6 months interval scheduled hard forks for the first 2 years.
-pub fn valid_header_version(height: u64, version: HeaderVersion) -> bool {
+pub fn header_version(height: u64) -> HeaderVersion {
 	// uncomment below as we go from hard fork to hard fork
 	if height < global::support_token_height() {
-		version == HeaderVersion::new(1)
+		HeaderVersion(1)
 	/*} else if height < 2 * HARD_FORK_INTERVAL {
 		version == 2
 	} else if height < 3 * HARD_FORK_INTERVAL {
@@ -168,8 +168,14 @@ pub fn valid_header_version(height: u64, version: HeaderVersion) -> bool {
 	} else if height >= 5 * HARD_FORK_INTERVAL {
 		version > 4 */
 	} else {
-		version == HeaderVersion::new(2)
+		HeaderVersion(2)
 	}
+}
+
+/// Check whether the block version is valid at a given height, implements
+/// 6 months interval scheduled hard forks for the first 2 years.
+pub fn valid_header_version(height: u64, version: HeaderVersion) -> bool {
+	return version == header_version(height);
 }
 
 /// Number of blocks used to calculate difficulty adjustments
@@ -189,8 +195,8 @@ pub const DIFFICULTY_DAMP_FACTOR: u64 = 3;
 pub const AR_SCALE_DAMP_FACTOR: u64 = 13;
 
 /// Compute weight of a graph as number of siphash bits defining the graph
-/// Must be made dependent on height to phase out smaller size over the years
-/// This can wait until end of 2019 at latest
+/// Must be made dependent on height to phase out C31 in early 2020
+/// Later phase outs are on hold for now
 pub fn graph_weight(_height: u64, _edge_bits: u8) -> u64 {
 	1
 	//	let mut xpr_edge_bits = edge_bits as u64;

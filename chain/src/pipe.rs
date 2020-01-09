@@ -122,24 +122,26 @@ fn check_known(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), E
 }
 
 // Validate only the proof of work in a block header.
-// Used to cheaply validate orphans in process_block before adding them to OrphanBlockPool.
+// Used to cheaply validate pow before checking if orphan or continuing block validation.
 fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
 	if header.height >= global::refactor_header_height() {
 		validate_block_auxdata(header, ctx)?;
 	} else {
+		if ctx.opts.contains(Options::SKIP_POW) {
+			// Some of our tests require this check to be skipped (we should revisit this).
+			return Ok(());
+		}
 		if !header.pow.is_primary() && !header.pow.is_secondary() {
 			return Err(ErrorKind::LowEdgebits.into());
 		}
-		let edge_bits = header.pow.edge_bits();
 		if !(ctx.pow_verifier)(header).is_ok() {
 			error!(
 				"pipe: error validating header with cuckoo edge_bits {}",
-				edge_bits
+				header.pow.edge_bits(),
 			);
 			return Err(ErrorKind::InvalidPow.into());
 		}
 	}
-
 	Ok(())
 }
 
@@ -162,20 +164,22 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	// Check if we have already processed this block previously.
 	check_known(&b.header, ctx)?;
 
-	let head = ctx.batch.head()?;
+	// Quick pow validation. No point proceeding if this is invalid.
+	// We want to do this before we add the block to the orphan pool so we
+	// want to do this now and not later during header validation.
+	validate_pow_only(&b.header, ctx)?;
 
-	let is_next = b.header.prev_hash == head.last_block_h;
+	let head = ctx.batch.head()?;
+	let prev = prev_header_store(&b.header, &mut ctx.batch)?;
 
 	// Block is an orphan if we do not know about the previous full block.
 	// Skip this check if we have just processed the previous block
 	// or the full txhashset state (fast sync) at the previous block height.
-	let prev = prev_header_store(&b.header, &mut ctx.batch)?;
-	if !is_next && !ctx.batch.block_exists(&prev.hash())? {
-		// Validate the proof of work of the orphan block to prevent adding
-		// invalid blocks to OrphanBlockPool.
-		validate_pow_only(&b.header, ctx)?;
-
-		return Err(ErrorKind::Orphan.into());
+	{
+		let is_next = b.header.prev_hash == head.last_block_h;
+		if !is_next && !ctx.batch.block_exists(&prev.hash())? {
+			return Err(ErrorKind::Orphan.into());
+		}
 	}
 
 	//Validate bitcoin header's diff is enough first
@@ -400,10 +404,14 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 	// First I/O cost, delayed as late as possible.
 	let prev = prev_header_store(header, &mut ctx.batch)?;
 
-	// make sure this header has a height exactly one higher than the previous
-	// header
+	// This header height must increase the height from the previous header by exactly 1.
 	if header.height != prev.height + 1 {
 		return Err(ErrorKind::InvalidBlockHeight.into());
+	}
+
+	// This header must have a valid header version for its height.
+	if !consensus::valid_header_version(header.height, header.version) {
+		return Err(ErrorKind::InvalidBlockVersion(header.version).into());
 	}
 
 	if header.timestamp <= prev.timestamp {
@@ -422,6 +430,10 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		if header.height >= global::refactor_header_height() {
 			validate_block_auxdata(header, ctx)?;
 		} else {
+			// Quick check of this header in isolation. No point proceeding if this fails.
+			// We can do this without needing to iterate over previous headers.
+			validate_pow_only(header, ctx)?;
+
 			if header.total_difficulty() <= prev.total_difficulty() {
 				return Err(ErrorKind::DifficultyTooLow.into());
 			}

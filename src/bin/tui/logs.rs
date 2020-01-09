@@ -19,8 +19,8 @@ use cursive::views::BoxView;
 use cursive::{Cursive, Printer};
 
 use crate::tui::constants::VIEW_LOGS;
-//use cursive::utils::lines::spans::{LinesIterator, Row};
-//use cursive::utils::markup::StyledString;
+use cursive::utils::lines::spans::{LinesIterator, Row};
+use cursive::utils::markup::StyledString;
 use grin_util::logger::LogEntry;
 use log::Level;
 use std::collections::VecDeque;
@@ -63,7 +63,6 @@ impl LogBufferView {
 		self.buffer.pop_back();
 	}
 
-	#[allow(dead_code)]
 	fn color(level: Level) -> ColorStyle {
 		match level {
 			Level::Info => ColorStyle::new(
@@ -86,20 +85,20 @@ impl LogBufferView {
 }
 
 impl View for LogBufferView {
-	fn draw(&self, _printer: &Printer) {
-		//		let mut i = 0;
-		//		for entry in self.buffer.iter().take(printer.size.y) {
-		//			printer.with_color(LogBufferView::color(entry.level), |p| {
-		//				let log_message = StyledString::plain(&entry.log);
-		//				let mut rows: Vec<Row> = LinesIterator::new(&log_message, printer.size.x).collect();
-		//				rows.reverse(); // So stack traces are in the right order.
-		//				for row in rows {
-		//					for span in row.resolve(&log_message) {
-		//						p.print((0, p.size.y - 1 - i), span.content);
-		//						i += 1;
-		//					}
-		//				}
-		//			});
-		//		}
+	fn draw(&self, printer: &Printer) {
+		let mut i = 0;
+		for entry in self.buffer.iter().take(printer.size.y) {
+			printer.with_color(LogBufferView::color(entry.level), |p| {
+				let log_message = StyledString::plain(&entry.log);
+				let mut rows: Vec<Row> = LinesIterator::new(&log_message, printer.size.x).collect();
+				rows.reverse(); // So stack traces are in the right order.
+				for row in rows {
+					for span in row.resolve(&log_message) {
+						p.print((0, p.size.y.saturating_sub(i + 1)), span.content);
+						i += 1;
+					}
+				}
+			});
+		}
 	}
 }

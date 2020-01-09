@@ -51,7 +51,7 @@ fn test_coinbase_maturity() {
 
 	{
 		let chain = chain::Chain::init(
-			".grin_coinbase".to_string(),
+			chain_dir.to_string(),
 			Arc::new(NoopAdapter {}),
 			genesis_block,
 			pow::verify_size,
