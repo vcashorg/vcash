@@ -1414,7 +1414,7 @@ impl<'a> Extension<'a> {
 		}
 	}
 
-	fn apply_output(&mut self, out: &Output) -> Result<(u64), Error> {
+	fn apply_output(&mut self, out: &Output) -> Result<u64, Error> {
 		let commit = out.commitment();
 
 		if let Ok(pos) = self.batch.get_output_pos(&commit) {
@@ -1821,7 +1821,7 @@ impl<'a> Extension<'a> {
 	pub fn validate_kernel_sums(
 		&self,
 		genesis: &BlockHeader,
-	) -> Result<((Commitment, Commitment)), Error> {
+	) -> Result<(Commitment, Commitment), Error> {
 		let now = Instant::now();
 
 		let head_header = self.batch.get_block_header(&self.head.last_block_h)?;
