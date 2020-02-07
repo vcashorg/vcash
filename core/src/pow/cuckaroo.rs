@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -169,10 +169,10 @@ mod test {
 	#[test]
 	fn cuckaroo19_vectors() {
 		let mut ctx = new_impl::<u64>(19, 42);
-		ctx.params.siphash_keys = V1_19_HASH.clone();
-		assert!(ctx.verify(&Proof::new(V1_19_SOL.to_vec().clone())).is_ok());
+		ctx.params.siphash_keys = V1_19_HASH;
+		assert!(ctx.verify(&Proof::new(V1_19_SOL.to_vec())).is_ok());
 		ctx.params.siphash_keys = V2_19_HASH.clone();
-		assert!(ctx.verify(&Proof::new(V2_19_SOL.to_vec().clone())).is_ok());
+		assert!(ctx.verify(&Proof::new(V2_19_SOL.to_vec())).is_ok());
 		assert!(ctx.verify(&Proof::zero(42)).is_err());
 	}
 

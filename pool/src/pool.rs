@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -422,11 +422,7 @@ impl Pool {
 		// Oldest (based on pool insertion time) will then be prioritized.
 		tx_buckets.sort_unstable_by_key(|x| (Reverse(x.fee_to_weight), x.age_idx));
 
-		tx_buckets
-			.into_iter()
-			.map(|x| x.raw_txs)
-			.flatten()
-			.collect()
+		tx_buckets.into_iter().flat_map(|x| x.raw_txs).collect()
 	}
 
 	pub fn find_matching_transactions(&self, kernels: &[TxKernel]) -> Vec<Transaction> {

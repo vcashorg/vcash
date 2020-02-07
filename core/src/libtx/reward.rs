@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ where
 {
 	let value = reward(height, fees);
 	// TODO: proper support for different switch commitment schemes
-	let switch = &SwitchCommitmentType::Regular;
+	let switch = SwitchCommitmentType::Regular;
 	let commit = keychain.commit(value, key_id, switch)?;
 
 	trace!("Block reward - Pedersen Commit is: {:?}", commit,);

@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -394,7 +394,7 @@ where
 		let mut last_ts = last_n.last().unwrap().timestamp;
 		for _ in n..needed_block_count {
 			last_ts = last_ts.saturating_sub(last_ts_delta);
-			last_n.push(HeaderInfo::from_ts_diff(last_ts, last_diff.clone()));
+			last_n.push(HeaderInfo::from_ts_diff(last_ts, last_diff));
 		}
 	}
 	last_n.reverse();

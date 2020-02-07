@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ use keychain::{ExtKeychain, Keychain};
 fn test_output_ser_deser() {
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let switch = &keychain::SwitchCommitmentType::Regular;
+	let switch = keychain::SwitchCommitmentType::Regular;
 	let commit = keychain.commit(5, &key_id, switch).unwrap();
 	let builder = proof::ProofBuilder::new(&keychain);
 	let proof = proof::create(&keychain, &builder, 5, &key_id, switch, commit, None).unwrap();

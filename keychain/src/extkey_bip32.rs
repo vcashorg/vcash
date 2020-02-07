@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -107,15 +107,17 @@ impl BIP32GrinHasher {
 
 impl BIP32Hasher for BIP32GrinHasher {
 	fn network_priv(&self) -> [u8; 4] {
-		match self.is_floo {
-			true => [0x03, 0x27, 0x3A, 0x10],  // fprv
-			false => [0x03, 0x3C, 0x04, 0xA4], // gprv
+		if self.is_floo {
+			[0x03, 0x27, 0x3A, 0x10]
+		} else {
+			[0x03, 0x3C, 0x04, 0xA4]
 		}
 	}
 	fn network_pub(&self) -> [u8; 4] {
-		match self.is_floo {
-			true => [0x03, 0x27, 0x3E, 0x4B],  // fpub
-			false => [0x03, 0x3C, 0x08, 0xDF], // gpub
+		if self.is_floo {
+			[0x03, 0x27, 0x3E, 0x4B]
+		} else {
+			[0x03, 0x3C, 0x08, 0xDF]
 		}
 	}
 	fn master_seed() -> [u8; 12] {
@@ -380,10 +382,7 @@ impl ExtendedPrivKey {
 		passphrase: &str,
 		is_floo: bool,
 	) -> Result<ExtendedPrivKey, Error> {
-		let seed = match mnemonic::to_seed(mnemonic, passphrase) {
-			Ok(s) => s,
-			Err(e) => return Err(Error::MnemonicError(e)),
-		};
+		let seed = mnemonic::to_seed(mnemonic, passphrase).map_err(Error::MnemonicError)?;
 		let mut hasher = BIP32GrinHasher::new(is_floo);
 		let key = ExtendedPrivKey::new_master(secp, &mut hasher, &seed)?;
 		Ok(key)
@@ -461,9 +460,7 @@ impl ExtendedPrivKey {
 		// Do SHA256 of just the ECDSA pubkey
 		let sha2_res = hasher.sha_256(&pk.public_key.serialize_vec(&secp, true)[..]);
 		// do RIPEMD160
-		let ripemd_res = hasher.ripemd_160(&sha2_res);
-		// Return
-		ripemd_res
+		hasher.ripemd_160(&sha2_res)
 	}
 
 	/// Returns the first four bytes of the identifier
@@ -568,9 +565,7 @@ impl ExtendedPubKey {
 		// Do SHA256 of just the ECDSA pubkey
 		let sha2_res = hasher.sha_256(&self.public_key.serialize_vec(secp, true)[..]);
 		// do RIPEMD160
-		let ripemd_res = hasher.ripemd_160(&sha2_res);
-		// Return
-		ripemd_res
+		hasher.ripemd_160(&sha2_res)
 	}
 
 	/// Returns the first four bytes of the identifier

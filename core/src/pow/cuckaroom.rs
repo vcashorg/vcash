@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,8 +16,7 @@
 //! John Tromp. Ported to Rust from https://github.com/tromp/cuckoo.
 //!
 //! Cuckaroom is a variation of Cuckaroo that's tweaked at the second HardFork
-//! to maintain ASIC-Resistance, as introduced in
-//! https://www.grin-forum.org/t/mid-december-pow-hardfork-cuckarood29-cuckaroom29
+//! to maintain ASIC-Resistance.
 //! It uses a tweaked edge block generation where states are xored with all later
 //! states, reverts to standard siphash, and most importantly, identifies cycles
 //! in a mono-partite graph, from which it derives the letter 'm'.
@@ -170,16 +169,12 @@ mod test {
 	#[ignore]
 	fn cuckaroom19_29_vectors() {
 		let mut ctx19 = new_impl::<u64>(19, 42);
-		ctx19.params.siphash_keys = V1_19_HASH.clone();
-		assert!(ctx19
-			.verify(&Proof::new(V1_19_SOL.to_vec().clone()))
-			.is_ok());
+		ctx19.params.siphash_keys = V1_19_HASH;
+		assert!(ctx19.verify(&Proof::new(V1_19_SOL.to_vec())).is_ok());
 		assert!(ctx19.verify(&Proof::zero(42)).is_err());
 		let mut ctx29 = new_impl::<u64>(29, 42);
-		ctx29.params.siphash_keys = V2_29_HASH.clone();
-		assert!(ctx29
-			.verify(&Proof::new(V2_29_SOL.to_vec().clone()))
-			.is_ok());
+		ctx29.params.siphash_keys = V2_29_HASH;
+		assert!(ctx29.verify(&Proof::new(V2_29_SOL.to_vec())).is_ok());
 		assert!(ctx29.verify(&Proof::zero(42)).is_err());
 	}
 

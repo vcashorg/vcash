@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ impl<H: Hashed> ShortIdentifiable for H {
 }
 
 /// Short id for identifying inputs/outputs/kernels
-#[derive(Clone, Serialize, Deserialize, Hash)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ShortId([u8; 6]);
 
 impl DefaultHashable for ShortId {}

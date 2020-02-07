@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 //!
 //! Cuckarood is a variation of Cuckaroo that's tweaked at the first HardFork
 //! to maintain ASIC-Resistance, as introduced in
-//! https://www.grin-forum.org/t/mid-july-pow-hardfork-cuckaroo29-cuckarood29
+//! https://forum.grin.mw/t/mid-july-pow-hardfork-cuckaroo29-cuckarood29
 //! It uses a tweaked siphash round in which the rotation by 21 is replaced by
 //! a rotation by 25, halves the number of graph nodes in each partition,
 //! and requires cycles to alternate between even- and odd-indexed edges.
@@ -176,16 +176,12 @@ mod test {
 	#[ignore]
 	fn cuckarood19_29_vectors() {
 		let mut ctx19 = new_impl::<u64>(19, 42);
-		ctx19.params.siphash_keys = V1_19_HASH.clone();
-		assert!(ctx19
-			.verify(&Proof::new(V1_19_SOL.to_vec().clone()))
-			.is_ok());
+		ctx19.params.siphash_keys = V1_19_HASH;
+		assert!(ctx19.verify(&Proof::new(V1_19_SOL.to_vec())).is_ok());
 		assert!(ctx19.verify(&Proof::zero(42)).is_err());
 		let mut ctx29 = new_impl::<u64>(29, 42);
-		ctx29.params.siphash_keys = V2_29_HASH.clone();
-		assert!(ctx29
-			.verify(&Proof::new(V2_29_SOL.to_vec().clone()))
-			.is_ok());
+		ctx29.params.siphash_keys = V2_29_HASH;
+		assert!(ctx29.verify(&Proof::new(V2_29_SOL.to_vec())).is_ok());
 		assert!(ctx29.verify(&Proof::zero(42)).is_err());
 	}
 

@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,14 +19,15 @@ use crate::core::verifier_cache::VerifierCache;
 use crate::core::{committed, Committed};
 use crate::libtx::secp_ser;
 use crate::ser::{
-	self, read_multi, FixedLength, PMMRable, ProtocolVersion, Readable, Reader,
-	VerifySortedAndUnique, Writeable, Writer,
+	self, read_multi, PMMRable, ProtocolVersion, Readable, Reader, VerifySortedAndUnique,
+	Writeable, Writer,
 };
 use crate::{consensus, global};
 use enum_primitive::FromPrimitive;
 use keychain::{self, BlindingFactor};
 use std::cmp::Ordering;
 use std::cmp::{max, min};
+use std::convert::TryInto;
 use std::sync::Arc;
 use std::{error, fmt};
 use util;
@@ -538,19 +539,17 @@ impl Readable for TxKernel {
 }
 
 /// We store kernels in the kernel MMR.
-/// Note: These are "variable size" to support different kernel featuere variants.
+/// Note: These are "variable size" to support different kernel feature variants.
 impl PMMRable for TxKernel {
 	type E = Self;
 
 	fn as_elmt(&self) -> Self::E {
 		self.clone()
 	}
-}
 
-/// Kernels are "variable size" but we need to implement FixedLength for legacy reasons.
-/// At some point we will refactor the MMR backend so this is no longer required.
-impl FixedLength for TxKernel {
-	const LEN: usize = 0;
+	fn elmt_size() -> Option<u16> {
+		None
+	}
 }
 
 impl KernelFeatures {
@@ -733,12 +732,10 @@ impl PMMRable for TokenTxKernel {
 	fn as_elmt(&self) -> Self::E {
 		self.clone()
 	}
-}
 
-/// Kernels are "variable size" but we need to implement FixedLength for legacy reasons.
-/// At some point we will refactor the MMR backend so this is no longer required.
-impl FixedLength for TokenTxKernel {
-	const LEN: usize = 0;
+	fn elmt_size() -> Option<u16> {
+		None
+	}
 }
 
 impl TokenKernelFeatures {
@@ -2486,6 +2483,14 @@ impl PMMRable for Output {
 	fn as_elmt(&self) -> OutputIdentifier {
 		OutputIdentifier::from_output(self)
 	}
+
+	fn elmt_size() -> Option<u16> {
+		Some(
+			(1 + secp::constants::PEDERSEN_COMMITMENT_SIZE)
+				.try_into()
+				.unwrap(),
+		)
+	}
 }
 
 /// Output for a token transaction
@@ -2555,6 +2560,14 @@ impl PMMRable for TokenOutput {
 
 	fn as_elmt(&self) -> TokenOutputIdentifier {
 		TokenOutputIdentifier::from_output(self)
+	}
+
+	fn elmt_size() -> Option<u16> {
+		Some(
+			(1 + 32 + secp::constants::PEDERSEN_COMMITMENT_SIZE)
+				.try_into()
+				.unwrap(),
+		)
 	}
 }
 
@@ -2720,10 +2733,6 @@ impl OutputIdentifier {
 	}
 }
 
-impl FixedLength for OutputIdentifier {
-	const LEN: usize = 1 + secp::constants::PEDERSEN_COMMITMENT_SIZE;
-}
-
 impl Writeable for OutputIdentifier {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		self.features.write(writer)?;
@@ -2821,10 +2830,6 @@ impl TokenOutputIdentifier {
 	}
 }
 
-impl FixedLength for TokenOutputIdentifier {
-	const LEN: usize = 1 + 32 + secp::constants::PEDERSEN_COMMITMENT_SIZE;
-}
-
 impl Writeable for TokenOutputIdentifier {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		self.features.write(writer)?;
@@ -2908,10 +2913,14 @@ impl PMMRable for TokenIssueProof {
 	fn as_elmt(&self) -> Self::E {
 		self.clone()
 	}
-}
 
-impl FixedLength for TokenIssueProof {
-	const LEN: usize = 32 + secp::constants::PEDERSEN_COMMITMENT_SIZE + 8 + MAX_PROOF_SIZE;
+	fn elmt_size() -> Option<u16> {
+		Some(
+			(32 + secp::constants::PEDERSEN_COMMITMENT_SIZE + 8 + MAX_PROOF_SIZE)
+				.try_into()
+				.unwrap(),
+		)
+	}
 }
 
 impl From<TokenOutput> for TokenIssueProof {
@@ -2971,7 +2980,7 @@ mod test {
 		let keychain = ExtKeychain::from_random_seed(false).unwrap();
 		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 		let commit = keychain
-			.commit(5, &key_id, &SwitchCommitmentType::Regular)
+			.commit(5, &key_id, SwitchCommitmentType::Regular)
 			.unwrap();
 
 		// just some bytes for testing ser/deser
@@ -3020,12 +3029,12 @@ mod test {
 		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 
 		let commit = keychain
-			.commit(1003, &key_id, &SwitchCommitmentType::Regular)
+			.commit(1003, &key_id, SwitchCommitmentType::Regular)
 			.unwrap();
 		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 
 		let commit_2 = keychain
-			.commit(1003, &key_id, &SwitchCommitmentType::Regular)
+			.commit(1003, &key_id, SwitchCommitmentType::Regular)
 			.unwrap();
 
 		assert!(commit == commit_2);
@@ -3036,7 +3045,7 @@ mod test {
 		let keychain = ExtKeychain::from_seed(&[0; 32], false).unwrap();
 		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 		let commit = keychain
-			.commit(5, &key_id, &SwitchCommitmentType::Regular)
+			.commit(5, &key_id, SwitchCommitmentType::Regular)
 			.unwrap();
 
 		let input = Input {

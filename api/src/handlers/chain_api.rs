@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -798,10 +798,7 @@ impl KernelHandler {
 				height,
 				mmr_index,
 			});
-		match kernel {
-			Some(kernel) => Ok(kernel),
-			None => Err(ErrorKind::NotFound.into()),
-		}
+		kernel.ok_or_else(|| ErrorKind::NotFound.into())
 	}
 }
 

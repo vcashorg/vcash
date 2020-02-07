@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ pub fn create_zip(dst_file: &File, src_dir: &Path, files: Vec<PathBuf>) -> io::R
 /// Extract a set of files from the provided zip archive.
 pub fn extract_files(from_archive: File, dest: &Path, files: Vec<PathBuf>) -> io::Result<()> {
 	let dest: PathBuf = PathBuf::from(dest);
-	let files: Vec<_> = files.iter().cloned().collect();
+	let files: Vec<_> = files.to_vec();
 	let res = thread::spawn(move || {
 		let mut archive = zip_rs::ZipArchive::new(from_archive).expect("archive file exists");
 		for x in files {

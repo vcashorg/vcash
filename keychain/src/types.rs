@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -163,7 +163,7 @@ impl Identifier {
 		let mut p = ExtKeychainPath::from_identifier(&self);
 		if p.depth > 0 {
 			p.path[p.depth as usize - 1] = ChildNumber::from(0);
-			p.depth = p.depth - 1;
+			p.depth -= 1;
 		}
 		Identifier::from_path(&p)
 	}
@@ -176,7 +176,7 @@ impl Identifier {
 	}
 
 	pub fn to_bytes(&self) -> [u8; IDENTIFIER_SIZE] {
-		self.0.clone()
+		self.0
 	}
 
 	pub fn from_pubkey(secp: &Secp256k1, pubkey: &PublicKey) -> Identifier {
@@ -308,7 +308,7 @@ impl BlindingFactor {
 			// and secp lib checks this
 			Ok(secp::key::ZERO_KEY)
 		} else {
-			secp::key::SecretKey::from_slice(secp, &self.0).map_err(|e| Error::Secp(e))
+			secp::key::SecretKey::from_slice(secp, &self.0).map_err(Error::Secp)
 		}
 	}
 
@@ -484,13 +484,13 @@ pub trait Keychain: Sync + Send + Clone {
 		&self,
 		amount: u64,
 		id: &Identifier,
-		switch: &SwitchCommitmentType,
+		switch: SwitchCommitmentType,
 	) -> Result<SecretKey, Error>;
 	fn commit(
 		&self,
 		amount: u64,
 		id: &Identifier,
-		switch: &SwitchCommitmentType,
+		switch: SwitchCommitmentType,
 	) -> Result<Commitment, Error>;
 	fn blind_sum(&self, blind_sum: &BlindSum) -> Result<BlindingFactor, Error>;
 	fn sign(
@@ -498,7 +498,7 @@ pub trait Keychain: Sync + Send + Clone {
 		msg: &Message,
 		amount: u64,
 		id: &Identifier,
-		switch: &SwitchCommitmentType,
+		switch: SwitchCommitmentType,
 	) -> Result<Signature, Error>;
 	fn sign_with_blinding(&self, _: &Message, _: &BlindingFactor) -> Result<Signature, Error>;
 	fn secp(&self) -> &Secp256k1;
@@ -522,9 +522,9 @@ impl TryFrom<u8> for SwitchCommitmentType {
 	}
 }
 
-impl From<&SwitchCommitmentType> for u8 {
-	fn from(switch: &SwitchCommitmentType) -> Self {
-		match *switch {
+impl From<SwitchCommitmentType> for u8 {
+	fn from(switch: SwitchCommitmentType) -> Self {
+		match switch {
 			SwitchCommitmentType::None => 0,
 			SwitchCommitmentType::Regular => 1,
 		}
@@ -579,7 +579,7 @@ mod test {
 		// split a key, sum the split keys and confirm the sum matches the original key
 		let mut skey_sum = split.blind_1.secret_key(&secp).unwrap();
 		let skey_2 = split.blind_2.secret_key(&secp).unwrap();
-		let _ = skey_sum.add_assign(&secp, &skey_2).unwrap();
+		skey_sum.add_assign(&secp, &skey_2).unwrap();
 		assert_eq!(skey_in, skey_sum);
 	}
 
@@ -592,7 +592,7 @@ mod test {
 		let skey_zero = ZERO_KEY;
 
 		let mut skey_out = skey_in.clone();
-		let _ = skey_out.add_assign(&secp, &skey_zero).unwrap();
+		skey_out.add_assign(&secp, &skey_zero).unwrap();
 
 		assert_eq!(skey_in, skey_out);
 	}

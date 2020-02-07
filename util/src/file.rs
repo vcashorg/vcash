@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -70,15 +70,12 @@ fn copy_to(src: &Path, src_type: &fs::FileType, dst: &Path) -> io::Result<u64> {
 
 /// Retrieve first line from file
 pub fn get_first_line(file_path: Option<String>) -> Option<String> {
-	match file_path {
-		Some(path) => match fs::File::open(path) {
-			Ok(file) => {
-				let buf_reader = io::BufReader::new(file);
-				let mut lines_iter = buf_reader.lines().map(|l| l.unwrap());
-				lines_iter.next()
-			}
-			Err(_) => None,
-		},
-		None => None,
-	}
+	file_path.and_then(|path| match fs::File::open(path) {
+		Ok(file) => {
+			let buf_reader = io::BufReader::new(file);
+			let mut lines_iter = buf_reader.lines().map(|l| l.unwrap());
+			lines_iter.next()
+		}
+		Err(_) => None,
+	})
 }

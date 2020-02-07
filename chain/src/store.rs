@@ -1,4 +1,4 @@
-// Copyright 2019 The Grin Developers
+// Copyright 2020 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ use grin_store as store;
 use grin_store::{option_to_not_found, to_key, Error, SerIterator};
 use std::sync::Arc;
 
-const STORE_SUBPATH: &'static str = "chain";
+const STORE_SUBPATH: &str = "chain";
 
 const BLOCK_HEADER_PREFIX: u8 = 'h' as u8;
 const BLOCK_PREFIX: u8 = 'b' as u8;
