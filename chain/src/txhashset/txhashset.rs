@@ -28,7 +28,7 @@ use crate::error::{Error, ErrorKind};
 use crate::store::{Batch, ChainStore};
 use crate::txhashset::bitmap_accumulator::BitmapAccumulator;
 use crate::txhashset::{RewindableKernelView, UTXOView};
-use crate::types::{OutputMMRPosition, OutputRoots, Tip, TxHashSetRoots, TxHashsetWriteStatus};
+use crate::types::{CommitPos, OutputRoots, Tip, TxHashSetRoots, TxHashsetWriteStatus};
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::{file, secp_static, zip};
 use croaring::Bitmap;
@@ -276,18 +276,15 @@ impl TxHashSet {
 	/// Check if an output is unspent.
 	/// We look in the index to find the output MMR pos.
 	/// Then we check the entry in the output MMR and confirm the hash matches.
-	pub fn is_unspent(&self, output_id: &OutputIdentifier) -> Result<OutputMMRPosition, Error> {
-		match self.commit_index.get_output_pos_height(&output_id.commit) {
-			Ok((pos, block_height)) => {
+	pub fn is_unspent(&self, output_id: &OutputIdentifier) -> Result<CommitPos, Error> {
+		let commit = output_id.commit;
+		match self.commit_index.get_output_pos_height(&commit) {
+			Ok((pos, height)) => {
 				let output_pmmr: ReadonlyPMMR<'_, Output, _> =
 					ReadonlyPMMR::at(&self.output_pmmr_h.backend, self.output_pmmr_h.last_pos);
 				if let Some(hash) = output_pmmr.get_hash(pos) {
 					if hash == output_id.hash_with_index(pos - 1) {
-						Ok(OutputMMRPosition {
-							output_mmr_hash: hash,
-							position: pos,
-							height: block_height,
-						})
+						Ok(CommitPos { pos, height })
 					} else {
 						Err(ErrorKind::TxHashSetErr("txhashset hash mismatch".to_string()).into())
 					}
@@ -323,36 +320,27 @@ impl TxHashSet {
 
 	/// Check if an token output is unspent.
 	/// We look in the index to find the token output MMR pos.
-	/// Then we check the entry in the output MMR and confirm the hash matches.
-	pub fn is_token_unspent(
-		&self,
-		output_id: &TokenOutputIdentifier,
-	) -> Result<OutputMMRPosition, Error> {
-		match self
-			.commit_index
-			.get_token_output_pos_height(&output_id.commit)
-		{
-			Ok((pos, block_height)) => {
+	/// Then we check the entry in the token output MMR and confirm the hash matches.
+	pub fn is_token_unspent(&self, output_id: &TokenOutputIdentifier) -> Result<CommitPos, Error> {
+		let commit = output_id.commit;
+		match self.commit_index.get_token_output_pos_height(&commit) {
+			Ok((pos, height)) => {
 				let output_pmmr: ReadonlyPMMR<'_, TokenOutput, _> = ReadonlyPMMR::at(
 					&self.token_output_pmmr_h.backend,
 					self.token_output_pmmr_h.last_pos,
 				);
 				if let Some(hash) = output_pmmr.get_hash(pos) {
 					if hash == output_id.hash_with_index(pos - 1) {
-						Ok(OutputMMRPosition {
-							output_mmr_hash: hash,
-							position: pos,
-							height: block_height,
-						})
+						Ok(CommitPos { pos, height })
 					} else {
-						Err(ErrorKind::TxHashSetErr(format!("txhashset hash mismatch")).into())
+						Err(ErrorKind::TxHashSetErr("txhashset hash mismatch".to_string()).into())
 					}
 				} else {
 					Err(ErrorKind::OutputNotFound.into())
 				}
 			}
 			Err(grin_store::Error::NotFoundErr(_)) => Err(ErrorKind::OutputNotFound.into()),
-			Err(e) => Err(ErrorKind::StoreErr(e, format!("txhashset unspent check")).into()),
+			Err(e) => Err(ErrorKind::StoreErr(e, "txhashset unspent check".to_string()).into()),
 		}
 	}
 
@@ -389,11 +377,6 @@ impl TxHashSet {
 	/// Convenience function to query the db for a header by its hash.
 	pub fn get_block_header(&self, hash: &Hash) -> Result<BlockHeader, Error> {
 		Ok(self.commit_index.get_block_header(&hash)?)
-	}
-
-	/// Get all outputs MMR pos
-	pub fn get_all_output_pos(&self) -> Result<Vec<(Commitment, u64)>, Error> {
-		Ok(self.commit_index.get_all_output_pos()?)
 	}
 
 	/// returns outputs from the given pmmr index up to the
@@ -505,11 +488,12 @@ impl TxHashSet {
 	pub fn compact(
 		&mut self,
 		horizon_header: &BlockHeader,
-		batch: &mut Batch<'_>,
+		batch: &Batch<'_>,
 	) -> Result<(), Error> {
 		debug!("txhashset: starting compaction...");
 
 		let head_header = batch.head_header()?;
+
 		let rewind_rm_pos = input_pos_to_rewind(&horizon_header, &head_header, batch)?;
 		let token_rewind_rm_pos = token_input_pos_to_rewind(&horizon_header, &head_header, batch)?;
 
@@ -539,21 +523,40 @@ impl TxHashSet {
 		Ok(())
 	}
 
-	/// Rebuild the index of block height & MMR positions to the corresponding UTXOs.
-	/// This is a costly operation performed only when we receive a full new chain state.
-	/// Note: only called by compact.
-	pub fn rebuild_height_pos_index(
+	/// (Re)build the output_pos index to be consistent with the current UTXO set.
+	/// Remove any "stale" index entries that do not correspond to outputs in the UTXO set.
+	/// Add any missing index entries based on UTXO set.
+	pub fn init_output_pos_index(
 		&self,
 		header_pmmr: &PMMRHandle<BlockHeader>,
-		batch: &mut Batch<'_>,
+		batch: &Batch<'_>,
 	) -> Result<(), Error> {
 		let now = Instant::now();
 
 		let output_pmmr =
 			ReadonlyPMMR::at(&self.output_pmmr_h.backend, self.output_pmmr_h.last_pos);
 
-		// clear it before rebuilding
-		batch.clear_output_pos_height()?;
+		// Iterate over the current output_pos index, removing any entries that
+		// do not point to to the expected output.
+		let mut removed_count = 0;
+		for (key, (pos, _)) in batch.output_pos_iter()? {
+			if let Some(out) = output_pmmr.get_data(pos) {
+				if let Ok(pos_via_mmr) = batch.get_output_pos(&out.commitment()) {
+					// If the pos matches and the index key matches the commitment
+					// then keep the entry, other we want to clean it up.
+					if pos == pos_via_mmr && batch.is_match_output_pos_key(&key, &out.commitment())
+					{
+						continue;
+					}
+				}
+			}
+			batch.delete(&key)?;
+			removed_count += 1;
+		}
+		debug!(
+			"init_output_pos_index: removed {} stale index entries",
+			removed_count
+		);
 
 		let mut outputs_pos: Vec<(Commitment, u64)> = vec![];
 		for pos in output_pmmr.leaf_pos_iter() {
@@ -561,17 +564,21 @@ impl TxHashSet {
 				outputs_pos.push((out.commit, pos));
 			}
 		}
-		let total_outputs = outputs_pos.len();
-		if total_outputs == 0 {
-			debug!("rebuild_height_pos_index: nothing to be rebuilt");
+
+		debug!("init_output_pos_index: {} utxos", outputs_pos.len());
+
+		outputs_pos.retain(|x| batch.get_output_pos_height(&x.0).is_err());
+
+		debug!(
+			"init_output_pos_index: {} utxos with missing index entries",
+			outputs_pos.len()
+		);
+
+		if outputs_pos.is_empty() {
 			return Ok(());
-		} else {
-			debug!(
-				"rebuild_height_pos_index: rebuilding {} outputs position & height...",
-				total_outputs
-			);
 		}
 
+		let total_outputs = outputs_pos.len();
 		let max_height = batch.head()?.height;
 
 		let mut i = 0;
@@ -585,26 +592,24 @@ impl TxHashSet {
 					break;
 				}
 				batch.save_output_pos_height(&commit, pos, h.height)?;
-				trace!("rebuild_height_pos_index: {:?}", (commit, pos, h.height));
 				i += 1;
 			}
 		}
-
 		debug!(
-			"rebuild_height_pos_index: {} UTXOs, took {}s",
+			"init_height_pos_index: added entries for {} utxos, took {}s",
 			total_outputs,
 			now.elapsed().as_secs(),
 		);
 		Ok(())
 	}
 
-	/// Rebuild the index of block height & MMR positions to the corresponding token UTXOs.
-	/// This is a costly operation performed only when we receive a full new chain state.
-	/// Note: only called by compact.
-	pub fn rebuild_token_height_pos_index(
+	/// (Re)build the token output_pos index to be consistent with the current UTXO set.
+	/// Remove any "stale" index entries that do not correspond to outputs in the UTXO set.
+	/// Add any missing index entries based on UTXO set.
+	pub fn init_token_output_pos_index(
 		&self,
 		header_pmmr: &PMMRHandle<BlockHeader>,
-		batch: &mut Batch<'_>,
+		batch: &Batch<'_>,
 	) -> Result<(), Error> {
 		let now = Instant::now();
 
@@ -613,8 +618,28 @@ impl TxHashSet {
 			self.token_output_pmmr_h.last_pos,
 		);
 
-		// clear it before rebuilding
-		batch.clear_token_output_pos_height()?;
+		// Iterate over the current output_pos index, removing any entries that
+		// do not point to to the expected output.
+		let mut removed_count = 0;
+		for (key, (pos, _)) in batch.token_output_pos_iter()? {
+			if let Some(out) = output_pmmr.get_data(pos) {
+				if let Ok((pos_via_mmr, _)) = batch.get_token_output_pos_height(&out.commitment()) {
+					// If the pos matches and the index key matches the commitment
+					// then keep the entry, other we want to clean it up.
+					if pos == pos_via_mmr
+						&& batch.is_match_token_output_pos_key(&key, &out.commitment())
+					{
+						continue;
+					}
+				}
+			}
+			batch.delete(&key)?;
+			removed_count += 1;
+		}
+		debug!(
+			"init_token_output_pos_index: removed {} stale index entries",
+			removed_count
+		);
 
 		let mut outputs_pos: Vec<(Commitment, u64)> = vec![];
 		for pos in output_pmmr.leaf_pos_iter() {
@@ -622,17 +647,21 @@ impl TxHashSet {
 				outputs_pos.push((out.commit, pos));
 			}
 		}
-		let total_outputs = outputs_pos.len();
-		if total_outputs == 0 {
-			debug!("rebuild_token_height_pos_index: nothing to be rebuilt");
+
+		debug!("init_token_output_pos_index: {} utxos", outputs_pos.len());
+
+		outputs_pos.retain(|x| batch.get_token_output_pos_height(&x.0).is_err());
+
+		debug!(
+			"init_output_pos_index: {} utxos with missing index entries",
+			outputs_pos.len()
+		);
+
+		if outputs_pos.is_empty() {
 			return Ok(());
-		} else {
-			debug!(
-				"rebuild_token_height_pos_index: rebuilding {} token outputs position & height...",
-				total_outputs
-			);
 		}
 
+		let total_outputs = outputs_pos.len();
 		let max_height = batch.head()?.height;
 
 		let mut i = 0;
@@ -646,16 +675,11 @@ impl TxHashSet {
 					break;
 				}
 				batch.save_token_output_pos_height(&commit, pos, h.height)?;
-				trace!(
-					"rebuild_token_height_pos_index: {:?}",
-					(commit, pos, h.height)
-				);
 				i += 1;
 			}
 		}
-
 		debug!(
-			"rebuild_token_height_pos_index: {} UTXOs, took {}s",
+			"init_token_output_pos_index: added entries for {} utxos, took {}s",
 			total_outputs,
 			now.elapsed().as_secs(),
 		);
@@ -1292,23 +1316,38 @@ impl<'a> Extension<'a> {
 	}
 
 	/// Apply a new block to the current txhashet extension (output, rangeproof, kernel MMRs).
-	pub fn apply_block(&mut self, b: &Block, batch: &Batch<'_>) -> Result<(), Error> {
+	/// Returns a vec of commit_pos representing the pos and height of the outputs spent
+	/// by this block.
+	pub fn apply_block(
+		&mut self,
+		b: &Block,
+		batch: &Batch<'_>,
+	) -> Result<(Vec<CommitPos>, Vec<CommitPos>), Error> {
 		let mut affected_pos = vec![];
+		let mut spent = vec![];
+		let mut token_spent = vec![];
 
+		// Apply the output to the output and rangeproof MMRs.
+		// Add pos to affected_pos to update the accumulator later on.
+		// Add the new output to the output_pos index.
 		for out in b.outputs() {
 			let pos = self.apply_output(out, batch)?;
 			affected_pos.push(pos);
 			batch.save_output_pos_height(&out.commitment(), pos, b.header.height)?;
 		}
 
+		// Remove the output from the output and rangeproof MMRs.
+		// Add spent_pos to affected_pos to update the accumulator later on.
+		// Remove the spent output from the output_pos index.
 		for input in b.inputs() {
-			let pos = self.apply_input(input, batch)?;
-			affected_pos.push(pos);
+			let spent_pos = self.apply_input(input, batch)?;
+			affected_pos.push(spent_pos.pos);
+			batch.delete_output_pos_height(&input.commitment())?;
+			spent.push(spent_pos);
 		}
 
 		for out in b.token_outputs() {
 			let pos = self.apply_token_output(out, batch)?;
-			// Update the output_pos index for the new output.
 			batch.save_token_output_pos_height(&out.commitment(), pos, b.header.height)?;
 
 			if out.is_tokenissue() {
@@ -1318,7 +1357,9 @@ impl<'a> Extension<'a> {
 		}
 
 		for input in b.token_inputs() {
-			self.apply_token_input(input, batch)?;
+			let spent_pos = self.apply_token_input(input, batch)?;
+			batch.delete_token_output_pos_height(&input.commitment())?;
+			token_spent.push(spent_pos);
 		}
 
 		for kernel in b.kernels() {
@@ -1335,13 +1376,10 @@ impl<'a> Extension<'a> {
 		// Update the head of the extension to reflect the block we just applied.
 		self.head = Tip::from_header(&b.header);
 
-		Ok(())
+		Ok((spent, token_spent))
 	}
 
 	fn apply_to_bitmap_accumulator(&mut self, output_pos: &[u64]) -> Result<(), Error> {
-		// if self.output_pmmr.is_empty() || output_pos.is_empty() {
-		// 	return Ok(());
-		// }
 		let mut output_idx: Vec<_> = output_pos
 			.iter()
 			.map(|x| pmmr::n_leaves(*x).saturating_sub(1))
@@ -1357,10 +1395,9 @@ impl<'a> Extension<'a> {
 		)
 	}
 
-	fn apply_input(&mut self, input: &Input, batch: &Batch<'_>) -> Result<u64, Error> {
+	fn apply_input(&mut self, input: &Input, batch: &Batch<'_>) -> Result<CommitPos, Error> {
 		let commit = input.commitment();
-		let pos_res = batch.get_output_pos(&commit);
-		if let Ok(pos) = pos_res {
+		if let Ok((pos, height)) = batch.get_output_pos_height(&commit) {
 			// First check this input corresponds to an existing entry in the output MMR.
 			if let Some(hash) = self.output_pmmr.get_hash(pos) {
 				if hash != input.hash_with_index(pos - 1) {
@@ -1378,7 +1415,7 @@ impl<'a> Extension<'a> {
 					self.rproof_pmmr
 						.prune(pos)
 						.map_err(ErrorKind::TxHashSetErr)?;
-					Ok(pos)
+					Ok(CommitPos { pos, height })
 				}
 				Ok(false) => Err(ErrorKind::AlreadySpent(commit).into()),
 				Err(e) => Err(ErrorKind::TxHashSetErr(e).into()),
@@ -1432,16 +1469,15 @@ impl<'a> Extension<'a> {
 		&mut self,
 		token_input: &TokenInput,
 		batch: &Batch<'_>,
-	) -> Result<(), Error> {
+	) -> Result<CommitPos, Error> {
 		let commit = token_input.commitment();
-		let pos_res = batch.get_token_output_pos_height(&commit);
-		if let Ok((pos, _height)) = pos_res {
+		if let Ok((pos, height)) = batch.get_token_output_pos_height(&commit) {
 			// First check this input corresponds to an existing entry in the output MMR.
 			if let Some(hash) = self.token_output_pmmr.get_hash(pos) {
 				if hash != token_input.hash_with_index(pos - 1) {
-					return Err(ErrorKind::TxHashSetErr(format!(
-						"token_output pmmr hash mismatch"
-					))
+					return Err(ErrorKind::TxHashSetErr(
+						"token output pmmr hash mismatch".to_string(),
+					)
 					.into());
 				}
 			}
@@ -1453,15 +1489,15 @@ impl<'a> Extension<'a> {
 				Ok(true) => {
 					self.token_rproof_pmmr
 						.prune(pos)
-						.map_err(|e| ErrorKind::TxHashSetErr(e))?;
+						.map_err(ErrorKind::TxHashSetErr)?;
+					Ok(CommitPos { pos, height })
 				}
-				Ok(false) => return Err(ErrorKind::AlreadySpent(commit).into()),
-				Err(e) => return Err(ErrorKind::TxHashSetErr(e).into()),
+				Ok(false) => Err(ErrorKind::AlreadySpent(commit).into()),
+				Err(e) => Err(ErrorKind::TxHashSetErr(e).into()),
 			}
 		} else {
-			return Err(ErrorKind::AlreadySpent(commit).into());
+			Err(ErrorKind::AlreadySpent(commit).into())
 		}
-		Ok(())
 	}
 
 	fn apply_token_output(
@@ -1636,18 +1672,26 @@ impl<'a> Extension<'a> {
 		// Rewound output pos will be removed from the MMR.
 		// Rewound input (spent) pos will be added back to the MMR.
 		let head_header = batch.get_block_header(&self.head.hash())?;
-		let rewind_rm_pos = input_pos_to_rewind(header, &head_header, batch)?;
-		let rewind_token_rm_pos = token_input_pos_to_rewind(header, &head_header, batch)?;
 
-		self.rewind_to_pos(
-			header.output_mmr_size,
-			header.kernel_mmr_size,
-			header.token_output_mmr_size,
-			header.token_issue_proof_mmr_size,
-			header.token_kernel_mmr_size,
-			&rewind_rm_pos,
-			&rewind_token_rm_pos,
-		)?;
+		if head_header.height <= header.height {
+			// Nothing to rewind but we do want to truncate the MMRs at header for consistency.
+			self.rewind_mmrs_to_pos(
+				header.output_mmr_size,
+				header.kernel_mmr_size,
+				header.token_output_mmr_size,
+				header.token_issue_proof_mmr_size,
+				header.token_kernel_mmr_size,
+				&vec![],
+				&vec![],
+			)?;
+			self.apply_to_bitmap_accumulator(&[header.output_mmr_size])?;
+		} else {
+			let mut current = head_header;
+			while header.height < current.height {
+				self.rewind_single_block(&current, batch)?;
+				current = batch.get_previous_header(&current)?;
+			}
+		}
 
 		// Update our head to reflect the header we rewound to.
 		self.head = Tip::from_header(header);
@@ -1655,32 +1699,117 @@ impl<'a> Extension<'a> {
 		Ok(())
 	}
 
+	// Rewind the MMRs, the bitmap accumulator and the output_pos index.
+	fn rewind_single_block(
+		&mut self,
+		header: &BlockHeader,
+		batch: &Batch<'_>,
+	) -> Result<(), Error> {
+		// The spent index allows us to conveniently "unspend" everything in a block.
+		let spent = batch.get_spent_index(&header.hash());
+		let token_spent = batch.get_token_spent_index(&header.hash());
+
+		let spent_pos: Vec<_> = if let Ok(ref spent) = spent {
+			spent.iter().map(|x| x.pos).collect()
+		} else {
+			warn!(
+				"rewind_single_block: fallback to legacy input bitmap for block {} at {}",
+				header.hash(),
+				header.height
+			);
+			let bitmap = batch.get_block_input_bitmap(&header.hash())?;
+			bitmap.iter().map(|x| x.into()).collect()
+		};
+
+		let token_spent_pos: Vec<_> = if let Ok(ref token_spent) = token_spent {
+			token_spent.iter().map(|x| x.pos).collect()
+		} else {
+			warn!(
+				"rewind_single_block: fallback to legacy token input bitmap for block {} at {}",
+				header.hash(),
+				header.height
+			);
+			let bitmap = batch.get_block_token_input_bitmap(&header.hash())?;
+			bitmap.iter().map(|x| x.into()).collect()
+		};
+
+		if header.height == 0 {
+			self.rewind_mmrs_to_pos(0, 0, 0, 0, 0, &spent_pos, &token_spent_pos)?;
+		} else {
+			let prev = batch.get_previous_header(&header)?;
+			self.rewind_mmrs_to_pos(
+				prev.output_mmr_size,
+				prev.kernel_mmr_size,
+				prev.token_output_mmr_size,
+				prev.token_issue_proof_mmr_size,
+				prev.token_kernel_mmr_size,
+				&spent_pos,
+				&token_spent_pos,
+			)?;
+		}
+
+		// Update our BitmapAccumulator based on affected outputs.
+		// We want to "unspend" every rewound spent output.
+		// Treat last_pos as an affected output to ensure we rebuild far enough back.
+		let mut affected_pos = spent_pos.clone();
+		affected_pos.push(self.output_pmmr.last_pos);
+		self.apply_to_bitmap_accumulator(&affected_pos)?;
+
+		// Remove any entries from the output_pos created by the block being rewound.
+		let block = batch.get_block(&header.hash())?;
+		for out in block.outputs() {
+			batch.delete_output_pos_height(&out.commitment())?;
+		}
+		for token_out in block.token_outputs() {
+			batch.delete_token_output_pos_height(&token_out.commitment())?;
+		}
+
+		// Update output_pos based on "unspending" all spent pos from this block.
+		// This is necessary to ensure the output_pos index correclty reflects a
+		// reused output commitment. For example an output at pos 1, spent, reused at pos 2.
+		// The output_pos index should be updated to reflect the old pos 1 when unspent.
+		if let Ok(spent) = spent {
+			for (x, y) in block.inputs().into_iter().zip(spent) {
+				batch.save_output_pos_height(&x.commitment(), y.pos, y.height)?;
+			}
+		}
+		if let Ok(token_spent) = token_spent {
+			for (x, y) in block.token_inputs().into_iter().zip(token_spent) {
+				batch.save_token_output_pos_height(&x.commitment(), y.pos, y.height)?;
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Rewinds the MMRs to the provided positions, given the output and
-	/// kernel we want to rewind to.
-	fn rewind_to_pos(
+	/// kernel pos we want to rewind to.
+	fn rewind_mmrs_to_pos(
 		&mut self,
 		output_pos: u64,
 		kernel_pos: u64,
 		token_output_pos: u64,
 		token_issue_proof_pos: u64,
 		token_kernel_pos: u64,
-		rewind_rm_pos: &Bitmap,
-		rewind_token_rm_pos: &Bitmap,
+		spent_pos: &[u64],
+		token_spent_pos: &[u64],
 	) -> Result<(), Error> {
+		let bitmap: Bitmap = spent_pos.into_iter().map(|x| *x as u32).collect();
+		let token_bitmap: Bitmap = token_spent_pos.into_iter().map(|x| *x as u32).collect();
 		self.output_pmmr
-			.rewind(output_pos, rewind_rm_pos)
+			.rewind(output_pos, &bitmap)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		self.rproof_pmmr
-			.rewind(output_pos, rewind_rm_pos)
+			.rewind(output_pos, &bitmap)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		self.kernel_pmmr
 			.rewind(kernel_pos, &Bitmap::create())
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		self.token_output_pmmr
-			.rewind(token_output_pos, rewind_token_rm_pos)
+			.rewind(token_output_pos, &token_bitmap)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		self.token_rproof_pmmr
-			.rewind(token_output_pos, rewind_token_rm_pos)
+			.rewind(token_output_pos, &token_bitmap)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 		self.token_issue_proof_pmmr
 			.rewind(token_issue_proof_pos, &Bitmap::create())
@@ -1689,12 +1818,6 @@ impl<'a> Extension<'a> {
 			.rewind(token_kernel_pos, &Bitmap::create())
 			.map_err(&ErrorKind::TxHashSetErr)?;
 
-		// Update our BitmapAccumulator based on affected outputs.
-		// We want to "unspend" every rewound spent output.
-		// Treat output_pos as an affected output to ensure we rebuild far enough back.
-		let mut affected_pos: Vec<_> = rewind_rm_pos.iter().map(|x| x as u64).collect();
-		affected_pos.push(output_pos);
-		self.apply_to_bitmap_accumulator(&affected_pos)?;
 		Ok(())
 	}
 
@@ -2149,7 +2272,7 @@ pub fn zip_read(root_dir: String, header: &BlockHeader) -> Result<File, Error> {
 		// But practically, these zip files are not small ones, we just keep the zips in last 24 hours
 		let data_dir = Path::new(&root_dir);
 		let pattern = format!("{}_", TXHASHSET_ZIP);
-		if let Ok(n) = clean_files_by_prefix(data_dir.clone(), &pattern, 24 * 60 * 60) {
+		if let Ok(n) = clean_files_by_prefix(data_dir, &pattern, 24 * 60 * 60) {
 			debug!(
 				"{} zip files have been clean up in folder: {:?}",
 				n, data_dir
@@ -2305,92 +2428,34 @@ fn input_pos_to_rewind(
 	head_header: &BlockHeader,
 	batch: &Batch<'_>,
 ) -> Result<Bitmap, Error> {
-	if head_header.height <= block_header.height {
-		return Ok(Bitmap::create());
-	}
-
-	// Batching up the block input bitmaps, and running fast_or() on every batch of 256 bitmaps.
-	// so to avoid maintaining a huge vec of bitmaps.
-	let bitmap_fast_or = |b_res, block_input_bitmaps: &mut Vec<Bitmap>| -> Option<Bitmap> {
-		if let Some(b) = b_res {
-			block_input_bitmaps.push(b);
-			if block_input_bitmaps.len() < 256 {
-				return None;
-			}
-		}
-		let bitmap = Bitmap::fast_or(&block_input_bitmaps.iter().collect::<Vec<&Bitmap>>());
-		block_input_bitmaps.clear();
-		block_input_bitmaps.push(bitmap.clone());
-		Some(bitmap)
-	};
-
-	let mut block_input_bitmaps: Vec<Bitmap> = vec![];
-
+	let mut bitmap = Bitmap::create();
 	let mut current = head_header.clone();
-	while current.hash() != block_header.hash() {
-		if current.height < 1 {
-			break;
-		}
-
-		// I/O should be minimized or eliminated here for most
-		// rewind scenarios.
-		if let Ok(b_res) = batch.get_block_input_bitmap(&current.hash()) {
-			bitmap_fast_or(Some(b_res), &mut block_input_bitmaps);
+	while current.height > block_header.height {
+		if let Ok(block_bitmap) = batch.get_block_input_bitmap(&current.hash()) {
+			bitmap.or_inplace(&block_bitmap);
 		}
 		current = batch.get_previous_header(&current)?;
 	}
-
-	bitmap_fast_or(None, &mut block_input_bitmaps).ok_or_else(|| ErrorKind::Bitmap.into())
+	Ok(bitmap)
 }
 
 /// Given a block header to rewind to and the block header at the
 /// head of the current chain state, we need to calculate the positions
-/// of all teken inputs (spent token outputs) we need to "undo" during a rewind.
+/// of all inputs (spent outputs) we need to "undo" during a rewind.
 /// We do this by leveraging the "block_input_bitmap" cache and OR'ing
 /// the set of bitmaps together for the set of blocks being rewound.
-pub fn token_input_pos_to_rewind(
+fn token_input_pos_to_rewind(
 	block_header: &BlockHeader,
 	head_header: &BlockHeader,
 	batch: &Batch<'_>,
 ) -> Result<Bitmap, Error> {
-	if head_header.height < block_header.height {
-		debug!(
-			"token_input_pos_to_rewind: {} < {}, nothing to rewind",
-			head_header.height, block_header.height
-		);
-		return Ok(Bitmap::create());
-	}
-
-	// Batching up the block input bitmaps, and running fast_or() on every batch of 256 bitmaps.
-	// so to avoid maintaining a huge vec of bitmaps.
-	let bitmap_fast_or = |b_res, block_input_bitmaps: &mut Vec<Bitmap>| -> Option<Bitmap> {
-		if let Some(b) = b_res {
-			block_input_bitmaps.push(b);
-			if block_input_bitmaps.len() < 256 {
-				return None;
-			}
-		}
-		let bitmap = Bitmap::fast_or(&block_input_bitmaps.iter().collect::<Vec<&Bitmap>>());
-		block_input_bitmaps.clear();
-		block_input_bitmaps.push(bitmap.clone());
-		Some(bitmap)
-	};
-
-	let mut block_input_bitmaps: Vec<Bitmap> = vec![];
-
+	let mut bitmap = Bitmap::create();
 	let mut current = head_header.clone();
-	while current.hash() != block_header.hash() {
-		if current.height < 1 {
-			break;
-		}
-
-		// I/O should be minimized or eliminated here for most
-		// rewind scenarios.
-		if let Ok(b_res) = batch.get_block_token_input_bitmap(&current.hash()) {
-			bitmap_fast_or(Some(b_res), &mut block_input_bitmaps);
+	while current.height > block_header.height {
+		if let Ok(block_bitmap) = batch.get_block_token_input_bitmap(&current.hash()) {
+			bitmap.or_inplace(&block_bitmap);
 		}
 		current = batch.get_previous_header(&current)?;
 	}
-
-	bitmap_fast_or(None, &mut block_input_bitmaps).ok_or_else(|| ErrorKind::Bitmap.into())
+	Ok(bitmap)
 }

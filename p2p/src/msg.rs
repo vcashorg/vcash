@@ -31,7 +31,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 /// Grin's user agent with current version
-pub const USER_AGENT: &'static str = concat!("MW/Vcash ", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("MW/Vcash ", env!("CARGO_PKG_VERSION"));
 
 /// Magic numbers expected in the header of every message
 const OTHER_MAGIC: [u8; 2] = [74, 44];
@@ -466,7 +466,7 @@ impl Readable for GetPeerAddrs {
 
 /// Peer addresses we know of that are fresh enough, in response to
 /// GetPeerAddrs.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct PeerAddrs {
 	pub peers: Vec<PeerAddr>,
 }
@@ -493,7 +493,7 @@ impl Readable for PeerAddrs {
 		for _ in 0..peer_count {
 			peers.push(PeerAddr::read(reader)?);
 		}
-		Ok(PeerAddrs { peers: peers })
+		Ok(PeerAddrs { peers })
 	}
 }
 

@@ -56,7 +56,7 @@ pub fn get_output(
 		match res {
 			Ok(output_pos) => {
 				return Ok((
-					Output::new(&commit, output_pos.height, output_pos.position),
+					Output::new(&commit, output_pos.height, output_pos.pos),
 					x.clone(),
 				));
 			}
@@ -70,7 +70,7 @@ pub fn get_output(
 			}
 		}
 	}
-	Err(ErrorKind::NotFound)?
+	Err(ErrorKind::NotFound.into())
 }
 
 /// Retrieves an token output from the chain given a commit id (a tiny bit iteratively)
@@ -101,7 +101,7 @@ pub fn get_token_output(
 		match res {
 			Ok(output_pos) => {
 				return Ok((
-					TokenOutput::new(&commit, token_type, output_pos.height, output_pos.position),
+					TokenOutput::new(&commit, token_type, output_pos.height, output_pos.pos),
 					x.clone(),
 				));
 			}
@@ -145,12 +145,13 @@ pub fn get_output_v2(
 	for x in outputs.iter() {
 		let res = chain.is_unspent(x);
 		match res {
-			Ok(output_pos) => match chain.get_unspent_output_at(output_pos.position) {
+			Ok(output_pos) => match chain.get_unspent_output_at(output_pos.pos) {
 				Ok(output) => {
-					let mut header = None;
-					if include_merkle_proof && output.is_coinbase() {
-						header = chain.get_header_by_height(output_pos.height).ok();
-					}
+					let header = if include_merkle_proof && output.is_coinbase() {
+						chain.get_header_by_height(output_pos.height).ok()
+					} else {
+						None
+					};
 					match OutputPrintable::from_output(
 						&output,
 						chain.clone(),
@@ -169,7 +170,7 @@ pub fn get_output_v2(
 						}
 					}
 				}
-				Err(_) => return Err(ErrorKind::NotFound)?,
+				Err(_) => return Err(ErrorKind::NotFound.into()),
 			},
 			Err(e) => {
 				trace!(
@@ -181,7 +182,7 @@ pub fn get_output_v2(
 			}
 		}
 	}
-	Err(ErrorKind::NotFound)?
+	Err(ErrorKind::NotFound.into())
 }
 
 /// Retrieves an output from the chain given a commit id (a tiny bit iteratively)
@@ -212,7 +213,7 @@ pub fn get_token_output_v2(
 	for x in outputs.iter() {
 		let res = chain.is_token_unspent(x);
 		match res {
-			Ok(output_pos) => match chain.get_unspent_token_output_at(output_pos.position) {
+			Ok(output_pos) => match chain.get_unspent_token_output_at(output_pos.pos) {
 				Ok(output) => {
 					let mut header = None;
 					if include_merkle_proof && output.is_tokenissue() {

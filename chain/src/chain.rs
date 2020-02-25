@@ -31,7 +31,7 @@ use crate::store;
 use crate::txhashset;
 use crate::txhashset::{PMMRHandle, TxHashSet};
 use crate::types::{
-	BlockStatus, ChainAdapter, NoStatus, Options, OutputMMRPosition, Tip, TxHashsetWriteStatus,
+	BlockStatus, ChainAdapter, CommitPos, NoStatus, Options, Tip, TxHashsetWriteStatus,
 };
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::RwLock;
@@ -91,7 +91,7 @@ impl OrphanBlockPool {
 		{
 			let height_hashes = height_idx
 				.entry(orphan.block.header.height)
-				.or_insert(vec![]);
+				.or_insert_with(|| vec![]);
 			height_hashes.push(orphan.block.hash());
 			orphans.insert(orphan.block.hash(), orphan);
 		}
@@ -126,11 +126,11 @@ impl OrphanBlockPool {
 
 	/// Get an orphan from the pool indexed by the hash of its parent, removing
 	/// it at the same time, preventing clone
-	fn remove_by_height(&self, height: &u64) -> Option<Vec<Orphan>> {
+	fn remove_by_height(&self, height: u64) -> Option<Vec<Orphan>> {
 		let mut orphans = self.orphans.write();
 		let mut height_idx = self.height_idx.write();
 		height_idx
-			.remove(height)
+			.remove(&height)
 			.map(|hs| hs.iter().filter_map(|h| orphans.remove(h)).collect())
 	}
 
@@ -200,6 +200,15 @@ impl Chain {
 			&mut txhashset,
 		)?;
 
+		// Initialize the output_pos index based on UTXO set.
+		// This is fast as we only look for stale and missing entries
+		// and do not need to rebuild the entire index.
+		{
+			let batch = store.batch()?;
+			txhashset.init_output_pos_index(&header_pmmr, &batch)?;
+			batch.commit()?;
+		}
+
 		let chain = Chain {
 			db_root,
 			store,
@@ -218,9 +227,6 @@ impl Chain {
 		{
 			// Migrate full blocks to protocol version v2.
 			chain.migrate_db_v1_v2()?;
-
-			// Rebuild height_for_pos index.
-			chain.rebuild_height_for_pos()?;
 		}
 
 		chain.log_heads()?;
@@ -256,21 +262,6 @@ impl Chain {
 		log_head("head", self.head()?);
 		log_head("header_head", self.header_head()?);
 		log_head("sync_head", self.get_sync_head()?);
-		Ok(())
-	}
-
-	/// Reset header_head to the current head of the body chain.
-	pub fn reset_header_head(&self) -> Result<(), Error> {
-		self.rebuild_header_mmr(&self.head()?)?;
-		self.rebuild_sync_mmr(&self.head()?)?;
-
-		let mut batch = self.store.batch()?;
-		let txhashset = self.txhashset.write();
-		let header_pmmr = self.header_pmmr.write();
-		txhashset.rebuild_height_pos_index(&header_pmmr, &mut batch)?;
-		txhashset.rebuild_token_height_pos_index(&header_pmmr, &mut batch)?;
-		batch.commit()?;
-
 		Ok(())
 	}
 
@@ -480,7 +471,7 @@ impl Chain {
 			let mut orphan_accepted = false;
 			let mut height_accepted = height;
 
-			if let Some(orphans) = self.orphans.remove_by_height(&height) {
+			if let Some(orphans) = self.orphans.remove_by_height(height) {
 				let orphans_len = orphans.len();
 				for (i, orphan) in orphans.into_iter().enumerate() {
 					debug!(
@@ -526,9 +517,8 @@ impl Chain {
 	/// spent. This querying is done in a way that is consistent with the
 	/// current chain state, specifically the current winning (valid, most
 	/// work) fork.
-	pub fn is_unspent(&self, output_ref: &OutputIdentifier) -> Result<OutputMMRPosition, Error> {
-		let txhashset = self.txhashset.read();
-		txhashset.is_unspent(output_ref)
+	pub fn is_unspent(&self, output_ref: &OutputIdentifier) -> Result<CommitPos, Error> {
+		self.txhashset.read().is_unspent(output_ref)
 	}
 
 	/// TODO - where do we call this from? And do we need a rewind first?
@@ -537,12 +527,8 @@ impl Chain {
 	/// spent. This querying is done in a way that is consistent with the
 	/// current chain state, specifically the current winning (valid, most
 	/// work) fork.
-	pub fn is_token_unspent(
-		&self,
-		output_ref: &TokenOutputIdentifier,
-	) -> Result<OutputMMRPosition, Error> {
-		let txhashset = self.txhashset.read();
-		txhashset.is_token_unspent(output_ref)
+	pub fn is_token_unspent(&self, output_ref: &TokenOutputIdentifier) -> Result<CommitPos, Error> {
+		self.txhashset.read().is_token_unspent(output_ref)
 	}
 
 	/// Retrieves an unspent output using its PMMR position
@@ -1068,9 +1054,8 @@ impl Chain {
 			batch.save_body_tail(&tip)?;
 		}
 
-		// Rebuild our output_pos index in the db based on current UTXO set.
-		txhashset.rebuild_height_pos_index(&header_pmmr, &mut batch)?;
-		txhashset.rebuild_token_height_pos_index(&header_pmmr, &mut batch)?;
+		// Rebuild our output_pos index in the db based on fresh UTXO set.
+		txhashset.init_output_pos_index(&header_pmmr, &batch)?;
 
 		// Commit all the changes to the db.
 		batch.commit()?;
@@ -1112,7 +1097,7 @@ impl Chain {
 	fn remove_historical_blocks(
 		&self,
 		header_pmmr: &txhashset::PMMRHandle<BlockHeader>,
-		batch: &mut store::Batch<'_>,
+		batch: &store::Batch<'_>,
 	) -> Result<(), Error> {
 		if self.archive_mode {
 			return Ok(());
@@ -1173,15 +1158,12 @@ impl Chain {
 		if let (Ok(tail), Ok(head)) = (self.tail(), self.head()) {
 			let horizon = global::cut_through_horizon() as u64;
 			let threshold = horizon.saturating_add(60);
-			debug!(
-				"compact: head: {}, tail: {}, diff: {}, horizon: {}",
-				head.height,
-				tail.height,
-				head.height.saturating_sub(tail.height),
-				horizon
-			);
-			if tail.height.saturating_add(threshold) > head.height {
-				debug!("compact: skipping compaction - threshold is 60 blocks beyond horizon.");
+			let next_compact = tail.height.saturating_add(threshold);
+			if next_compact > head.height {
+				debug!(
+					"compact: skipping startup compaction (next at {})",
+					next_compact
+				);
 				return Ok(());
 			}
 		}
@@ -1189,7 +1171,7 @@ impl Chain {
 		// Take a write lock on the txhashet and start a new writeable db batch.
 		let header_pmmr = self.header_pmmr.read();
 		let mut txhashset = self.txhashset.write();
-		let mut batch = self.store.batch()?;
+		let batch = self.store.batch()?;
 
 		// Compact the txhashset itself (rewriting the pruned backend files).
 		{
@@ -1200,17 +1182,16 @@ impl Chain {
 			let horizon_hash = header_pmmr.get_header_hash_by_height(horizon_height)?;
 			let horizon_header = batch.get_block_header(&horizon_hash)?;
 
-			txhashset.compact(&horizon_header, &mut batch)?;
+			txhashset.compact(&horizon_header, &batch)?;
 		}
-
-		// Rebuild our output_pos index in the db based on current UTXO set.
-		txhashset.rebuild_height_pos_index(&header_pmmr, &mut batch)?;
-		txhashset.rebuild_token_height_pos_index(&header_pmmr, &mut batch)?;
 
 		// If we are not in archival mode remove historical blocks from the db.
 		if !self.archive_mode {
-			self.remove_historical_blocks(&header_pmmr, &mut batch)?;
+			self.remove_historical_blocks(&header_pmmr, &batch)?;
 		}
+
+		// Make sure our output_pos index is consistent with the UTXO set.
+		txhashset.init_output_pos_index(&header_pmmr, &batch)?;
 
 		// Commit all the above db changes.
 		batch.commit()?;
@@ -1387,7 +1368,7 @@ impl Chain {
 	pub fn try_header_head(&self, timeout: Duration) -> Result<Option<Tip>, Error> {
 		self.header_pmmr
 			.try_read_for(timeout)
-			.map(|ref pmmr| self.read_header_head(pmmr).map(|x| Some(x)))
+			.map(|ref pmmr| self.read_header_head(pmmr).map(Some))
 			.unwrap_or(Ok(None))
 	}
 
@@ -1468,57 +1449,6 @@ impl Chain {
 			batch.migrate_block(&block, ProtocolVersion(2))?;
 		}
 		batch.commit()?;
-		Ok(())
-	}
-
-	/// Migrate the index 'commitment -> output_pos' to index 'commitment -> (output_pos, block_height)'
-	/// Note: should only be called when Node start-up, for database migration from the old version.
-	fn rebuild_height_for_pos(&self) -> Result<(), Error> {
-		let header_pmmr = self.header_pmmr.read();
-		let txhashset = self.txhashset.read();
-		let mut outputs_pos = txhashset.get_all_output_pos()?;
-		let total_outputs = outputs_pos.len();
-		if total_outputs == 0 {
-			debug!("rebuild_height_for_pos: nothing to be rebuilt");
-			return Ok(());
-		} else {
-			debug!(
-				"rebuild_height_for_pos: rebuilding {} output_pos's height...",
-				total_outputs
-			);
-		}
-		outputs_pos.sort_by(|a, b| a.1.cmp(&b.1));
-
-		let max_height = {
-			let head = self.head()?;
-			head.height
-		};
-
-		let batch = self.store.batch()?;
-		// clear it before rebuilding
-		batch.clear_output_pos_height()?;
-
-		let mut i = 0;
-		for search_height in 0..max_height {
-			let hash = header_pmmr.get_header_hash_by_height(search_height + 1)?;
-			let h = batch.get_block_header(&hash)?;
-			while i < total_outputs {
-				let (commit, pos) = outputs_pos[i];
-				if pos > h.output_mmr_size {
-					// Note: MMR position is 1-based and not 0-based, so here must be '>' instead of '>='
-					break;
-				}
-				batch.save_output_pos_height(&commit, pos, h.height)?;
-				trace!("rebuild_height_for_pos: {:?}", (commit, pos, h.height));
-				i += 1;
-			}
-		}
-
-		// clear the output_pos since now it has been replaced by the new index
-		batch.clear_output_pos()?;
-
-		batch.commit()?;
-		debug!("rebuild_height_for_pos: done");
 		Ok(())
 	}
 
@@ -1747,12 +1677,21 @@ fn setup_head(
 					break;
 				} else {
 					// We may have corrupted the MMR backend files last time we stopped the
-					// node. If this appears to be the case revert the head to the previous
-					// header and try again
+					// node. If this happens we rewind to the previous header,
+					// delete the "bad" block and try again.
 					let prev_header = batch.get_block_header(&head.prev_block_h)?;
-					let _ = batch.delete_block(&header.hash());
-					head = Tip::from_header(&prev_header);
-					batch.save_body_head(&head)?;
+
+					txhashset::extending(header_pmmr, txhashset, &mut batch, |ext, batch| {
+						pipe::rewind_and_apply_fork(&prev_header, ext, batch)
+					})?;
+
+					// Now "undo" the latest block and forget it ever existed.
+					// We will request it from a peer during sync as necessary.
+					{
+						let _ = batch.delete_block(&header.hash());
+						head = Tip::from_header(&prev_header);
+						batch.save_body_head(&head)?;
+					}
 				}
 			}
 		}
@@ -1763,9 +1702,10 @@ fn setup_head(
 			// We will update this later once we have the correct header_root.
 			batch.save_block_header(&genesis.header)?;
 			batch.save_block(&genesis)?;
+			batch.save_spent_index(&genesis.hash(), &vec![])?;
 			batch.save_body_head(&Tip::from_header(&genesis.header))?;
 
-			if genesis.kernels().len() > 0 {
+			if !genesis.kernels().is_empty() {
 				let (utxo_sum, kernel_sum) = (sums, genesis as &dyn Committed).verify_kernel_sums(
 					genesis.header.overage(),
 					genesis.header.total_kernel_offset(),
@@ -1785,7 +1725,7 @@ fn setup_head(
 
 			info!("init: saved genesis: {:?}", genesis.hash());
 		}
-		Err(e) => return Err(ErrorKind::StoreErr(e, "chain init load head".to_owned()))?,
+		Err(e) => return Err(ErrorKind::StoreErr(e, "chain init load head".to_owned()).into()),
 	};
 	batch.commit()?;
 	Ok(())

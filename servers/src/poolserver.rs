@@ -6,7 +6,6 @@ use crate::util::{RwLock, StopState};
 use std::sync::Arc;
 
 pub mod controller;
-mod error;
 pub mod handle_block;
 
 pub fn start_poolserver_service(

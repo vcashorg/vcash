@@ -43,22 +43,15 @@ pub struct Peers {
 	store: PeerStore,
 	peers: RwLock<HashMap<PeerAddr, Arc<Peer>>>,
 	config: P2PConfig,
-	chain: Arc<chain::Chain>,
 }
 
 impl Peers {
-	pub fn new(
-		store: PeerStore,
-		adapter: Arc<dyn ChainAdapter>,
-		config: P2PConfig,
-		chain: Arc<chain::Chain>,
-	) -> Peers {
+	pub fn new(store: PeerStore, adapter: Arc<dyn ChainAdapter>, config: P2PConfig) -> Peers {
 		Peers {
 			adapter,
 			store,
 			config,
 			peers: RwLock::new(HashMap::new()),
-			chain,
 		}
 	}
 
@@ -80,7 +73,7 @@ impl Peers {
 		};
 		debug!("Saving newly connected peer {}.", peer_data.addr);
 		self.save_peer(&peer_data)?;
-		peers.insert(peer_data.addr, peer.clone());
+		peers.insert(peer_data.addr, peer);
 
 		Ok(())
 	}
@@ -156,7 +149,7 @@ impl Peers {
 				return None;
 			}
 		};
-		peers.get(&addr).map(|p| p.clone())
+		peers.get(&addr).cloned()
 	}
 
 	/// Number of peers currently connected to.
@@ -178,7 +171,7 @@ impl Peers {
 	// (total_difficulty) than we do.
 	pub fn more_work_peers(&self) -> Result<Vec<Arc<Peer>>, chain::Error> {
 		let peers = self.connected_peers();
-		if peers.len() == 0 {
+		if peers.is_empty() {
 			return Ok(vec![]);
 		}
 
@@ -197,7 +190,7 @@ impl Peers {
 	// (total_difficulty) than/as we do.
 	pub fn more_or_same_work_peers(&self) -> Result<usize, chain::Error> {
 		let peers = self.connected_peers();
-		if peers.len() == 0 {
+		if peers.is_empty() {
 			return Ok(0);
 		}
 
@@ -224,7 +217,7 @@ impl Peers {
 	/// branch, showing the highest total difficulty.
 	pub fn most_work_peers(&self) -> Vec<Arc<Peer>> {
 		let peers = self.connected_peers();
-		if peers.len() == 0 {
+		if peers.is_empty() {
 			return vec![];
 		}
 
@@ -272,7 +265,7 @@ impl Peers {
 				peers.remove(&peer.info.addr);
 				Ok(())
 			}
-			None => return Err(Error::PeerNotFound),
+			None => Err(Error::PeerNotFound),
 		}
 	}
 
@@ -282,9 +275,9 @@ impl Peers {
 		// check if peer exist
 		self.get_peer(peer_addr)?;
 		if self.is_banned(peer_addr) {
-			return self.update_state(peer_addr, State::Healthy);
+			self.update_state(peer_addr, State::Healthy)
 		} else {
-			return Err(Error::PeerNotBanned);
+			Err(Error::PeerNotBanned)
 		}
 	}
 
@@ -476,7 +469,7 @@ impl Peers {
 				.outgoing_connected_peers()
 				.iter()
 				.take(excess_outgoing_count)
-				.map(|x| x.info.addr.clone())
+				.map(|x| x.info.addr)
 				.collect::<Vec<_>>();
 			rm.append(&mut addrs);
 		}
@@ -489,7 +482,7 @@ impl Peers {
 				.incoming_connected_peers()
 				.iter()
 				.take(excess_incoming_count)
-				.map(|x| x.info.addr.clone())
+				.map(|x| x.info.addr)
 				.collect::<Vec<_>>();
 			rm.append(&mut addrs);
 		}
@@ -600,9 +593,6 @@ impl ChainAdapter for Peers {
 						chain::ErrorKind::Other(format!("ban peer error :{:?}", e)).into();
 					err
 				})?;
-			if self.is_chain_in_syncing() {
-				self.chain.reset_header_head()?;
-			}
 			Ok(false)
 		} else {
 			Ok(true)
@@ -741,10 +731,6 @@ impl ChainAdapter for Peers {
 
 	fn get_tmpfile_pathname(&self, tmpfile_name: String) -> PathBuf {
 		self.adapter.get_tmpfile_pathname(tmpfile_name)
-	}
-
-	fn is_chain_in_syncing(&self) -> bool {
-		self.adapter.is_chain_in_syncing()
 	}
 }
 

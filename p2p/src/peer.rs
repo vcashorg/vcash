@@ -152,7 +152,7 @@ impl Peer {
 
 	pub fn is_denied(config: &P2PConfig, peer_addr: PeerAddr) -> bool {
 		if let Some(ref denied) = config.peers_deny {
-			if denied.contains(&peer_addr) {
+			if denied.peers.contains(&peer_addr) {
 				debug!(
 					"checking peer allowed/denied: {:?} explicitly denied",
 					peer_addr
@@ -161,7 +161,7 @@ impl Peer {
 			}
 		}
 		if let Some(ref allowed) = config.peers_allow {
-			if allowed.contains(&peer_addr) {
+			if allowed.peers.contains(&peer_addr) {
 				debug!(
 					"checking peer allowed/denied: {:?} explicitly allowed",
 					peer_addr
@@ -597,10 +597,6 @@ impl ChainAdapter for TrackingAdapter {
 
 	fn get_tmpfile_pathname(&self, tmpfile_name: String) -> PathBuf {
 		self.adapter.get_tmpfile_pathname(tmpfile_name)
-	}
-
-	fn is_chain_in_syncing(&self) -> bool {
-		self.adapter.is_chain_in_syncing()
 	}
 }
 

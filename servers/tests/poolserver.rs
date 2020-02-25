@@ -14,6 +14,7 @@
 extern crate log;
 
 use self::core::global::{self, ChainTypes};
+use self::p2p::msg::PeerAddrs;
 use self::p2p::PeerAddr;
 use crate::core::core::get_grin_magic_data_str;
 use crate::core::core::hash::{Hash, Hashed};
@@ -26,6 +27,7 @@ use grin_p2p as p2p;
 use grin_servers as servers;
 use grin_util as util;
 use std::net::TcpStream;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::{fs, thread, time};
 
 /// return pool server config
@@ -50,6 +52,9 @@ pub fn clean_all_output(test_name_dir: &str) {
 /// Create and return a ServerConfig
 #[allow(dead_code)]
 pub fn config(n: u16, test_name_dir: &str, seed_n: u16) -> servers::ServerConfig {
+	let socket_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(120, 0, 0, 1)), 10000 + seed_n);
+	let peer_addr = PeerAddr(socket_addr);
+	let peers = vec![peer_addr];
 	servers::ServerConfig {
 		api_http_addr: format!("127.0.0.1:{}", 20000 + n),
 		api_secret_path: None,
@@ -57,9 +62,7 @@ pub fn config(n: u16, test_name_dir: &str, seed_n: u16) -> servers::ServerConfig
 		p2p_config: p2p::P2PConfig {
 			port: 10000 + n,
 			seeding_type: p2p::Seeding::List,
-			seeds: Some(vec![PeerAddr(
-				format!("127.0.0.1:{}", 10000 + seed_n).parse().unwrap(),
-			)]),
+			seeds: Some(PeerAddrs { peers }),
 			..p2p::P2PConfig::default()
 		},
 		chain_type: core::global::ChainTypes::AutomatedTesting,

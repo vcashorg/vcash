@@ -1,20 +1,19 @@
-use futures::future::{err, ok};
-use futures::{Future, Stream};
 use hyper::{Body, Request, Response, StatusCode};
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread;
 
-use crate::api::{ApiServer, /*BasicAuthMiddleware,*/ Handler, ResponseFuture, Router, TLSConfig,};
+use crate::api::{
+	parse_body, response, result_to_response, ApiServer, Error, ErrorKind,
+	/*BasicAuthMiddleware,*/ Handler, ResponseFuture, Router, TLSConfig,
+};
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::{AuxBitHeader, Block};
 use crate::core::global;
 use crate::util;
 
 use crate::core::consensus::reward;
-use crate::poolserver::error::{Error, ErrorKind};
 use crate::poolserver::handle_block::BlockHandler;
 use crate::poolserver::handle_block::JobInfo;
 
@@ -44,6 +43,7 @@ pub fn start_pool_server(
 	Ok(())
 }
 
+#[derive(Clone)]
 pub struct OwnerAPIHandler {
 	real_handler: BlockHandler,
 }
@@ -56,42 +56,110 @@ impl OwnerAPIHandler {
 		}
 	}
 
-	fn handle_get_request(&self, req: &Request<Body>) -> Result<Response<Body>, Error> {
-		Ok(
-			match req
-				.uri()
-				.path()
-				.trim_end_matches("/")
-				.rsplit("/")
-				.next()
-				.unwrap()
-			{
-				"getauxblock" => {
-					let new_block = self.real_handler.get_bitmining_block();
-					match new_block {
-						Ok((block, fee)) => {
-							let info = JobInfo {
-								height: block.header.height,
-								cur_hash: block.header.hash().to_hex(),
-								prev_hash: block.header.prev_hash.to_hex(),
-								bits: block.header.bits,
-								base_rewards: reward(block.header.height, 0),
-								transactions_fee: fee,
-							};
-							json_response(&info)
-						}
-						Err(e) => response(StatusCode::BAD_REQUEST, e),
-					}
-				}
-				_ => response(StatusCode::BAD_REQUEST, ""),
-			},
-		)
+	fn get_mining_block(&self) -> Result<JobInfo, Error> {
+		let new_block = self.real_handler.get_bitmining_block();
+		match new_block {
+			Ok((block, fee)) => {
+				let info = JobInfo {
+					height: block.header.height,
+					cur_hash: block.header.hash().to_hex(),
+					prev_hash: block.header.prev_hash.to_hex(),
+					bits: block.header.bits,
+					base_rewards: reward(block.header.height, 0),
+					transactions_fee: fee,
+				};
+				Ok(info)
+			}
+			Err(e) => Err(ErrorKind::Internal(e).into()),
+		}
 	}
 
-	fn handle_post_request(
-		&self,
-		req: Request<Body>,
-	) -> Box<dyn Future<Item = (), Error = Error> + Send> {
+	fn submit_aux_block(&self, job_info: SubmitInfo) -> Result<(), Error> {
+		let header_hash_result = Hash::from_hex(job_info.header_hash.as_str());
+		let block_data_ref: Option<Block>;
+		match header_hash_result.clone() {
+			Ok(header_hash) => {
+				let result = self.real_handler.get_miningblock_by_hash(&header_hash);
+				match result {
+					Ok(block) => block_data_ref = Some(block),
+					Err(e) => {
+						return Err(ErrorKind::Internal(e).into());
+					}
+				}
+			}
+			Err(e) => {
+				return Err(ErrorKind::Internal(
+					format!("fail to decode hash string to Hash:{}", e).to_string(),
+				)
+				.into());
+			}
+		}
+
+		let mut block_data = block_data_ref.unwrap();
+
+		let btc_header_result = AuxBitHeader::from_hex(job_info.btc_header.as_str());
+		if btc_header_result.is_err() {
+			return Err(ErrorKind::Internal(btc_header_result.clone().err().unwrap()).into());
+		}
+
+		let btc_coinbase_result = util::from_hex(job_info.btc_coinbase.clone());
+		if btc_coinbase_result.is_err() {
+			return Err(ErrorKind::Internal(
+				"btc coinbase fail to deserilise from hex".to_string(),
+			)
+			.into());
+		}
+
+		let mut str_vec: Vec<&str> = Vec::new();
+		let branch = job_info.btc_merkle_branch.as_str();
+		if branch.len() % 64 != 0 {
+			return Err(ErrorKind::Internal(
+				format!("btc merkle branch len is not right:{}", branch.len()).to_string(),
+			)
+			.into());
+		}
+
+		let mut i = 0;
+		while branch.len() > i {
+			str_vec.push(branch.get(i..i + 64).unwrap());
+			i = i + 64;
+		}
+		//job_info.btc_merkle_branch.as_str().split('-').collect();
+		let mut hash_vec: Vec<Hash> = Vec::new();
+		for str in str_vec {
+			let branch_item_ret = util::from_hex(str.to_string());
+			if branch_item_ret.is_err() {
+				return Err(ErrorKind::Internal(
+					format!("btc merkle branch item can not transfer to vecu8:{}", str).to_string(),
+				)
+				.into());
+			}
+			let mut branch_item = branch_item_ret.unwrap();
+			branch_item.reverse();
+			let hash = Hash::from_vec(&branch_item);
+			hash_vec.push(hash);
+		}
+
+		// This is a full solution, submit it to the network
+		if block_data.header.height >= global::refactor_header_height() {
+			block_data.header.btc_pow.aux_header = btc_header_result.unwrap();
+			block_data.header.btc_pow.merkle_branch = hash_vec;
+			block_data.header.btc_pow.coinbase_tx = btc_coinbase_result.unwrap();
+		} else {
+			block_data.aux_data.aux_header = btc_header_result.unwrap();
+			block_data.aux_data.merkle_branch = hash_vec;
+			block_data.aux_data.coinbase_tx = btc_coinbase_result.unwrap();
+		};
+
+		match self.real_handler.submit_block(block_data) {
+			Ok(_) => Ok(()),
+			Err(str) => Err(ErrorKind::Internal(str).into()),
+		}
+	}
+}
+
+impl Handler for OwnerAPIHandler {
+	fn get(&self, req: Request<Body>) -> ResponseFuture {
 		match req
 			.uri()
 			.path()
@@ -100,185 +168,58 @@ impl OwnerAPIHandler {
 			.next()
 			.unwrap()
 		{
-			"submitauxblock" => {
-				let clone_handler = self.real_handler.clone();
-				Box::new(
-					parse_body(req)
-						.and_then(move |job_info: SubmitInfo| {
-							let header_hash_result = Hash::from_hex(job_info.header_hash.as_str());
-							let block_data_ref: Option<Block>;
-							match header_hash_result.clone() {
-								Ok(header_hash) => {
-									let result =
-										clone_handler.get_miningblock_by_hash(&header_hash);
-									match result {
-										Ok(block) => block_data_ref = Some(block),
-										Err(e) => {
-											return err(ErrorKind::GenericError(e).into());
-										}
-									}
-								}
-								Err(e) => {
-									return err(ErrorKind::GenericError(
-										format!("fail to decode hash string to Hash:{}", e)
-											.to_string(),
-									)
-									.into());
-								}
-							}
-
-							let mut block_data = block_data_ref.unwrap();
-
-							let btc_header_result =
-								AuxBitHeader::from_hex(job_info.btc_header.as_str());
-							if btc_header_result.is_err() {
-								return err(ErrorKind::GenericError(
-									btc_header_result.clone().err().unwrap(),
-								)
-								.into());
-							}
-
-							let btc_coinbase_result = util::from_hex(job_info.btc_coinbase.clone());
-							if btc_coinbase_result.is_err() {
-								return err(ErrorKind::GenericError(
-									"btc coinbase fail to deserilise from hex".to_string(),
-								)
-								.into());
-							}
-
-							let mut str_vec: Vec<&str> = Vec::new();
-							let branch = job_info.btc_merkle_branch.as_str();
-							if branch.len() % 64 != 0 {
-								return err(ErrorKind::GenericError(
-									format!("btc merkle branch len is not right:{}", branch.len())
-										.to_string(),
-								)
-								.into());
-							}
-
-							let mut i = 0;
-							while branch.len() > i {
-								str_vec.push(branch.get(i..i + 64).unwrap());
-								i = i + 64;
-							}
-							//job_info.btc_merkle_branch.as_str().split('-').collect();
-							let mut hash_vec: Vec<Hash> = Vec::new();
-							for str in str_vec {
-								let branch_item_ret = util::from_hex(str.to_string());
-								if branch_item_ret.is_err() {
-									return err(ErrorKind::GenericError(
-										format!(
-											"btc merkle branch item can not transfer to vecu8:{}",
-											str
-										)
-										.to_string(),
-									)
-									.into());
-								}
-								let mut branch_item = branch_item_ret.unwrap();
-								branch_item.reverse();
-								let hash = Hash::from_vec(&branch_item);
-								hash_vec.push(hash);
-							}
-
-							// This is a full solution, submit it to the network
-							if block_data.header.height >= global::refactor_header_height() {
-								block_data.header.btc_pow.aux_header = btc_header_result.unwrap();
-								block_data.header.btc_pow.merkle_branch = hash_vec;
-								block_data.header.btc_pow.coinbase_tx =
-									btc_coinbase_result.unwrap();
-							} else {
-								block_data.aux_data.aux_header = btc_header_result.unwrap();
-								block_data.aux_data.merkle_branch = hash_vec;
-								block_data.aux_data.coinbase_tx = btc_coinbase_result.unwrap();
-							};
-							//pipe::validate_block_auxdata(&block_data);
-
-							let response = match clone_handler.submit_block(block_data) {
-								Ok(_) => ok(()),
-								Err(str) => err(ErrorKind::GenericError(str).into()),
-							};
-							response
-						})
-						.or_else(|e| err(e)),
-				)
-			}
-			_ => Box::new(err(ErrorKind::GenericError("wrong uri".to_string()).into())),
-		}
-	}
-}
-
-impl Handler for OwnerAPIHandler {
-	fn get(&self, req: Request<Body>) -> ResponseFuture {
-		match self.handle_get_request(&req) {
-			Ok(r) => Box::new(ok(r)),
-			Err(e) => {
-				error!("Request Error: {:?}", e);
-				Box::new(ok(create_error_response(e)))
-			}
+			"getauxblock" => result_to_response(self.get_mining_block()),
+			_ => response(StatusCode::BAD_REQUEST, ""),
 		}
 	}
 
 	fn post(&self, req: Request<Body>) -> ResponseFuture {
-		Box::new(
-			self.handle_post_request(req)
-				.and_then(|_| ok(response(StatusCode::OK, "")))
-				.or_else(|e| ok(response(StatusCode::BAD_REQUEST, format!("Error: {:?}", e)))),
-		)
+		let owner = self.clone();
+		match req
+			.uri()
+			.path()
+			.trim_end_matches("/")
+			.rsplit("/")
+			.next()
+			.unwrap()
+		{
+			"submitauxblock" => Box::pin(async move {
+				match parse_body(req).await {
+					Ok(val) => match owner.submit_aux_block(val) {
+						Ok(_) => Ok(local_response(StatusCode::OK, "{}")),
+						Err(e) => Ok(local_response(
+							StatusCode::INTERNAL_SERVER_ERROR,
+							format!("submitauxblock failed: {}", e),
+						)),
+					},
+					Err(_) => Ok(local_response(StatusCode::BAD_REQUEST, "")),
+				}
+			}),
+			_ => response(StatusCode::BAD_REQUEST, ""),
+		}
 	}
 }
 
-// Utility to serialize a struct into JSON and produce a sensible Response
-// out of it.
-fn json_response<T>(s: &T) -> Response<Body>
-where
-	T: Serialize,
-{
-	match serde_json::to_string(s) {
-		Ok(json) => response(StatusCode::OK, json),
-		Err(_) => response(StatusCode::INTERNAL_SERVER_ERROR, ""),
-	}
-}
+/// Build a new hyper Response with the status code and body provided.
+///
+/// Whenever the status code is `StatusCode::OK` the text parameter should be
+/// valid JSON as the content type header will be set to `application/json'
+fn local_response<T: Into<Body>>(status: StatusCode, text: T) -> Response<Body> {
+	let mut builder = Response::builder();
 
-fn response<T: Into<Body>>(status: StatusCode, text: T) -> Response<Body> {
-	Response::builder()
+	builder = builder
 		.status(status)
 		.header("access-control-allow-origin", "*")
 		.header(
 			"access-control-allow-headers",
 			"Content-Type, Authorization",
-		)
-		.body(text.into())
-		.unwrap()
-}
+		);
 
-fn create_error_response(e: Error) -> Response<Body> {
-	Response::builder()
-		.status(StatusCode::INTERNAL_SERVER_ERROR)
-		.header("access-control-allow-origin", "*")
-		.header(
-			"access-control-allow-headers",
-			"Content-Type, Authorization",
-		)
-		.body(format!("{}", e).into())
-		.unwrap()
-}
+	if status == StatusCode::OK {
+		builder = builder.header(hyper::header::CONTENT_TYPE, "application/json");
+	}
 
-fn parse_body<T>(req: Request<Body>) -> Box<dyn Future<Item = T, Error = Error> + Send>
-where
-	for<'de> T: Deserialize<'de> + Send + 'static,
-{
-	Box::new(
-		req.into_body()
-			.concat2()
-			.map_err(|_| ErrorKind::GenericError("Failed to read request".to_owned()).into())
-			.and_then(|body| match serde_json::from_reader(&body.to_vec()[..]) {
-				Ok(obj) => ok(obj),
-				Err(e) => {
-					err(ErrorKind::GenericError(format!("Invalid request body: {}", e)).into())
-				}
-			}),
-	)
+	builder.body(text.into()).unwrap()
 }
 
 /// Pool submit info

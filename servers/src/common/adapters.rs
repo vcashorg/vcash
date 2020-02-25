@@ -472,10 +472,6 @@ impl p2p::ChainAdapter for NetToChainAdapter {
 	fn get_tmpfile_pathname(&self, tmpfile_name: String) -> PathBuf {
 		self.chain().get_tmpfile_pathname(tmpfile_name)
 	}
-
-	fn is_chain_in_syncing(&self) -> bool {
-		return self.sync_state.is_syncing();
-	}
 }
 
 impl NetToChainAdapter {
