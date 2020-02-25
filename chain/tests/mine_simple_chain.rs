@@ -624,11 +624,14 @@ fn spend_rewind_spend() {
 
 #[test]
 fn spend_in_fork_and_compact() {
-	clean_output_dir(".grin6");
+	clean_output_dir(".spend_in_fork_and_compact");
 	global::set_mining_mode(ChainTypes::AutomatedTesting);
 	util::init_test_logger();
 	{
-		let chain = init_chain(".grin6", pow::mine_genesis_block().unwrap());
+		let chain = init_chain(
+			".spend_in_fork_and_compact",
+			pow::mine_genesis_block().unwrap(),
+		);
 		let prev = chain.head_header().unwrap();
 		let kc = ExtKeychain::from_random_seed(false).unwrap();
 		let pb = ProofBuilder::new(&kc);
