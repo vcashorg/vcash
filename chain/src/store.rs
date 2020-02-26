@@ -577,7 +577,7 @@ impl<'a> Batch<'a> {
 	pub fn get_token_spent_index(&self, bh: &Hash) -> Result<Vec<CommitPos>, Error> {
 		option_to_not_found(
 			self.db
-				.get_ser(&to_key(BLOCK_SPENT_PREFIX, &mut bh.to_vec())),
+				.get_ser(&to_key(TOKEN_BLOCK_SPENT_PREFIX, &mut bh.to_vec())),
 			|| format!("spent index: {}", bh),
 		)
 	}

@@ -1979,7 +1979,6 @@ impl<'a> Extension<'a> {
 		self.validate_mmrs()?;
 		self.validate_roots(header)?;
 		self.validate_sizes(header)?;
-		let block_token_sums = self.validate_token_kernel_sums()?;
 
 		if self.head.height == 0 {
 			let zero_commit = secp_static::commit_to_zero_value();
@@ -1989,6 +1988,7 @@ impl<'a> Extension<'a> {
 		// The real magicking happens here. Sum of kernel excesses should equal
 		// sum of unspent outputs minus total supply.
 		let (output_sum, kernel_sum) = self.validate_kernel_sums(genesis, header)?;
+		let block_token_sums = self.validate_token_kernel_sums()?;
 
 		// These are expensive verification step (skipped for "fast validation").
 		if !fast_validation {

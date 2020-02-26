@@ -206,6 +206,7 @@ impl Chain {
 		{
 			let batch = store.batch()?;
 			txhashset.init_output_pos_index(&header_pmmr, &batch)?;
+			txhashset.init_token_output_pos_index(&header_pmmr, &batch)?;
 			batch.commit()?;
 		}
 
@@ -1056,6 +1057,7 @@ impl Chain {
 
 		// Rebuild our output_pos index in the db based on fresh UTXO set.
 		txhashset.init_output_pos_index(&header_pmmr, &batch)?;
+		txhashset.init_token_output_pos_index(&header_pmmr, &batch)?;
 
 		// Commit all the changes to the db.
 		batch.commit()?;
@@ -1192,6 +1194,7 @@ impl Chain {
 
 		// Make sure our output_pos index is consistent with the UTXO set.
 		txhashset.init_output_pos_index(&header_pmmr, &batch)?;
+		txhashset.init_token_output_pos_index(&header_pmmr, &batch)?;
 
 		// Commit all the above db changes.
 		batch.commit()?;
