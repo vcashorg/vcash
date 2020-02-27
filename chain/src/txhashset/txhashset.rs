@@ -1504,7 +1504,7 @@ impl<'a> Extension<'a> {
 		&mut self,
 		token_out: &TokenOutput,
 		batch: &Batch<'_>,
-	) -> Result<(u64), Error> {
+	) -> Result<u64, Error> {
 		let commit = token_out.commitment();
 
 		if let Ok((pos, _)) = batch.get_token_output_pos_height(&commit) {
@@ -1551,7 +1551,7 @@ impl<'a> Extension<'a> {
 		&mut self,
 		token_out: &TokenOutput,
 		batch: &Batch<'_>,
-	) -> Result<(u64), Error> {
+	) -> Result<u64, Error> {
 		if token_out.is_token() {
 			return Err(ErrorKind::Other(format!("token_output is not a token issue")).into());
 		}
