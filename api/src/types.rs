@@ -733,6 +733,8 @@ pub struct BlockHeaderPrintable {
 	pub token_kernel_root: String,
 	/// mergemining diff
 	pub bits: u32,
+	/// diff mask
+	pub mask: String,
 	/// Nonce increment used to mine this block.
 	pub nonce: u64,
 	/// Size of the cuckoo graph
@@ -764,6 +766,7 @@ impl BlockHeaderPrintable {
 			token_issue_proof_root: util::to_hex(header.token_issue_proof_root.to_vec()),
 			token_kernel_root: util::to_hex(header.token_kernel_root.to_vec()),
 			bits: header.bits,
+			mask: util::to_hex(header.mask.to_vec()),
 			nonce: header.pow.nonce,
 			edge_bits: header.pow.edge_bits(),
 			cuckoo_solution: header.pow.proof.nonces.clone(),
@@ -987,8 +990,7 @@ mod test {
 
 	#[test]
 	fn serialize_output_printable() {
-		let hex_output =
-			"{\
+		let hex_output = "{\
 			 \"output_type\":\"Coinbase\",\
 			 \"token_type\":null,\
 			 \"commit\":\"083eafae5d61a85ab07b12e1a51b3918d8e6de11fc6cde641d54af53608aa77b9f\",\
@@ -1003,8 +1005,7 @@ mod test {
 		let serialized = serde_json::to_string(&deserialized).unwrap();
 		assert_eq!(serialized, hex_output);
 
-		let hex_output =
-			"{\
+		let hex_output = "{\
 			 \"output_type\":\"Coinbase\",\
 			 \"token_type\":\"5e330f8564155e85414b49017280c0e5a0bd896261ac02c1b0f5292339aad438\",\
 			 \"commit\":\"083eafae5d61a85ab07b12e1a51b3918d8e6de11fc6cde641d54af53608aa77b9f\",\
@@ -1022,8 +1023,7 @@ mod test {
 
 	#[test]
 	fn serialize_output() {
-		let hex_commit =
-			"{\
+		let hex_commit = "{\
 			 \"commit\":\"083eafae5d61a85ab07b12e1a51b3918d8e6de11fc6cde641d54af53608aa77b9f\",\
 			 \"height\":0,\
 			 \"mmr_index\":0\

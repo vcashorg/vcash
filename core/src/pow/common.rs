@@ -27,6 +27,7 @@ use std::ops::{BitOrAssign, Mul};
 use crate::core::hash::Hash as BitHash;
 use crate::num_bigint::BigUint;
 use crate::pow::num::FromPrimitive;
+use rand::{thread_rng, Rng};
 
 /// Operations needed for edge type (going to be u32 or u64)
 pub trait EdgeType: PrimInt + ToPrimitive + Mul + BitOrAssign + Hash {}
@@ -280,10 +281,142 @@ fn get_biguint_low64(bignum: &BigUint) -> u64 {
 	new_num.to_u64().unwrap()
 }
 
+/// create random mask by miner_bits
+pub fn random_mask(nbits: u32) -> Result<BitHash, String> {
+	let mut mask = [0u8; 32];
+	let mut rng = thread_rng();
+	rng.fill(&mut mask);
+
+	let biguint = compact_to_biguint(nbits);
+	if biguint.is_some() {
+		let biguint = biguint.unwrap();
+		let hash = biguint_to_hash(biguint);
+		let bytes = hash.as_bytes();
+		let mut iter = bytes.len() - 1;
+		loop {
+			mask[iter] = 0;
+			if bytes[iter] != 0 || iter == 0 {
+				break;
+			}
+			iter = iter - 1;
+		}
+
+		return Ok(BitHash::from_vec(&mask));
+	}
+
+	return Err("Bad bits".to_string());
+}
+
+/// use mask to header hash
+pub fn pow_hash_after_mask(hash: BitHash, mask: BitHash) -> BitHash {
+	let hash_bytes = hash.as_bytes();
+	let mask_bytes = mask.as_bytes();
+	let mut new_bytes = [0 as u8; 32];
+	for i in 0..hash_bytes.len() {
+		new_bytes[i] = hash_bytes[i] ^ mask_bytes[i];
+	}
+
+	return BitHash::from_vec(new_bytes.as_ref());
+}
+
 #[cfg(test)]
 mod test {
 	use super::*;
 	use crate::core::hash::ZERO_HASH;
+
+	#[test]
+	fn pow_hash_after_mask_test() {
+		let origin_hash_0 =
+			BitHash::from_hex("3a42e66e46dd7633b57d1f921780a1ac715e6b93c19ee52ab714178eb3a9f673")
+				.unwrap();
+		let mask_hash_0 =
+			BitHash::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
+				.unwrap();
+		let pow_hash_0 = pow_hash_after_mask(origin_hash_0, mask_hash_0);
+		let target_hash_0 = origin_hash_0;
+		assert_eq!(pow_hash_0, target_hash_0);
+
+		let origin_hash_1 =
+			BitHash::from_hex("0101010101010101010101010101010101010101010101010101010101010101")
+				.unwrap();
+		let mask_hash_1 =
+			BitHash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")
+				.unwrap();
+		let pow_hash_1 = pow_hash_after_mask(origin_hash_1, mask_hash_1);
+		let target_hash_1 =
+			BitHash::from_hex("1010101010101010101010101010101010101010101010101010101010101010")
+				.unwrap();
+		assert_eq!(pow_hash_1, target_hash_1);
+
+		let origin_hash_2 =
+			BitHash::from_hex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+				.unwrap();
+		let mask_hash_2 =
+			BitHash::from_hex("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+				.unwrap();
+		let pow_hash_2 = pow_hash_after_mask(origin_hash_2, mask_hash_2);
+		let target_hash_2 =
+			BitHash::from_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+				.unwrap();
+		assert_eq!(pow_hash_2, target_hash_2);
+	}
+
+	#[test]
+	fn random_mask_test() {
+		// diff 2^0, hash = "00000000ffff0000000000000000000000000000000000000000000000000000"
+		let bits_0 = 486604799;
+		let random_0 = random_mask(bits_0).unwrap().to_hex();
+		let random_str_0 = random_0.as_str();
+		assert!(random_str_0.ends_with("0000000000"));
+
+		// diff 2^10, hash = "00000000003fffc0000000000000000000000000000000000000000000000000"
+		let bits_1 = 457179072;
+		let random_1 = random_mask(bits_1).unwrap().to_hex();
+		let random_str_1 = random_1.as_str();
+		assert!(random_str_1.ends_with("000000000000"));
+
+		// diff 2^20, hash = "0000000000000ffff00000000000000000000000000000000000000000000000"
+		let bits_2 = 437256176;
+		let random_2 = random_mask(bits_2).unwrap().to_hex();
+		let random_str_2 = random_2.as_str();
+		assert!(random_str_2.ends_with("00000000000000"));
+
+		// diff 2^30, hash = "0000000000000003fffc00000000000000000000000000000000000000000000"
+		let bits_3 = 419692540;
+		let random_3 = random_mask(bits_3).unwrap().to_hex();
+		let random_str_3 = random_3.as_str();
+		assert!(random_str_3.ends_with("0000000000000000"));
+
+		// diff 2^40, hash = "000000000000000000ffff000000000000000000000000000000000000000000"
+		let bits_4 = 402718719;
+		let random_4 = random_mask(bits_4).unwrap().to_hex();
+		let random_str_4 = random_4.as_str();
+		assert!(random_str_4.ends_with("00000000000000000000"));
+
+		// diff 2^50, hash = "000000000000000000003fffc000000000000000000000000000000000000000"
+		let bits_5 = 373292992;
+		let random_5 = random_mask(bits_5).unwrap().to_hex();
+		let random_str_5 = random_5.as_str();
+		assert!(random_str_5.ends_with("0000000000000000000000"));
+
+		// diff 2^60, hash = "00000000000000000000000ffff0000000000000000000000000000000000000"
+		let bits_6 = 353370096;
+		let random_6 = random_mask(bits_6).unwrap().to_hex();
+		let random_str_6 = random_6.as_str();
+		assert!(random_str_6.ends_with("000000000000000000000000"));
+
+		// hash = "00000000000005db8b0000000000000000000000000000000000000000000000"
+		let bits_7 = 436591499;
+		let random_7 = random_mask(bits_7).unwrap().to_hex();
+		let random_str_7 = random_7.as_str();
+		assert!(random_str_7.ends_with("00000000000000"));
+
+		// hash = "0000000000000000896c00000000000000000000000000000000000000000000"
+		let bits_8 = 419465580;
+		let random_8 = random_mask(bits_8).unwrap().to_hex();
+		let random_str_8 = random_8.as_str();
+		assert!(random_str_8.ends_with("000000000000000000"));
+	}
 
 	#[test]
 	fn biguint_hash_test() {

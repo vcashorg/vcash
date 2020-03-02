@@ -35,7 +35,7 @@ use util::RwLock;
 /// Note: We also use a specific (possible different) protocol version
 /// for both the backend database and MMR data files.
 /// This defines the p2p layer protocol version for this node.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Automated testing edge_bits
 pub const AUTOMATED_TESTING_MIN_EDGE_BITS: u8 = 9;
@@ -107,6 +107,12 @@ const REFACTOR_HEADER_HEIGHT: u64 = (45_120 + 720);
 
 /// Testing support header without Cuckoo Cycle Proof
 const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
+
+/// Support header without Cuckoo Cycle Proof
+const SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 82_000;
+
+/// Testing support header without Cuckoo Cycle Proof
+const FLOONET_SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 180;
 
 /// Number of blocks to reuse a txhashset zip for (automated testing and user testing).
 pub const TESTING_TXHASHSET_ARCHIVE_INTERVAL: u64 = 10;
@@ -224,6 +230,16 @@ pub fn refactor_header_height() -> u64 {
 	match *param_ref {
 		ChainTypes::Floonet => FLOONET_REFACTOR_HEADER_HEIGHT,
 		ChainTypes::Mainnet => REFACTOR_HEADER_HEIGHT,
+		_ => 0,
+	}
+}
+
+/// Solve Block Withholding Attack height
+pub fn solve_block_withholding_height() -> u64 {
+	let param_ref = CHAIN_TYPE.read();
+	match *param_ref {
+		ChainTypes::Floonet => FLOONET_SOLVE_BLOCK_WITHHOLDING_HEIGHT,
+		ChainTypes::Mainnet => SOLVE_BLOCK_WITHHOLDING_HEIGHT,
 		_ => 0,
 	}
 }

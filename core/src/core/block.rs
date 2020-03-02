@@ -263,6 +263,8 @@ pub struct BlockHeader {
 	pub token_issue_proof_mmr_size: u64,
 	/// Total size of the token kernel MMR after applying this block
 	pub token_kernel_mmr_size: u64,
+	/// diff mask
+	pub mask: Hash,
 	/// Proof of work and related
 	pub pow: ProofOfWork,
 	/// Work Proof of Bitcoin
@@ -294,6 +296,7 @@ impl Default for BlockHeader {
 			bits: 0,
 			pow: ProofOfWork::default(),
 			btc_pow: BlockAuxData::default(),
+			mask: ZERO_HASH,
 		}
 	}
 }
@@ -386,6 +389,13 @@ fn read_block_header(reader: &mut dyn Reader) -> Result<BlockHeader, ser::Error>
 		(ZERO_HASH, ZERO_HASH, ZERO_HASH, ZERO_HASH, 0, 0, 0)
 	};
 
+	let mask = if height >= global::solve_block_withholding_height() {
+		let mask = Hash::read(reader)?;
+		mask
+	} else {
+		ZERO_HASH
+	};
+
 	let (pow, btc_pow) = if height >= global::refactor_header_height() {
 		let mut pow = ProofOfWork::default();
 		let btc_pow = BlockAuxData::read(reader)?;
@@ -423,6 +433,7 @@ fn read_block_header(reader: &mut dyn Reader) -> Result<BlockHeader, ser::Error>
 		bits,
 		pow,
 		btc_pow,
+		mask,
 	})
 }
 
@@ -462,6 +473,10 @@ impl BlockHeader {
 				[write_u64, self.token_issue_proof_mmr_size],
 				[write_u64, self.token_kernel_mmr_size]
 			);
+		}
+
+		if self.height >= global::solve_block_withholding_height() {
+			writer.write_fixed_bytes(&self.mask)?;
 		}
 
 		Ok(())

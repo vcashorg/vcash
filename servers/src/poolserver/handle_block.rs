@@ -16,9 +16,11 @@ use crate::core::core::{Block, BlockHeader};
 use crate::core::core::{Output, TxKernel};
 use crate::core::libtx::secp_ser;
 use crate::core::libtx::ProofBuilder;
+use crate::core::pow::random_mask;
 use crate::core::{consensus, core, global};
 use crate::keychain::{ExtKeychain, Identifier, Keychain};
 use crate::pool;
+use grin_core::core::hash::ZERO_HASH;
 use serde_json::{json, Value};
 
 /// Fees in block to use for coinbase amount calculation
@@ -79,6 +81,52 @@ impl BlockHandler {
 			waiting_bitming_block: Arc::new(RwLock::new(None)),
 			mining_blocks: Arc::new(RwLock::new(HashMap::new())),
 			notify_urls: Arc::new(notify_urls),
+		}
+	}
+
+	pub fn get_bitmining_block_v2(
+		&self,
+		miner_bits: Vec<u32>,
+	) -> Result<SolveBlockWithholdingJobInfo, String> {
+		let mining_block = { self.waiting_bitming_block.read().clone() };
+		match mining_block {
+			Some((block, fee)) => {
+				if block.header.height >= global::solve_block_withholding_height() {
+					let mut job_infos = vec![];
+					for miner_bit in miner_bits {
+						let mask = match random_mask(miner_bit) {
+							Ok(mask) => mask,
+							Err(_) => ZERO_HASH,
+						};
+						let mut block = block.clone();
+						block.header.mask = mask;
+						let job_info = MinerJobInfo {
+							cur_hash: block.header.hash().to_hex(),
+							miner_base_bits: miner_bit,
+							mask: mask.to_hex(),
+						};
+						job_infos.push(job_info);
+						self.mining_blocks
+							.write()
+							.insert(block.header.hash(), block.clone());
+					}
+					let info = SolveBlockWithholdingJobInfo {
+						height: block.header.height,
+						prev_hash: block.header.prev_hash.to_hex(),
+						bits: block.header.bits,
+						base_rewards: reward(block.header.height, 0),
+						transactions_fee: fee,
+						miner_info: job_infos,
+					};
+					Ok(info)
+				} else {
+					Err(format!(
+						"Feature Solve Block withholding Attack will be activated at height {}.",
+						global::solve_block_withholding_height()
+					))
+				}
+			}
+			None => Err("Waiting PoolCenter internal mining result, try again later!".to_string()),
 		}
 	}
 
@@ -165,8 +213,8 @@ impl BlockHandler {
 					need_notify_pool = false;
 				}
 
-				//sleep 10s, if chain head change break immediately
-				let sleep_deadline = Utc::now().timestamp() + 10;
+				//sleep 20s, if chain head change break immediately
+				let sleep_deadline = Utc::now().timestamp() + 20;
 				while Utc::now().timestamp() < sleep_deadline {
 					let new_header_hash = self.chain.head().unwrap().last_block_h;
 					if head.hash() != new_header_hash {
@@ -533,4 +581,32 @@ pub struct JobInfo {
 	pub base_rewards: u64,
 	/// vcash fee
 	pub transactions_fee: u64,
+}
+
+/// pool mining solve block withholding job info
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SolveBlockWithholdingJobInfo {
+	/// vcash height
+	pub height: u64,
+	/// vcash prev hash
+	pub prev_hash: String,
+	/// vcash bits
+	pub bits: u32,
+	/// vcash reward
+	pub base_rewards: u64,
+	/// vcash fee
+	pub transactions_fee: u64,
+	/// miner info
+	pub miner_info: Vec<MinerJobInfo>,
+}
+
+/// pool mining solve block withholding job info
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MinerJobInfo {
+	/// vcash current hash
+	pub cur_hash: String,
+	/// miner base diff
+	pub miner_base_bits: u32,
+	/// diff mask
+	pub mask: String,
 }

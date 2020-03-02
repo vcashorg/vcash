@@ -20,7 +20,7 @@ use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::Committed;
 use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader, BlockSums, BlockTokenSums};
 use crate::core::global;
-use crate::core::pow::{self, compact_to_biguint, hash_to_biguint};
+use crate::core::pow::{self, compact_to_biguint, hash_to_biguint, pow_hash_after_mask};
 use crate::error::{Error, ErrorKind};
 use crate::store;
 use crate::txhashset;
@@ -55,7 +55,8 @@ fn validate_block_auxdata(bheader: &BlockHeader, ctx: &mut BlockContext<'_>) -> 
 
 	//1,btc_header difficulty is bigger enough
 	let btc_header_hash = bheader.btc_pow.aux_header.dhash();
-	let cur_diff = hash_to_biguint(btc_header_hash);
+	let mask_header_hash = pow_hash_after_mask(btc_header_hash, bheader.mask);
+	let cur_diff = hash_to_biguint(mask_header_hash);
 	let target_diff_option = compact_to_biguint(bheader.bits);
 	if target_diff_option.is_none() {
 		return Err(ErrorKind::BitDifficultyTooLow.into());
