@@ -1686,11 +1686,15 @@ impl<'a> Extension<'a> {
 			)?;
 			self.apply_to_bitmap_accumulator(&[header.output_mmr_size])?;
 		} else {
+			let mut affected_pos = vec![];
 			let mut current = head_header;
 			while header.height < current.height {
-				self.rewind_single_block(&current, batch)?;
+				let mut affected_pos_single_block = self.rewind_single_block(&current, batch)?;
+				affected_pos.append(&mut affected_pos_single_block);
 				current = batch.get_previous_header(&current)?;
 			}
+			// Now apply a single aggregate "affected_pos" to our bitmap accumulator.
+			self.apply_to_bitmap_accumulator(&affected_pos)?;
 		}
 
 		// Update our head to reflect the header we rewound to.
@@ -1699,12 +1703,14 @@ impl<'a> Extension<'a> {
 		Ok(())
 	}
 
-	// Rewind the MMRs, the bitmap accumulator and the output_pos index.
+	// Rewind the MMRs and the output_pos index.
+	// Returns a vec of "affected_pos" so we can apply the necessary updates to the bitmap
+	// accumulator in a single pass for all rewound blocks.
 	fn rewind_single_block(
 		&mut self,
 		header: &BlockHeader,
 		batch: &Batch<'_>,
-	) -> Result<(), Error> {
+	) -> Result<Vec<u64>, Error> {
 		// The spent index allows us to conveniently "unspend" everything in a block.
 		let spent = batch.get_spent_index(&header.hash());
 		let token_spent = batch.get_token_spent_index(&header.hash());
@@ -1753,15 +1759,39 @@ impl<'a> Extension<'a> {
 		// Treat last_pos as an affected output to ensure we rebuild far enough back.
 		let mut affected_pos = spent_pos.clone();
 		affected_pos.push(self.output_pmmr.last_pos);
-		self.apply_to_bitmap_accumulator(&affected_pos)?;
 
 		// Remove any entries from the output_pos created by the block being rewound.
 		let block = batch.get_block(&header.hash())?;
+		let mut missing_count = 0;
 		for out in block.outputs() {
-			batch.delete_output_pos_height(&out.commitment())?;
+			if batch.delete_output_pos_height(&out.commitment()).is_err() {
+				missing_count += 1;
+			}
 		}
+		if missing_count > 0 {
+			warn!(
+				"rewind_single_block: {} output_pos entries missing for: {} at {}",
+				missing_count,
+				header.hash(),
+				header.height,
+			);
+		}
+		let mut token_missing_count = 0;
 		for token_out in block.token_outputs() {
-			batch.delete_token_output_pos_height(&token_out.commitment())?;
+			if batch
+				.delete_token_output_pos_height(&token_out.commitment())
+				.is_err()
+			{
+				token_missing_count += 1;
+			}
+		}
+		if token_missing_count > 0 {
+			warn!(
+				"rewind_single_block: {} token_output_pos entries missing for: {} at {}",
+				missing_count,
+				header.hash(),
+				header.height,
+			);
 		}
 
 		// Update output_pos based on "unspending" all spent pos from this block.
@@ -1779,7 +1809,7 @@ impl<'a> Extension<'a> {
 			}
 		}
 
-		Ok(())
+		Ok(affected_pos)
 	}
 
 	/// Rewinds the MMRs to the provided positions, given the output and

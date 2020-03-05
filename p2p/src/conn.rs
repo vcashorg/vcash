@@ -31,6 +31,7 @@ use crate::util::{RateCounter, RwLock};
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use std::{
@@ -80,9 +81,7 @@ macro_rules! try_break {
 
 macro_rules! try_header {
 	($res:expr, $conn: expr) => {{
-		$conn
-			.set_read_timeout(Some(HEADER_IO_TIMEOUT))
-			.expect("set timeout");
+		let _ = $conn.set_read_timeout(Some(HEADER_IO_TIMEOUT));
 		try_break!($res)
 		}};
 }
@@ -300,9 +299,7 @@ where
 				// check the read end
 				match try_header!(read_header(&mut reader, version), &reader) {
 					Some(MsgHeaderWrapper::Known(header)) => {
-						reader
-							.set_read_timeout(Some(BODY_IO_TIMEOUT))
-							.expect("set timeout");
+						let _ = reader.set_read_timeout(Some(BODY_IO_TIMEOUT));
 						let msg = Message::from_header(header, &mut reader, version);
 
 						trace!(
@@ -356,19 +353,25 @@ where
 		.name("peer_write".to_string())
 		.spawn(move || {
 			let mut retry_send = Err(());
-			writer
-				.set_write_timeout(Some(BODY_IO_TIMEOUT))
-				.expect("set timeout");
+			let _ = writer.set_write_timeout(Some(BODY_IO_TIMEOUT));
 			loop {
 				let maybe_data = retry_send.or_else(|_| send_rx.recv_timeout(CHANNEL_TIMEOUT));
 				retry_send = Err(());
-				if let Ok(data) = maybe_data {
-					let written =
-						try_break!(write_message(&mut writer, &data, writer_tracker.clone()));
-					if written.is_none() {
-						retry_send = Ok(data);
+				match maybe_data {
+					Ok(data) => {
+						let written =
+							try_break!(write_message(&mut writer, &data, writer_tracker.clone()));
+						if written.is_none() {
+							retry_send = Ok(data);
+						}
 					}
+					Err(RecvTimeoutError::Disconnected) => {
+						debug!("peer_write: mpsc channel disconnected during recv_timeout");
+						break;
+					}
+					Err(RecvTimeoutError::Timeout) => {}
 				}
+
 				// check the close channel
 				if stopped.load(Ordering::Relaxed) {
 					break;
@@ -382,6 +385,7 @@ where
 					.map(|a| a.to_string())
 					.unwrap_or_else(|_| "?".to_owned())
 			);
+			let _ = writer.shutdown(Shutdown::Both);
 		})?;
 	Ok((reader_thread, writer_thread))
 }
