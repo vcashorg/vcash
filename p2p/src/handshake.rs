@@ -14,6 +14,7 @@
 
 use crate::conn::Tracker;
 use crate::core::core::hash::Hash;
+use crate::core::global;
 use crate::core::pow::Difficulty;
 use crate::core::ser::ProtocolVersion;
 use crate::msg::{read_message, write_message, Hand, Msg, Shake, Type, USER_AGENT};
@@ -87,7 +88,18 @@ impl Handshake {
 	/// We can enforce "minimum" protocol version here in the future
 	/// by raising an error and forcing the connection to close.
 	///
-	fn negotiate_protocol_version(&self, other: ProtocolVersion) -> Result<ProtocolVersion, Error> {
+	fn negotiate_protocol_version(
+		&self,
+		other: ProtocolVersion,
+		local_diff: Difficulty,
+	) -> Result<ProtocolVersion, Error> {
+		let cur_height = local_diff.to_num() - 1;
+		if cur_height >= global::support_token_height() {
+			if other.value() < 2 {
+				return Err(Error::LowProtocolVersion);
+			}
+		}
+
 		let version = std::cmp::min(self.protocol_version, other);
 		Ok(version)
 	}
@@ -135,7 +147,8 @@ impl Handshake {
 			});
 		}
 
-		let negotiated_version = self.negotiate_protocol_version(shake.version)?;
+		let negotiated_version =
+			self.negotiate_protocol_version(shake.version, total_difficulty)?;
 
 		let peer_info = PeerInfo {
 			capabilities: shake.capabilities,
@@ -199,7 +212,7 @@ impl Handshake {
 			}
 		}
 
-		let negotiated_version = self.negotiate_protocol_version(hand.version)?;
+		let negotiated_version = self.negotiate_protocol_version(hand.version, total_difficulty)?;
 
 		// all good, keep peer info
 		let peer_info = PeerInfo {

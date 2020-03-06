@@ -426,6 +426,10 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		return Err(ErrorKind::InvalidBlockTime.into());
 	}
 
+	if header.total_difficulty().to_num() != header.height + 1 {
+		return Err(ErrorKind::WrongTotalDifficulty.into());
+	}
+
 	// verify the proof of work and related parameters
 	// at this point we have a previous block header
 	// we know the height increased by one
