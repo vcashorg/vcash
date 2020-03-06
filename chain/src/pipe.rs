@@ -47,7 +47,11 @@ pub struct BlockContext<'a> {
 	pub verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 }
 
-fn validate_block_auxdata(bheader: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
+fn validate_block_auxdata(
+	bheader: &BlockHeader,
+	ctx: &mut BlockContext<'_>,
+	fast_validate: bool,
+) -> Result<(), Error> {
 	//prevent dos attack
 	if bheader.bits > global::min_bit_diff() {
 		return Err(ErrorKind::BitDifficultyTooLow.into());
@@ -83,6 +87,10 @@ fn validate_block_auxdata(bheader: &BlockHeader, ctx: &mut BlockContext<'_>) -> 
 		return Err(ErrorKind::InvalidMerklebranch.into());
 	}
 
+	if fast_validate {
+		return Ok(());
+	}
+
 	// 4, diff context validate
 	let pre_header = prev_header_store(bheader, &mut ctx.batch)?;
 	let nbits = if (pre_header.height + 1) % consensus::DIFFICULTY_ADJUST_WINDOW != 0 {
@@ -93,11 +101,8 @@ fn validate_block_auxdata(bheader: &BlockHeader, ctx: &mut BlockContext<'_>) -> 
 		} else {
 			0
 		};
-		let start_hash = ctx
-			.header_pmmr
-			.get_header_hash_by_height(start_height)
-			.unwrap();
-		let start_head = ctx.batch.get_block_header(&start_hash).unwrap();
+		let start_hash = ctx.header_pmmr.get_header_hash_by_height(start_height)?;
+		let start_head = ctx.batch.get_block_header(&start_hash)?;
 		consensus::next_bit_difficulty(
 			pre_header.height,
 			pre_header.bits,
@@ -125,7 +130,7 @@ fn check_known(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), E
 // Used to cheaply validate pow before checking if orphan or continuing block validation.
 fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
 	if header.height >= global::refactor_header_height() {
-		validate_block_auxdata(header, ctx)?;
+		validate_block_auxdata(header, ctx, true)?;
 	} else {
 		if ctx.opts.contains(Options::SKIP_POW) {
 			// Some of our tests require this check to be skipped (we should revisit this).
@@ -183,12 +188,10 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	}
 
 	//Validate bitcoin header's diff is enough first
-	if b.header.height >= global::refactor_header_height() {
-		validate_block_auxdata(&b.header, ctx)?;
-	} else {
+	if b.header.height < global::refactor_header_height() {
 		let mut header = b.header.clone();
 		header.btc_pow = b.aux_data.clone();
-		validate_block_auxdata(&header, ctx)?;
+		validate_block_auxdata(&header, ctx, false)?;
 	}
 
 	// Process the header for the block.
@@ -426,7 +429,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 		return Err(ErrorKind::InvalidBlockTime.into());
 	}
 
-	if header.total_difficulty().to_num() != header.height + 1 {
+	if global::is_production_mode() && header.total_difficulty().to_num() != header.height + 1 {
 		return Err(ErrorKind::WrongTotalDifficulty.into());
 	}
 
@@ -438,7 +441,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 	// as the target difficulty
 	if !ctx.opts.contains(Options::SKIP_POW) {
 		if header.height >= global::refactor_header_height() {
-			validate_block_auxdata(header, ctx)?;
+			validate_block_auxdata(header, ctx, false)?;
 		} else {
 			// Quick check of this header in isolation. No point proceeding if this fails.
 			// We can do this without needing to iterate over previous headers.
