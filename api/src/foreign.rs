@@ -25,8 +25,8 @@ use crate::handlers::version_api::VersionHandler;
 use crate::pool::{self, PoolEntry};
 use crate::rest::*;
 use crate::types::{
-	BlockHeaderPrintable, BlockPrintable, LocatedTxKernel, OutputListing, OutputPrintable, Tip,
-	Version,
+	BlockHeaderPrintable, BlockPrintable, LocatedTokenTxKernel, LocatedTxKernel, OutputListing,
+	OutputPrintable, Tip, Version,
 };
 use crate::util::RwLock;
 use std::sync::Weak;
@@ -183,6 +183,35 @@ impl Foreign {
 		kernel_handler.get_kernel_v2(excess, min_height, max_height)
 	}
 
+	/// Returns a [`LocatedTxKernel`](types/struct.LocatedTxKernel.html) based on the kernel excess.
+	/// The `min_height` and `max_height` parameters are both optional.
+	/// If not supplied, `min_height` will be set to 0 and `max_height` will be set to the head of the chain.
+	/// The method will start at the block height `max_height` and traverse the kernel MMR backwards,
+	/// until either the kernel is found or `min_height` is reached.
+	///
+	/// # Arguments
+	/// * `excess` - kernel excess to look for.
+	/// * `min_height` - minimum height to stop the lookup.
+	/// * `max_height` - maximum height to start the lookup.
+	///
+	/// # Returns
+	/// * Result Containing:
+	/// * A [`LocatedTxKernel`](types/struct.LocatedTxKernel.html)
+	/// * or [`Error`](struct.Error.html) if an error is encountered.
+	///
+
+	pub fn get_token_kernel(
+		&self,
+		excess: String,
+		min_height: Option<u64>,
+		max_height: Option<u64>,
+	) -> Result<LocatedTokenTxKernel, Error> {
+		let kernel_handler = KernelHandler {
+			chain: self.chain.clone(),
+		};
+		kernel_handler.get_token_kernel(excess, min_height, max_height)
+	}
+
 	/// Retrieves details about specifics outputs. Supports retrieval of multiple outputs in a single request.
 	/// Support retrieval by both commitment string and block height.
 	///
@@ -332,6 +361,30 @@ impl Foreign {
 			chain: self.chain.clone(),
 		};
 		txhashset_handler.block_height_range_to_pmmr_indices(start_block_height, end_block_height)
+	}
+
+	/// Retrieves the PMMR indices based on the provided block height(s).
+	///
+	/// # Arguments
+	/// * `start_block_height` - start index in the MMR.
+	/// * `end_block_height` - optional index so stop in the MMR.
+	///
+	/// # Returns
+	/// * Result Containing:
+	/// * An [`OutputListing`](types/struct.OutputListing.html)
+	/// * or [`Error`](struct.Error.html) if an error is encountered.
+	///
+
+	pub fn get_token_pmmr_indices(
+		&self,
+		start_block_height: u64,
+		end_block_height: Option<u64>,
+	) -> Result<OutputListing, Error> {
+		let txhashset_handler = TxHashSetHandler {
+			chain: self.chain.clone(),
+		};
+		txhashset_handler
+			.block_height_range_to_token_pmmr_indices(start_block_height, end_block_height)
 	}
 
 	/// Returns the number of transaction in the transaction pool.

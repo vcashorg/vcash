@@ -800,6 +800,31 @@ impl KernelHandler {
 			});
 		kernel.ok_or_else(|| ErrorKind::NotFound.into())
 	}
+
+	pub fn get_token_kernel(
+		&self,
+		excess: String,
+		min_height: Option<u64>,
+		max_height: Option<u64>,
+	) -> Result<LocatedTokenTxKernel, Error> {
+		let excess = util::from_hex(excess)
+			.map_err(|_| ErrorKind::RequestError("invalid excess hex".into()))?;
+		if excess.len() != 33 {
+			return Err(ErrorKind::RequestError("invalid excess length".into()).into());
+		}
+		let excess = Commitment::from_vec(excess);
+
+		let chain = w(&self.chain)?;
+		let kernel = chain
+			.get_token_kernel_height(&excess, min_height, max_height)
+			.map_err(|e| ErrorKind::Internal(format!("{}", e)))?
+			.map(|(tx_kernel, height, mmr_index)| LocatedTokenTxKernel {
+				tx_kernel,
+				height,
+				mmr_index,
+			});
+		kernel.ok_or_else(|| ErrorKind::NotFound.into())
+	}
 }
 
 impl Handler for KernelHandler {

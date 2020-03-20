@@ -431,6 +431,32 @@ impl TxHashSet {
 		None
 	}
 
+	/// Find a token kernel with a given excess. Work backwards from `max_index` to `min_index`
+	pub fn find_token_kernel(
+		&self,
+		excess: &Commitment,
+		min_index: Option<u64>,
+		max_index: Option<u64>,
+	) -> Option<(TokenTxKernel, u64)> {
+		let min_index = min_index.unwrap_or(1);
+		let max_index = max_index.unwrap_or(self.token_kernel_pmmr_h.last_pos);
+
+		let pmmr = ReadonlyPMMR::at(
+			&self.token_kernel_pmmr_h.backend,
+			self.token_kernel_pmmr_h.last_pos,
+		);
+		let mut index = max_index + 1;
+		while index > min_index {
+			index -= 1;
+			if let Some(kernel) = pmmr.get_data(index) {
+				if &kernel.excess == excess {
+					return Some((kernel, index));
+				}
+			}
+		}
+		None
+	}
+
 	/// Get MMR roots.
 	pub fn roots(&self) -> TxHashSetRoots {
 		let output_pmmr =

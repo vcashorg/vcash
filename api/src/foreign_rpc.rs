@@ -20,8 +20,8 @@ use crate::foreign::Foreign;
 use crate::pool::PoolEntry;
 use crate::rest::ErrorKind;
 use crate::types::{
-	BlockHeaderPrintable, BlockPrintable, LocatedTxKernel, OutputListing, OutputPrintable, Tip,
-	Version,
+	BlockHeaderPrintable, BlockPrintable, LocatedTokenTxKernel, LocatedTxKernel, OutputListing,
+	OutputPrintable, Tip, Version,
 };
 use crate::util;
 
@@ -355,6 +355,49 @@ pub trait ForeignRpc: Sync + Send {
 	) -> Result<LocatedTxKernel, ErrorKind>;
 
 	/**
+	Networked version of [Foreign::get_kernel](struct.Node.html#method.get_kernel).
+
+	# Json rpc example
+
+	```
+	# grin_api::doctest_helper_json_rpc_foreign_assert_response!(
+	# r#"
+	{
+		"jsonrpc": "2.0",
+		"method": "get_token_kernel",
+		"params": ["09c868a2fed619580f296e91d2819b6b3ae61ab734bf3d9c3eafa6d9700f00361b", null, null],
+		"id": 1
+	}
+	# "#
+	# ,
+	# r#"
+	{
+		"id": 1,
+		"jsonrpc": "2.0",
+		"result": {
+			"Ok": {
+			"height": 374557,
+			"mmr_index": 2211662,
+			"tx_kernel": {
+				"excess": "09c868a2fed619580f296e91d2819b6b3ae61ab734bf3d9c3eafa6d9700f00361b",
+				"excess_sig": "1720ec1b94aa5d6ba4d567f7446314f9a6d064eea69c5675cc5659f65f290d80b0e9e3a48d818cadba0a4e894bbc6eb6754b56f53813e2ee0b1447969894ca4a",
+				"features": "Coinbase"
+			}
+			}
+		}
+	}
+	# "#
+	# );
+	```
+	 */
+	fn get_token_kernel(
+		&self,
+		excess: String,
+		min_height: Option<u64>,
+		max_height: Option<u64>,
+	) -> Result<LocatedTokenTxKernel, ErrorKind>;
+
+	/**
 	Networked version of [Foreign::get_outputs](struct.Node.html#method.get_outputs).
 
 	# Json rpc example
@@ -502,6 +545,43 @@ pub trait ForeignRpc: Sync + Send {
 		end_index: Option<u64>,
 		max: u64,
 		include_proof: Option<bool>,
+	) -> Result<OutputListing, ErrorKind>;
+
+	/**
+	Networked version of [Foreign::get_pmmr_indices](struct.Node.html#method.get_pmmr_indices).
+
+	# Json rpc example
+
+	```
+	# grin_api::doctest_helper_json_rpc_foreign_assert_response!(
+	# r#"
+	{
+		"jsonrpc": "2.0",
+		"method": "get_token_pmmr_indices",
+		"params": [0, 100],
+		"id": 1
+	}
+	# "#
+	# ,
+	# r#"
+	{
+		"id": 1,
+		"jsonrpc": "2.0",
+		  "result": {
+			"Ok": {
+				  "highest_index": 398,
+				  "last_retrieved_index": 2,
+				  "outputs": []
+			}
+	}
+	# "#
+	# );
+	```
+	 */
+	fn get_token_pmmr_indices(
+		&self,
+		start_block_height: u64,
+		end_block_height: Option<u64>,
 	) -> Result<OutputListing, ErrorKind>;
 
 	/**
@@ -935,6 +1015,16 @@ impl ForeignRpc for Foreign {
 		Foreign::get_kernel(self, excess, min_height, max_height).map_err(|e| e.kind().clone())
 	}
 
+	fn get_token_kernel(
+		&self,
+		excess: String,
+		min_height: Option<u64>,
+		max_height: Option<u64>,
+	) -> Result<LocatedTokenTxKernel, ErrorKind> {
+		Foreign::get_token_kernel(self, excess, min_height, max_height)
+			.map_err(|e| e.kind().clone())
+	}
+
 	fn get_outputs(
 		&self,
 		commits: Option<Vec<String>>,
@@ -1003,6 +1093,15 @@ impl ForeignRpc for Foreign {
 		end_block_height: Option<u64>,
 	) -> Result<OutputListing, ErrorKind> {
 		Foreign::get_pmmr_indices(self, start_block_height, end_block_height)
+			.map_err(|e| e.kind().clone())
+	}
+
+	fn get_token_pmmr_indices(
+		&self,
+		start_block_height: u64,
+		end_block_height: Option<u64>,
+	) -> Result<OutputListing, ErrorKind> {
+		Foreign::get_token_pmmr_indices(self, start_block_height, end_block_height)
 			.map_err(|e| e.kind().clone())
 	}
 

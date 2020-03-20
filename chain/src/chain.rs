@@ -20,7 +20,7 @@ use crate::core::core::merkle_proof::MerkleProof;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{
 	Block, BlockHeader, BlockSums, BlockTokenSums, Committed, Output, OutputIdentifier,
-	TokenIssueProof, TokenOutput, TokenOutputIdentifier, Transaction, TxKernel,
+	TokenIssueProof, TokenOutput, TokenOutputIdentifier, TokenTxKernel, Transaction, TxKernel,
 };
 use crate::core::global;
 use crate::core::pow;
@@ -1467,6 +1467,18 @@ impl Chain {
 		Ok(self.get_block_header(&hash)?)
 	}
 
+	/// Gets the block header in which a given token output appears in the txhashset.
+	pub fn get_header_for_token_output(
+		&self,
+		output_ref: &TokenOutputIdentifier,
+	) -> Result<BlockHeader, Error> {
+		let header_pmmr = self.header_pmmr.read();
+		let txhashset = self.txhashset.read();
+		let output_pos = txhashset.is_token_unspent(output_ref)?;
+		let hash = header_pmmr.get_header_hash_by_height(output_pos.height)?;
+		Ok(self.get_block_header(&hash)?)
+	}
+
 	/// Gets the kernel with a given excess and the block height it is included in.
 	pub fn get_kernel_height(
 		&self,
@@ -1497,6 +1509,38 @@ impl Chain {
 
 		Ok(Some((kernel, header.height, mmr_index)))
 	}
+
+	/// Gets the token kernel with a given excess and the block height it is included in.
+	pub fn get_token_kernel_height(
+		&self,
+		excess: &Commitment,
+		min_height: Option<u64>,
+		max_height: Option<u64>,
+	) -> Result<Option<(TokenTxKernel, u64, u64)>, Error> {
+		let min_index = match min_height {
+			Some(h) => Some(self.get_header_by_height(h - 1)?.token_kernel_mmr_size + 1),
+			None => None,
+		};
+
+		let max_index = match max_height {
+			Some(h) => Some(self.get_header_by_height(h)?.token_kernel_mmr_size),
+			None => None,
+		};
+
+		let (kernel, mmr_index) = match self
+			.txhashset
+			.read()
+			.find_token_kernel(&excess, min_index, max_index)
+		{
+			Some(k) => k,
+			None => return Ok(None),
+		};
+
+		let header = self.get_header_for_token_kernel_index(mmr_index, min_height, max_height)?;
+
+		Ok(Some((kernel, header.height, mmr_index)))
+	}
+
 	/// Gets the block header in which a given kernel mmr index appears in the txhashset.
 	pub fn get_header_for_kernel_index(
 		&self,
@@ -1534,16 +1578,41 @@ impl Chain {
 		}
 	}
 
-	/// Gets the block header in which a given token output appears in the txhashset.
-	pub fn get_header_for_token_output(
+	/// Gets the block header in which a given token kernel mmr index appears in the txhashset.
+	pub fn get_header_for_token_kernel_index(
 		&self,
-		output_ref: &TokenOutputIdentifier,
+		token_kernel_mmr_index: u64,
+		min_height: Option<u64>,
+		max_height: Option<u64>,
 	) -> Result<BlockHeader, Error> {
 		let header_pmmr = self.header_pmmr.read();
-		let txhashset = self.txhashset.read();
-		let output_pos = txhashset.is_token_unspent(output_ref)?;
-		let hash = header_pmmr.get_header_hash_by_height(output_pos.height)?;
-		Ok(self.get_block_header(&hash)?)
+
+		let mut min = min_height.unwrap_or(0).saturating_sub(1);
+		let mut max = match max_height {
+			Some(h) => h,
+			None => self.head()?.height,
+		};
+
+		loop {
+			let search_height = max - (max - min) / 2;
+			let hash = header_pmmr.get_header_hash_by_height(search_height)?;
+			let h = self.get_block_header(&hash)?;
+			if search_height == 0 {
+				return Ok(h);
+			}
+			let hash_prev = header_pmmr.get_header_hash_by_height(search_height - 1)?;
+			let h_prev = self.get_block_header(&hash_prev)?;
+			if token_kernel_mmr_index > h.token_kernel_mmr_size {
+				min = search_height;
+			} else if token_kernel_mmr_index < h_prev.token_kernel_mmr_size {
+				max = search_height;
+			} else {
+				if token_kernel_mmr_index == h_prev.token_kernel_mmr_size {
+					return Ok(h_prev);
+				}
+				return Ok(h);
+			}
+		}
 	}
 
 	/// Verifies the given block header is actually on the current chain.

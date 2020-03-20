@@ -170,7 +170,7 @@ impl TxHashSetHandler {
 	}
 
 	// allows traversal of token utxo set bounded within a block range
-	fn block_height_range_to_token_pmmr_indices(
+	pub fn block_height_range_to_token_pmmr_indices(
 		&self,
 		start_block_height: u64,
 		end_block_height: Option<u64>,
