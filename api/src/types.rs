@@ -325,7 +325,7 @@ impl<'de> serde::de::Visitor<'de> for PrintableCommitmentVisitor {
 	{
 		Ok(PrintableCommitment {
 			commit: pedersen::Commitment::from_vec(
-				util::from_hex(String::from(v)).map_err(serde::de::Error::custom)?,
+				util::from_hex(v).map_err(serde::de::Error::custom)?,
 			),
 		})
 	}
@@ -369,9 +369,9 @@ impl OutputPrintable {
 			OutputType::Transaction
 		};
 
-		let out_id = core::OutputIdentifier::from_output(&output);
-		let res = chain.is_unspent(&out_id);
-		let (spent, block_height) = if let Ok(output_pos) = res {
+		let out_id = core::OutputIdentifier::from(output);
+		let res = chain.get_unspent(&out_id)?;
+		let (spent, block_height) = if let Some(output_pos) = res {
 			(false, Some(output_pos.height))
 		} else {
 			(true, None)
@@ -423,11 +423,12 @@ impl OutputPrintable {
 			OutputType::TokenTransaction
 		};
 
-		let out_id = core::TokenOutputIdentifier::from_output(&token_output);
-		let spent = chain.is_token_unspent(&out_id).is_err();
-		let block_height = match spent {
-			true => None,
-			false => Some(chain.get_header_for_token_output(&out_id)?.height),
+		let out_id = core::TokenOutputIdentifier::from(token_output);
+		let res = chain.get_token_unspent(&out_id)?;
+		let (spent, block_height) = if let Some(output_pos) = res {
+			(false, Some(output_pos.height))
+		} else {
+			(true, None)
 		};
 
 		let proof = if include_proof {
@@ -463,7 +464,7 @@ impl OutputPrintable {
 			.clone()
 			.ok_or_else(|| ser::Error::HexError("output range_proof missing".to_string()))?;
 
-		let p_vec = util::from_hex(proof_str)
+		let p_vec = util::from_hex(&proof_str)
 			.map_err(|_| ser::Error::HexError("invalid output range_proof".to_string()))?;
 		let mut p_bytes = [0; util::secp::constants::MAX_PROOF_SIZE];
 		for i in 0..p_bytes.len() {
@@ -554,8 +555,7 @@ impl<'de> serde::de::Deserialize<'de> for OutputPrintable {
 							no_dup!(commit);
 
 							let val: String = map.next_value()?;
-							let vec =
-								util::from_hex(val.clone()).map_err(serde::de::Error::custom)?;
+							let vec = util::from_hex(&val).map_err(serde::de::Error::custom)?;
 							commit = Some(pedersen::Commitment::from_vec(vec));
 						}
 						Field::Spent => {

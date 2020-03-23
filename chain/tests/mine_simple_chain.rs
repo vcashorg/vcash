@@ -330,7 +330,7 @@ fn test_block_a_header_b_header_b_fork_block_b_fork_block_b_block_c_fork() {
 fn get_block_bit_diff(block: &mut Block) {
 	block.header.bits = 0x2100ffff;
 	let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
-	block.header.btc_pow.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+	block.header.btc_pow.coinbase_tx = util::from_hex(coin_base_str.as_str()).unwrap();
 	block.header.btc_pow.aux_header.merkle_root = block.header.btc_pow.coinbase_tx.dhash();
 	block.header.btc_pow.aux_header.nbits = block.header.bits;
 }
@@ -414,7 +414,6 @@ fn mine_reorg() {
 fn mine_forks() {
 	clean_output_dir(".grin2");
 	global::set_mining_mode(ChainTypes::AutomatedTesting);
-	clean_output_dir(".grin2");
 	{
 		let chain = init_chain(".grin2", pow::mine_genesis_block().unwrap());
 		let kc = ExtKeychain::from_random_seed(false).unwrap();
@@ -464,7 +463,6 @@ fn mine_losing_fork() {
 	clean_output_dir(".grin3");
 	global::set_mining_mode(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
-	clean_output_dir(".grin3");
 	{
 		let chain = init_chain(".grin3", pow::mine_genesis_block().unwrap());
 
@@ -505,7 +503,6 @@ fn longer_fork() {
 	// to make it easier to compute the txhashset roots in the test, we
 	// prepare 2 chains, the 2nd will be have the forked blocks we can
 	// then send back on the 1st
-	clean_output_dir(".grin4");
 	let genesis = pow::mine_genesis_block().unwrap();
 	{
 		let chain = init_chain(".grin4", genesis.clone());
@@ -563,7 +560,7 @@ fn spend_rewind_spend() {
 		// mine the first block and keep track of the block_hash
 		// so we can spend the coinbase later
 		let b = prepare_block_key_idx(&kc, &head, &chain, 2, 1);
-		let out_id = OutputIdentifier::from_output(&b.outputs()[0]);
+		let out_id = OutputIdentifier::from(&b.outputs()[0]);
 		assert!(out_id.features.is_coinbase());
 		head = b.header.clone();
 		chain
@@ -624,14 +621,11 @@ fn spend_rewind_spend() {
 
 #[test]
 fn spend_in_fork_and_compact() {
-	clean_output_dir(".spend_in_fork_and_compact");
+	clean_output_dir(".grin6");
 	global::set_mining_mode(ChainTypes::AutomatedTesting);
 	util::init_test_logger();
 	{
-		let chain = init_chain(
-			".spend_in_fork_and_compact",
-			pow::mine_genesis_block().unwrap(),
-		);
+		let chain = init_chain(".grin6", pow::mine_genesis_block().unwrap());
 		let prev = chain.head_header().unwrap();
 		let kc = ExtKeychain::from_random_seed(false).unwrap();
 		let pb = ProofBuilder::new(&kc);
@@ -641,7 +635,7 @@ fn spend_in_fork_and_compact() {
 		// mine the first block and keep track of the block_hash
 		// so we can spend the coinbase later
 		let b = prepare_block(&kc, &fork_head, &chain, 2);
-		let out_id = OutputIdentifier::from_output(&b.outputs()[0]);
+		let out_id = OutputIdentifier::from(&b.outputs()[0]);
 		assert!(out_id.features.is_coinbase());
 		fork_head = b.header.clone();
 		chain
@@ -745,17 +739,21 @@ fn spend_in_fork_and_compact() {
 		assert_eq!(head.height, 7);
 		assert_eq!(head.hash(), prev_main.hash());
 		assert!(chain
-			.is_unspent(&OutputIdentifier::from_output(&tx2.outputs()[0]))
-			.is_ok());
+			.get_unspent(&OutputIdentifier::from(&tx2.outputs()[0]))
+			.unwrap()
+			.is_some());
 		assert!(chain
-			.is_unspent(&OutputIdentifier::from_output(&tx1.outputs()[0]))
-			.is_err());
+			.get_unspent(&OutputIdentifier::from(&tx1.outputs()[0]))
+			.unwrap()
+			.is_none());
 		assert!(chain
-			.is_token_unspent(&TokenOutputIdentifier::from_output(&tx2.token_outputs()[0]))
-			.is_ok());
+			.get_token_unspent(&TokenOutputIdentifier::from(&tx2.token_outputs()[0]))
+			.unwrap()
+			.is_some());
 		assert!(chain
-			.is_token_unspent(&TokenOutputIdentifier::from_output(&tx1.token_outputs()[0]))
-			.is_err());
+			.get_token_unspent(&TokenOutputIdentifier::from(&tx1.token_outputs()[0]))
+			.unwrap()
+			.is_none());
 
 		// make the fork win
 		let fork_next = prepare_block(&kc, &prev_fork, &chain, 11);
@@ -770,17 +768,21 @@ fn spend_in_fork_and_compact() {
 		assert_eq!(head.height, 8);
 		assert_eq!(head.hash(), prev_fork.hash());
 		assert!(chain
-			.is_unspent(&OutputIdentifier::from_output(&tx2.outputs()[0]))
-			.is_ok());
+			.get_unspent(&OutputIdentifier::from(&tx2.outputs()[0]))
+			.unwrap()
+			.is_some());
 		assert!(chain
-			.is_unspent(&OutputIdentifier::from_output(&tx1.outputs()[0]))
-			.is_err());
+			.get_unspent(&OutputIdentifier::from(&tx1.outputs()[0]))
+			.unwrap()
+			.is_none());
 		assert!(chain
-			.is_token_unspent(&TokenOutputIdentifier::from_output(&tx2.token_outputs()[0]))
-			.is_ok());
+			.get_token_unspent(&TokenOutputIdentifier::from(&tx2.token_outputs()[0]))
+			.unwrap()
+			.is_some());
 		assert!(chain
-			.is_token_unspent(&TokenOutputIdentifier::from_output(&tx1.token_outputs()[0]))
-			.is_err());
+			.get_token_unspent(&TokenOutputIdentifier::from(&tx1.token_outputs()[0]))
+			.unwrap()
+			.is_none());
 
 		// add 20 blocks to go past the test horizon
 		let mut prev = prev_fork;
@@ -878,7 +880,7 @@ fn output_header_mappings() {
 			chain.process_block(b, chain::Options::MINE).unwrap();
 
 			let header_for_output = chain
-				.get_header_for_output(&OutputIdentifier::from_output(&reward_outputs[n - 1]))
+				.get_header_for_output(&OutputIdentifier::from(&reward_outputs[n - 1]))
 				.unwrap();
 			assert_eq!(header_for_output.height, n as u64);
 
@@ -888,7 +890,7 @@ fn output_header_mappings() {
 		// Check all output positions are as expected
 		for n in 1..15 {
 			let header_for_output = chain
-				.get_header_for_output(&OutputIdentifier::from_output(&reward_outputs[n - 1]))
+				.get_header_for_output(&OutputIdentifier::from(&reward_outputs[n - 1]))
 				.unwrap();
 			assert_eq!(header_for_output.height, n as u64);
 		}

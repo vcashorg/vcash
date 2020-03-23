@@ -318,7 +318,7 @@ fn test_coinbase_maturity() {
 fn get_block_bit_diff(block: &mut Block) {
 	block.header.bits = 0x2100ffff;
 	let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
-	block.header.btc_pow.coinbase_tx = util::from_hex(coin_base_str).unwrap();
+	block.header.btc_pow.coinbase_tx = util::from_hex(coin_base_str.as_str()).unwrap();
 	block.header.btc_pow.aux_header.merkle_root = block.header.btc_pow.coinbase_tx.dhash();
 	block.header.btc_pow.aux_header.nbits = block.header.bits;
 }

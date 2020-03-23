@@ -16,11 +16,9 @@
 
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::pmmr::{self, ReadonlyPMMR};
-use crate::core::core::{
-	Block, BlockHeader, Input, Output, TokenInput, TokenIssueProof, TokenOutput, Transaction,
-};
+use crate::core::core::{Block, BlockHeader, Input, Output, OutputIdentifier, Transaction};
+use crate::core::core::{TokenInput, TokenIssueProof, TokenOutput, TokenOutputIdentifier};
 use crate::core::global;
-use crate::core::ser::PMMRIndexHashable;
 use crate::error::{Error, ErrorKind};
 use crate::store::Batch;
 use crate::util::secp::pedersen::RangeProof;
@@ -28,10 +26,10 @@ use grin_store::pmmr::PMMRBackend;
 
 /// Readonly view of the UTXO set (based on output MMR).
 pub struct UTXOView<'a> {
+	header_pmmr: ReadonlyPMMR<'a, BlockHeader, PMMRBackend<BlockHeader>>,
 	output_pmmr: ReadonlyPMMR<'a, Output, PMMRBackend<Output>>,
 	token_output_pmmr: ReadonlyPMMR<'a, TokenOutput, PMMRBackend<TokenOutput>>,
 	issue_token_pmmr: ReadonlyPMMR<'a, TokenIssueProof, PMMRBackend<TokenIssueProof>>,
-	header_pmmr: ReadonlyPMMR<'a, BlockHeader, PMMRBackend<BlockHeader>>,
 	rproof_pmmr: ReadonlyPMMR<'a, RangeProof, PMMRBackend<RangeProof>>,
 	token_rproof_pmmr: ReadonlyPMMR<'a, RangeProof, PMMRBackend<RangeProof>>,
 }
@@ -39,18 +37,18 @@ pub struct UTXOView<'a> {
 impl<'a> UTXOView<'a> {
 	/// Build a new UTXO view.
 	pub fn new(
+		header_pmmr: ReadonlyPMMR<'a, BlockHeader, PMMRBackend<BlockHeader>>,
 		output_pmmr: ReadonlyPMMR<'a, Output, PMMRBackend<Output>>,
 		token_output_pmmr: ReadonlyPMMR<'a, TokenOutput, PMMRBackend<TokenOutput>>,
 		issue_token_pmmr: ReadonlyPMMR<'a, TokenIssueProof, PMMRBackend<TokenIssueProof>>,
-		header_pmmr: ReadonlyPMMR<'a, BlockHeader, PMMRBackend<BlockHeader>>,
 		rproof_pmmr: ReadonlyPMMR<'a, RangeProof, PMMRBackend<RangeProof>>,
 		token_rproof_pmmr: ReadonlyPMMR<'a, RangeProof, PMMRBackend<RangeProof>>,
 	) -> UTXOView<'a> {
 		UTXOView {
+			header_pmmr,
 			output_pmmr,
 			token_output_pmmr,
 			issue_token_pmmr,
-			header_pmmr,
 			rproof_pmmr,
 			token_rproof_pmmr,
 		}
@@ -104,16 +102,34 @@ impl<'a> UTXOView<'a> {
 
 	// Input is valid if it is spending an (unspent) output
 	// that currently exists in the output MMR.
-	// Compare the hash in the output MMR at the expected pos.
+	// Compare against the entry in output MMR at the expected pos.
 	fn validate_input(&self, input: &Input, batch: &Batch<'_>) -> Result<(), Error> {
 		if let Ok(pos) = batch.get_output_pos(&input.commitment()) {
-			if let Some(hash) = self.output_pmmr.get_hash(pos) {
-				if hash == input.hash_with_index(pos - 1) {
+			if let Some(out) = self.output_pmmr.get_data(pos) {
+				if OutputIdentifier::from(input) == out {
 					return Ok(());
 				}
 			}
 		}
 		Err(ErrorKind::AlreadySpent(input.commitment()).into())
+	}
+
+	// TokenInput is valid if it is spending an (unspent) output
+	// that currently exists in the token_output MMR.
+	// Compare the hash in the token output MMR at the expected pos.
+	fn validate_token_input(
+		&self,
+		token_input: &TokenInput,
+		batch: &Batch<'_>,
+	) -> Result<(), Error> {
+		if let Ok(pos) = batch.get_token_output_pos(&token_input.commitment()) {
+			if let Some(out) = self.token_output_pmmr.get_data(pos) {
+				if TokenOutputIdentifier::from(token_input) == out {
+					return Ok(());
+				}
+			}
+		}
+		Err(ErrorKind::AlreadySpent(token_input.commitment()).into())
 	}
 
 	// Output is valid if it would not result in a duplicate commitment in the output MMR.
@@ -128,31 +144,13 @@ impl<'a> UTXOView<'a> {
 		Ok(())
 	}
 
-	// TokenInput is valid if it is spending an (unspent) output
-	// that currently exists in the token_output MMR.
-	// Compare the hash in the token_output MMR at the expected pos.
-	fn validate_token_input(
-		&self,
-		token_input: &TokenInput,
-		batch: &Batch<'_>,
-	) -> Result<(), Error> {
-		if let Ok((pos, _)) = batch.get_token_output_pos_height(&token_input.commitment()) {
-			if let Some(hash) = self.token_output_pmmr.get_hash(pos) {
-				if hash == token_input.hash_with_index(pos - 1) {
-					return Ok(());
-				}
-			}
-		}
-		Err(ErrorKind::AlreadySpent(token_input.commitment()).into())
-	}
-
 	// Token_Output is valid if it would not result in a duplicate commitment in the token_output MMR.
 	fn validate_token_output(
 		&self,
 		token_output: &TokenOutput,
 		batch: &Batch<'_>,
 	) -> Result<(), Error> {
-		if let Ok((pos, _)) = batch.get_token_output_pos_height(&token_output.commitment()) {
+		if let Ok(pos) = batch.get_token_output_pos(&token_output.commitment()) {
 			if let Some(out_mmr) = self.token_output_pmmr.get_data(pos) {
 				if out_mmr.commitment() == token_output.commitment() {
 					return Err(ErrorKind::DuplicateCommitment(token_output.commitment()).into());

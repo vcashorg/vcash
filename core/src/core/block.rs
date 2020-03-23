@@ -489,7 +489,7 @@ impl BlockHeader {
 		proof: Proof,
 	) -> Result<Self, Error> {
 		// Convert hex pre pow string
-		let mut header_bytes = from_hex(pre_pow)
+		let mut header_bytes = from_hex(&pre_pow)
 			.map_err(|e| Error::Serialization(ser::Error::HexError(e.to_string())))?;
 		// Serialize and append serialized nonce and proof
 		serialize_default(&mut header_bytes, &nonce)?;
@@ -575,7 +575,7 @@ impl AuxBitHeader {
 
 	/// Convert hex string representation back to a Merkle proof instance
 	pub fn from_hex(hex: &str) -> Result<AuxBitHeader, String> {
-		let bytes = util::from_hex(hex.to_string()).unwrap();
+		let bytes = util::from_hex(hex).unwrap();
 		let res = ser::deserialize_default(&mut &bytes[..])
 			.map_err(|_| "failed to deserialize a AuxBitHeader".to_string())?;
 		Ok(res)
@@ -671,7 +671,7 @@ impl BlockAuxData {
 
 	/// Convert hex string representation back to BlockAuxData
 	pub fn from_hex(hex: &str) -> Result<BlockAuxData, String> {
-		let bytes = util::from_hex(hex.to_string()).unwrap();
+		let bytes = util::from_hex(hex).unwrap();
 		let res = ser::deserialize_default(&mut &bytes[..])
 			.map_err(|_| "failed to deserialize a AuxBitHeader".to_string())?;
 		Ok(res)

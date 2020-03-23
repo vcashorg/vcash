@@ -18,13 +18,13 @@ use crate::core::consensus;
 use crate::core::core::hash::Hashed;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::Committed;
-use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader, BlockSums, BlockTokenSums};
+use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader, BlockSums};
 use crate::core::global;
 use crate::core::pow::{self, compact_to_biguint, hash_to_biguint};
 use crate::error::{Error, ErrorKind};
 use crate::store;
 use crate::txhashset;
-use crate::types::{CommitPos, Options, Tip};
+use crate::types::{Options, Tip};
 use crate::util;
 use crate::util::RwLock;
 use grin_store;
@@ -208,55 +208,47 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	let ref mut header_pmmr = &mut ctx.header_pmmr;
 	let ref mut txhashset = &mut ctx.txhashset;
 	let ref mut batch = &mut ctx.batch;
-	let (block_sums, block_token_sums, spent, token_spent) =
-		txhashset::extending(header_pmmr, txhashset, batch, |ext, batch| {
-			rewind_and_apply_fork(&prev, ext, batch)?;
+	txhashset::extending(header_pmmr, txhashset, batch, |ext, batch| {
+		rewind_and_apply_fork(&prev, ext, batch)?;
 
-			// Check any coinbase being spent have matured sufficiently.
-			// This needs to be done within the context of a potentially
-			// rewound txhashset extension to reflect chain state prior
-			// to applying the new block.
-			verify_coinbase_maturity(b, ext, batch)?;
+		// Check any coinbase being spent have matured sufficiently.
+		// This needs to be done within the context of a potentially
+		// rewound txhashset extension to reflect chain state prior
+		// to applying the new block.
+		verify_coinbase_maturity(b, ext, batch)?;
 
-			// Validate the block against the UTXO set.
-			validate_utxo(b, ext, batch)?;
+		// Validate the block against the UTXO set.
+		validate_utxo(b, ext, batch)?;
 
-			// Using block_sums (utxo_sum, kernel_sum) for the previous block from the db
-			// we can verify_kernel_sums across the full UTXO sum and full kernel sum
-			// accounting for inputs/outputs/kernels in this new block.
-			// We know there are no double-spends etc. if this verifies successfully.
-			// Remember to save these to the db later on (regardless of extension rollback)
-			let block_sums = verify_block_sums(b, batch)?;
-			let block_token_sums = verify_block_token_sums(b, batch)?;
+		// Using block_sums (utxo_sum, kernel_sum) for the previous block from the db
+		// we can verify_kernel_sums across the full UTXO sum and full kernel sum
+		// accounting for inputs/outputs/kernels in this new block.
+		// We know there are no double-spends etc. if this verifies successfully.
+		verify_block_sums(b, batch)?;
+		verify_block_token_sums(b, batch)?;
 
-			// Apply the block to the txhashset state.
-			// Validate the txhashset roots and sizes against the block header.
-			// Block is invalid if there are any discrepencies.
-			let (spent, token_spent) = apply_block_to_txhashset(b, ext, batch)?;
+		// Apply the block to the txhashset state.
+		// Validate the txhashset roots and sizes against the block header.
+		// Block is invalid if there are any discrepencies.
+		apply_block_to_txhashset(b, ext, batch)?;
 
-			// If applying this block does not increase the work on the chain then
-			// we know we have not yet updated the chain to produce a new chain head.
-			// We discard the "child" batch used in this extension (original ctx batch still active).
-			// We discard any MMR modifications applied in this extension.
-			let head = batch.head()?;
-			if !has_more_work(&b.header, &head) {
-				ext.extension.force_rollback();
-			}
+		// If applying this block does not increase the work on the chain then
+		// we know we have not yet updated the chain to produce a new chain head.
+		// We discard the "child" batch used in this extension (original ctx batch still active).
+		// We discard any MMR modifications applied in this extension.
+		let head = batch.head()?;
+		if !has_more_work(&b.header, &head) {
+			ext.extension.force_rollback();
+		}
 
-			Ok((block_sums, block_token_sums, spent, token_spent))
-		})?;
+		Ok(())
+	})?;
 
-	// Add the validated block to the db along with the corresponding block_sums.
-	// We do this even if we have not increased the total cumulative work
-	// so we can maintain multiple (in progress) forks.
-	add_block(
-		b,
-		&block_sums,
-		&block_token_sums,
-		&spent,
-		&token_spent,
-		&ctx.batch,
-	)?;
+	// Add the validated block to the db.
+	// Note we do this in the outer batch, not the child batch from the extension
+	// as we only commit the child batch if the extension increases total work.
+	// We want to save the block to the db regardless.
+	add_block(b, &ctx.batch)?;
 
 	// If we have no "tail" then set it now.
 	if ctx.batch.tail().is_err() {
@@ -508,7 +500,8 @@ fn verify_coinbase_maturity(
 
 /// Verify kernel sums across the full utxo and kernel sets based on block_sums
 /// of previous block accounting for the inputs|outputs|kernels of the new block.
-fn verify_block_sums(b: &Block, batch: &store::Batch<'_>) -> Result<BlockSums, Error> {
+/// Saves the new block_sums to the db via the current batch if successful.
+fn verify_block_sums(b: &Block, batch: &store::Batch<'_>) -> Result<(), Error> {
 	// Retrieve the block_sums for the previous block.
 	let block_sums = batch.get_block_sums(&b.header.prev_hash)?;
 
@@ -523,20 +516,27 @@ fn verify_block_sums(b: &Block, batch: &store::Batch<'_>) -> Result<BlockSums, E
 	let (utxo_sum, kernel_sum) =
 		(block_sums, b as &dyn Committed).verify_kernel_sums(overage, offset)?;
 
-	Ok(BlockSums {
-		utxo_sum,
-		kernel_sum,
-	})
+	batch.save_block_sums(
+		&b.hash(),
+		BlockSums {
+			utxo_sum,
+			kernel_sum,
+		},
+	)?;
+
+	Ok(())
 }
 
-fn verify_block_token_sums(b: &Block, batch: &store::Batch<'_>) -> Result<BlockTokenSums, Error> {
+fn verify_block_token_sums(b: &Block, batch: &store::Batch<'_>) -> Result<(), Error> {
 	// Retrieve the block_token_sums for the previous block.
 	let block_token_sums = batch.get_block_token_sums(&b.header.prev_hash)?;
 
 	// Verify the kernel sums for the block_sums with the new block applied.
 	let block_token_sums = (block_token_sums, b as &dyn Committed).verify_token_kernel_sum()?;
 
-	Ok(block_token_sums)
+	batch.save_block_token_sums(&b.hash(), &block_token_sums)?;
+
+	Ok(())
 }
 
 /// Fully validate the block by applying it to the txhashset extension.
@@ -545,29 +545,17 @@ fn apply_block_to_txhashset(
 	block: &Block,
 	ext: &mut txhashset::ExtensionPair<'_>,
 	batch: &store::Batch<'_>,
-) -> Result<(Vec<CommitPos>, Vec<CommitPos>), Error> {
-	let spent = ext.extension.apply_block(block, batch)?;
+) -> Result<(), Error> {
+	ext.extension.apply_block(block, batch)?;
 	ext.extension.validate_roots(&block.header)?;
 	ext.extension.validate_sizes(&block.header)?;
-	Ok(spent)
+	Ok(())
 }
 
 /// Officially adds the block to our chain (possibly on a losing fork).
-/// Adds the associated block_sums and spent_index as well.
 /// Header must be added separately (assume this has been done previously).
-fn add_block(
-	b: &Block,
-	block_sums: &BlockSums,
-	block_token_sums: &BlockTokenSums,
-	spent: &Vec<CommitPos>,
-	token_spent: &Vec<CommitPos>,
-	batch: &store::Batch<'_>,
-) -> Result<(), Error> {
+fn add_block(b: &Block, batch: &store::Batch<'_>) -> Result<(), Error> {
 	batch.save_block(b)?;
-	batch.save_block_sums(&b.hash(), block_sums)?;
-	batch.save_block_token_sums(&b.hash(), block_token_sums)?;
-	batch.save_spent_index(&b.hash(), spent)?;
-	batch.save_spent_token_index(&b.hash(), token_spent)?;
 	Ok(())
 }
 

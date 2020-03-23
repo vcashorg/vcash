@@ -19,11 +19,12 @@ use crate::core::core::committed::Committed;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::merkle_proof::MerkleProof;
 use crate::core::core::pmmr::{self, Backend, ReadonlyPMMR, RewindablePMMR, PMMR};
+use crate::core::core::{Block, BlockHeader, Input, Output, OutputIdentifier, TxKernel};
 use crate::core::core::{
-	Block, BlockHeader, BlockTokenSums, Input, Output, OutputIdentifier, TokenInput,
-	TokenIssueProof, TokenKey, TokenOutput, TokenOutputIdentifier, TokenTxKernel, TxKernel,
+	BlockTokenSums, TokenInput, TokenIssueProof, TokenKey, TokenOutput, TokenOutputIdentifier,
+	TokenTxKernel,
 };
-use crate::core::ser::{PMMRIndexHashable, PMMRable, ProtocolVersion};
+use crate::core::ser::{PMMRable, ProtocolVersion};
 use crate::error::{Error, ErrorKind};
 use crate::store::{Batch, ChainStore};
 use crate::txhashset::bitmap_accumulator::BitmapAccumulator;
@@ -276,23 +277,52 @@ impl TxHashSet {
 	/// Check if an output is unspent.
 	/// We look in the index to find the output MMR pos.
 	/// Then we check the entry in the output MMR and confirm the hash matches.
-	pub fn is_unspent(&self, output_id: &OutputIdentifier) -> Result<CommitPos, Error> {
+	pub fn get_unspent(&self, output_id: &OutputIdentifier) -> Result<Option<CommitPos>, Error> {
 		let commit = output_id.commit;
 		match self.commit_index.get_output_pos_height(&commit) {
-			Ok((pos, height)) => {
+			Ok(Some((pos, height))) => {
 				let output_pmmr: ReadonlyPMMR<'_, Output, _> =
 					ReadonlyPMMR::at(&self.output_pmmr_h.backend, self.output_pmmr_h.last_pos);
-				if let Some(hash) = output_pmmr.get_hash(pos) {
-					if hash == output_id.hash_with_index(pos - 1) {
-						Ok(CommitPos { pos, height })
+				if let Some(out) = output_pmmr.get_data(pos) {
+					if OutputIdentifier::from(out) == *output_id {
+						Ok(Some(CommitPos { pos, height }))
 					} else {
-						Err(ErrorKind::TxHashSetErr("txhashset hash mismatch".to_string()).into())
+						Ok(None)
 					}
 				} else {
-					Err(ErrorKind::OutputNotFound.into())
+					Ok(None)
 				}
 			}
-			Err(grin_store::Error::NotFoundErr(_)) => Err(ErrorKind::OutputNotFound.into()),
+			Ok(None) => Ok(None),
+			Err(e) => Err(ErrorKind::StoreErr(e, "txhashset unspent check".to_string()).into()),
+		}
+	}
+
+	/// Check if an token output is unspent.
+	/// We look in the index to find the token output MMR pos.
+	/// Then we check the entry in the token output MMR and confirm the hash matches.
+	pub fn get_token_unspent(
+		&self,
+		output_id: &TokenOutputIdentifier,
+	) -> Result<Option<CommitPos>, Error> {
+		let commit = output_id.commit;
+		match self.commit_index.get_token_output_pos_height(&commit) {
+			Ok(Some((pos, height))) => {
+				let output_pmmr: ReadonlyPMMR<'_, TokenOutput, _> = ReadonlyPMMR::at(
+					&self.token_output_pmmr_h.backend,
+					self.token_output_pmmr_h.last_pos,
+				);
+				if let Some(out) = output_pmmr.get_data(pos) {
+					if TokenOutputIdentifier::from(out) == *output_id {
+						Ok(Some(CommitPos { pos, height }))
+					} else {
+						Ok(None)
+					}
+				} else {
+					Ok(None)
+				}
+			}
+			Ok(None) => Ok(None),
 			Err(e) => Err(ErrorKind::StoreErr(e, "txhashset unspent check".to_string()).into()),
 		}
 	}
@@ -304,44 +334,6 @@ impl TxHashSet {
 	pub fn last_n_output(&self, distance: u64) -> Vec<(Hash, OutputIdentifier)> {
 		ReadonlyPMMR::at(&self.output_pmmr_h.backend, self.output_pmmr_h.last_pos)
 			.get_last_n_insertions(distance)
-	}
-
-	/// as above, for range proofs
-	pub fn last_n_rangeproof(&self, distance: u64) -> Vec<(Hash, RangeProof)> {
-		ReadonlyPMMR::at(&self.rproof_pmmr_h.backend, self.rproof_pmmr_h.last_pos)
-			.get_last_n_insertions(distance)
-	}
-
-	/// as above, for kernels
-	pub fn last_n_kernel(&self, distance: u64) -> Vec<(Hash, TxKernel)> {
-		ReadonlyPMMR::at(&self.kernel_pmmr_h.backend, self.kernel_pmmr_h.last_pos)
-			.get_last_n_insertions(distance)
-	}
-
-	/// Check if an token output is unspent.
-	/// We look in the index to find the token output MMR pos.
-	/// Then we check the entry in the token output MMR and confirm the hash matches.
-	pub fn is_token_unspent(&self, output_id: &TokenOutputIdentifier) -> Result<CommitPos, Error> {
-		let commit = output_id.commit;
-		match self.commit_index.get_token_output_pos_height(&commit) {
-			Ok((pos, height)) => {
-				let output_pmmr: ReadonlyPMMR<'_, TokenOutput, _> = ReadonlyPMMR::at(
-					&self.token_output_pmmr_h.backend,
-					self.token_output_pmmr_h.last_pos,
-				);
-				if let Some(hash) = output_pmmr.get_hash(pos) {
-					if hash == output_id.hash_with_index(pos - 1) {
-						Ok(CommitPos { pos, height })
-					} else {
-						Err(ErrorKind::TxHashSetErr("txhashset hash mismatch".to_string()).into())
-					}
-				} else {
-					Err(ErrorKind::OutputNotFound.into())
-				}
-			}
-			Err(grin_store::Error::NotFoundErr(_)) => Err(ErrorKind::OutputNotFound.into()),
-			Err(e) => Err(ErrorKind::StoreErr(e, "txhashset unspent check".to_string()).into()),
-		}
 	}
 
 	/// returns the last N nodes inserted into the tree (i.e. the 'bottom'
@@ -356,6 +348,12 @@ impl TxHashSet {
 		.get_last_n_insertions(distance)
 	}
 
+	/// as above, for range proofs
+	pub fn last_n_rangeproof(&self, distance: u64) -> Vec<(Hash, RangeProof)> {
+		ReadonlyPMMR::at(&self.rproof_pmmr_h.backend, self.rproof_pmmr_h.last_pos)
+			.get_last_n_insertions(distance)
+	}
+
 	/// as above, for token range proofs
 	pub fn last_n_token_rangeproof(&self, distance: u64) -> Vec<(Hash, RangeProof)> {
 		ReadonlyPMMR::at(
@@ -363,6 +361,12 @@ impl TxHashSet {
 			self.token_rproof_pmmr_h.last_pos,
 		)
 		.get_last_n_insertions(distance)
+	}
+
+	/// as above, for kernels
+	pub fn last_n_kernel(&self, distance: u64) -> Vec<(Hash, TxKernel)> {
+		ReadonlyPMMR::at(&self.kernel_pmmr_h.backend, self.kernel_pmmr_h.last_pos)
+			.get_last_n_insertions(distance)
 	}
 
 	/// as above, for token issue proof
@@ -392,9 +396,29 @@ impl TxHashSet {
 			.elements_from_pmmr_index(start_index, max_count, max_index)
 	}
 
+	/// returns outputs from the given insertion (leaf) index up to the
+	/// specified limit. Also returns the last index actually populated
+	pub fn token_outputs_by_pmmr_index(
+		&self,
+		start_index: u64,
+		max_count: u64,
+		max_index: Option<u64>,
+	) -> (u64, Vec<TokenOutputIdentifier>) {
+		ReadonlyPMMR::at(
+			&self.token_output_pmmr_h.backend,
+			self.token_output_pmmr_h.last_pos,
+		)
+		.elements_from_pmmr_index(start_index, max_count, max_index)
+	}
+
 	/// highest output insertion index available
 	pub fn highest_output_insertion_index(&self) -> u64 {
 		self.output_pmmr_h.last_pos
+	}
+
+	/// highest token output insertion index available
+	pub fn highest_token_output_insertion_index(&self) -> u64 {
+		self.token_output_pmmr_h.last_pos
 	}
 
 	/// As above, for rangeproofs
@@ -406,6 +430,20 @@ impl TxHashSet {
 	) -> (u64, Vec<RangeProof>) {
 		ReadonlyPMMR::at(&self.rproof_pmmr_h.backend, self.rproof_pmmr_h.last_pos)
 			.elements_from_pmmr_index(start_index, max_count, max_index)
+	}
+
+	/// As above, for rangeproofs
+	pub fn token_rangeproofs_by_pmmr_index(
+		&self,
+		start_index: u64,
+		max_count: u64,
+		max_index: Option<u64>,
+	) -> (u64, Vec<RangeProof>) {
+		ReadonlyPMMR::at(
+			&self.token_rproof_pmmr_h.backend,
+			self.token_rproof_pmmr_h.last_pos,
+		)
+		.elements_from_pmmr_index(start_index, max_count, max_index)
 	}
 
 	/// Find a kernel with a given excess. Work backwards from `max_index` to `min_index`
@@ -502,12 +540,28 @@ impl TxHashSet {
 		Ok(self.commit_index.get_output_pos(&commit)?)
 	}
 
+	/// Return Commit's MMR position
+	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+		Ok(self.commit_index.get_token_output_pos(&commit)?)
+	}
+
 	/// build a new merkle proof for the given position.
 	pub fn merkle_proof(&mut self, commit: Commitment) -> Result<MerkleProof, Error> {
 		let pos = self.commit_index.get_output_pos(&commit)?;
 		PMMR::at(&mut self.output_pmmr_h.backend, self.output_pmmr_h.last_pos)
 			.merkle_proof(pos)
 			.map_err(|_| ErrorKind::MerkleProof.into())
+	}
+
+	/// build a new merkle proof for the given position.
+	pub fn token_merkle_proof(&mut self, commit: Commitment) -> Result<MerkleProof, Error> {
+		let pos = self.commit_index.get_token_output_pos(&commit)?;
+		PMMR::at(
+			&mut self.token_output_pmmr_h.backend,
+			self.token_output_pmmr_h.last_pos,
+		)
+		.merkle_proof(pos)
+		.map_err(|_| ErrorKind::MerkleProof.into())
 	}
 
 	/// Compact the MMR data files and flush the rm logs
@@ -593,7 +647,12 @@ impl TxHashSet {
 
 		debug!("init_output_pos_index: {} utxos", outputs_pos.len());
 
-		outputs_pos.retain(|x| batch.get_output_pos_height(&x.0).is_err());
+		outputs_pos.retain(|x| {
+			batch
+				.get_output_pos_height(&x.0)
+				.map(|p| p.is_none())
+				.unwrap_or(true)
+		});
 
 		debug!(
 			"init_output_pos_index: {} utxos with missing index entries",
@@ -649,7 +708,7 @@ impl TxHashSet {
 		let mut removed_count = 0;
 		for (key, (pos, _)) in batch.token_output_pos_iter()? {
 			if let Some(out) = output_pmmr.get_data(pos) {
-				if let Ok((pos_via_mmr, _)) = batch.get_token_output_pos_height(&out.commitment()) {
+				if let Ok(pos_via_mmr) = batch.get_token_output_pos(&out.commitment()) {
 					// If the pos matches and the index key matches the commitment
 					// then keep the entry, other we want to clean it up.
 					if pos == pos_via_mmr
@@ -710,56 +769,6 @@ impl TxHashSet {
 			now.elapsed().as_secs(),
 		);
 		Ok(())
-	}
-
-	/// returns outputs from the given insertion (leaf) index up to the
-	/// specified limit. Also returns the last index actually populated
-	pub fn token_outputs_by_pmmr_index(
-		&self,
-		start_index: u64,
-		max_count: u64,
-		max_index: Option<u64>,
-	) -> (u64, Vec<TokenOutputIdentifier>) {
-		ReadonlyPMMR::at(
-			&self.token_output_pmmr_h.backend,
-			self.token_output_pmmr_h.last_pos,
-		)
-		.elements_from_pmmr_index(start_index, max_count, max_index)
-	}
-
-	/// highest output insertion index available
-	pub fn highest_token_output_insertion_index(&self) -> u64 {
-		pmmr::n_leaves(self.token_output_pmmr_h.last_pos)
-	}
-
-	/// As above, for rangeproofs
-	pub fn token_rangeproofs_by_pmmr_index(
-		&self,
-		start_index: u64,
-		max_count: u64,
-		max_index: Option<u64>,
-	) -> (u64, Vec<RangeProof>) {
-		ReadonlyPMMR::at(
-			&self.token_rproof_pmmr_h.backend,
-			self.token_rproof_pmmr_h.last_pos,
-		)
-		.elements_from_pmmr_index(start_index, max_count, max_index)
-	}
-
-	/// Return Commit's MMR position
-	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
-		Ok(self.commit_index.get_token_output_pos_height(&commit)?.0)
-	}
-
-	/// build a new merkle proof for the given position.
-	pub fn token_merkle_proof(&mut self, commit: Commitment) -> Result<MerkleProof, Error> {
-		let pos = self.commit_index.get_token_output_pos_height(&commit)?.0;
-		PMMR::at(
-			&mut self.token_output_pmmr_h.backend,
-			self.token_output_pmmr_h.last_pos,
-		)
-		.merkle_proof(pos)
-		.map_err(|_| ErrorKind::MerkleProof.into())
 	}
 }
 
@@ -832,9 +841,9 @@ where
 {
 	let res: Result<T, Error>;
 	{
+		let header_pmmr = ReadonlyPMMR::at(&handle.backend, handle.last_pos);
 		let output_pmmr =
 			ReadonlyPMMR::at(&trees.output_pmmr_h.backend, trees.output_pmmr_h.last_pos);
-		let header_pmmr = ReadonlyPMMR::at(&handle.backend, handle.last_pos);
 		let token_output_pmmr = ReadonlyPMMR::at(
 			&trees.token_output_pmmr_h.backend,
 			trees.token_output_pmmr_h.last_pos,
@@ -855,10 +864,10 @@ where
 		// Discard it (rollback) after we finish with the utxo_view.
 		let batch = trees.commit_index.batch()?;
 		let utxo = UTXOView::new(
+			header_pmmr,
 			output_pmmr,
 			token_output_pmmr,
 			token_issue_proof_pmmr,
-			header_pmmr,
 			rproof_pmmr,
 			token_rproof_pmmr,
 		);
@@ -1332,10 +1341,10 @@ impl<'a> Extension<'a> {
 	/// and the provided header extension.
 	pub fn utxo_view(&'a self, header_ext: &'a HeaderExtension<'a>) -> UTXOView<'a> {
 		UTXOView::new(
+			header_ext.pmmr.readonly_pmmr(),
 			self.output_pmmr.readonly_pmmr(),
 			self.token_output_pmmr.readonly_pmmr(),
 			self.token_issue_proof_pmmr.readonly_pmmr(),
-			header_ext.pmmr.readonly_pmmr(),
 			self.rproof_pmmr.readonly_pmmr(),
 			self.token_rproof_pmmr.readonly_pmmr(),
 		)
@@ -1344,14 +1353,8 @@ impl<'a> Extension<'a> {
 	/// Apply a new block to the current txhashet extension (output, rangeproof, kernel MMRs).
 	/// Returns a vec of commit_pos representing the pos and height of the outputs spent
 	/// by this block.
-	pub fn apply_block(
-		&mut self,
-		b: &Block,
-		batch: &Batch<'_>,
-	) -> Result<(Vec<CommitPos>, Vec<CommitPos>), Error> {
+	pub fn apply_block(&mut self, b: &Block, batch: &Batch<'_>) -> Result<(), Error> {
 		let mut affected_pos = vec![];
-		let mut spent = vec![];
-		let mut token_spent = vec![];
 
 		// Apply the output to the output and rangeproof MMRs.
 		// Add pos to affected_pos to update the accumulator later on.
@@ -1365,12 +1368,14 @@ impl<'a> Extension<'a> {
 		// Remove the output from the output and rangeproof MMRs.
 		// Add spent_pos to affected_pos to update the accumulator later on.
 		// Remove the spent output from the output_pos index.
+		let mut spent = vec![];
 		for input in b.inputs() {
 			let spent_pos = self.apply_input(input, batch)?;
 			affected_pos.push(spent_pos.pos);
 			batch.delete_output_pos_height(&input.commitment())?;
 			spent.push(spent_pos);
 		}
+		batch.save_spent_index(&b.hash(), &spent)?;
 
 		for out in b.token_outputs() {
 			let pos = self.apply_token_output(out, batch)?;
@@ -1382,11 +1387,13 @@ impl<'a> Extension<'a> {
 			}
 		}
 
+		let mut token_spent = vec![];
 		for input in b.token_inputs() {
 			let spent_pos = self.apply_token_input(input, batch)?;
 			batch.delete_token_output_pos_height(&input.commitment())?;
 			token_spent.push(spent_pos);
 		}
+		batch.save_spent_token_index(&b.hash(), &token_spent)?;
 
 		for kernel in b.kernels() {
 			self.apply_kernel(kernel)?;
@@ -1402,7 +1409,7 @@ impl<'a> Extension<'a> {
 		// Update the head of the extension to reflect the block we just applied.
 		self.head = Tip::from_header(&b.header);
 
-		Ok((spent, token_spent))
+		Ok(())
 	}
 
 	fn apply_to_bitmap_accumulator(&mut self, output_pos: &[u64]) -> Result<(), Error> {
@@ -1423,13 +1430,11 @@ impl<'a> Extension<'a> {
 
 	fn apply_input(&mut self, input: &Input, batch: &Batch<'_>) -> Result<CommitPos, Error> {
 		let commit = input.commitment();
-		if let Ok((pos, height)) = batch.get_output_pos_height(&commit) {
+		if let Some((pos, height)) = batch.get_output_pos_height(&commit)? {
 			// First check this input corresponds to an existing entry in the output MMR.
-			if let Some(hash) = self.output_pmmr.get_hash(pos) {
-				if hash != input.hash_with_index(pos - 1) {
-					return Err(
-						ErrorKind::TxHashSetErr("output pmmr hash mismatch".to_string()).into(),
-					);
+			if let Some(out) = self.output_pmmr.get_data(pos) {
+				if OutputIdentifier::from(input) != out {
+					return Err(ErrorKind::TxHashSetErr("output pmmr mismatch".to_string()).into());
 				}
 			}
 
@@ -1439,6 +1444,40 @@ impl<'a> Extension<'a> {
 			match self.output_pmmr.prune(pos) {
 				Ok(true) => {
 					self.rproof_pmmr
+						.prune(pos)
+						.map_err(ErrorKind::TxHashSetErr)?;
+					Ok(CommitPos { pos, height })
+				}
+				Ok(false) => Err(ErrorKind::AlreadySpent(commit).into()),
+				Err(e) => Err(ErrorKind::TxHashSetErr(e).into()),
+			}
+		} else {
+			Err(ErrorKind::AlreadySpent(commit).into())
+		}
+	}
+
+	fn apply_token_input(
+		&mut self,
+		token_input: &TokenInput,
+		batch: &Batch<'_>,
+	) -> Result<CommitPos, Error> {
+		let commit = token_input.commitment();
+		if let Some((pos, height)) = batch.get_token_output_pos_height(&commit)? {
+			// First check this input corresponds to an existing entry in the output MMR.
+			if let Some(out) = self.token_output_pmmr.get_data(pos) {
+				if TokenOutputIdentifier::from(token_input) != out {
+					return Err(
+						ErrorKind::TxHashSetErr("token output pmmr mismatch".to_string()).into(),
+					);
+				}
+			}
+
+			// Now prune the output_pmmr, rproof_pmmr and their storage.
+			// Input is not valid if we cannot prune successfully (to spend an unspent
+			// output).
+			match self.token_output_pmmr.prune(pos) {
+				Ok(true) => {
+					self.token_rproof_pmmr
 						.prune(pos)
 						.map_err(ErrorKind::TxHashSetErr)?;
 					Ok(CommitPos { pos, height })
@@ -1491,41 +1530,6 @@ impl<'a> Extension<'a> {
 		Ok(output_pos)
 	}
 
-	fn apply_token_input(
-		&mut self,
-		token_input: &TokenInput,
-		batch: &Batch<'_>,
-	) -> Result<CommitPos, Error> {
-		let commit = token_input.commitment();
-		if let Ok((pos, height)) = batch.get_token_output_pos_height(&commit) {
-			// First check this input corresponds to an existing entry in the output MMR.
-			if let Some(hash) = self.token_output_pmmr.get_hash(pos) {
-				if hash != token_input.hash_with_index(pos - 1) {
-					return Err(ErrorKind::TxHashSetErr(
-						"token output pmmr hash mismatch".to_string(),
-					)
-					.into());
-				}
-			}
-
-			// Now prune the output_pmmr, rproof_pmmr and their storage.
-			// Input is not valid if we cannot prune successfully (to spend an unspent
-			// output).
-			match self.token_output_pmmr.prune(pos) {
-				Ok(true) => {
-					self.token_rproof_pmmr
-						.prune(pos)
-						.map_err(ErrorKind::TxHashSetErr)?;
-					Ok(CommitPos { pos, height })
-				}
-				Ok(false) => Err(ErrorKind::AlreadySpent(commit).into()),
-				Err(e) => Err(ErrorKind::TxHashSetErr(e).into()),
-			}
-		} else {
-			Err(ErrorKind::AlreadySpent(commit).into())
-		}
-	}
-
 	fn apply_token_output(
 		&mut self,
 		token_out: &TokenOutput,
@@ -1533,7 +1537,7 @@ impl<'a> Extension<'a> {
 	) -> Result<u64, Error> {
 		let commit = token_out.commitment();
 
-		if let Ok((pos, _)) = batch.get_token_output_pos_height(&commit) {
+		if let Ok(pos) = batch.get_token_output_pos(&commit) {
 			if let Some(out_mmr) = self.token_output_pmmr.get_data(pos) {
 				if out_mmr.commitment() == commit {
 					return Err(ErrorKind::DuplicateCommitment(commit).into());
@@ -1649,10 +1653,10 @@ impl<'a> Extension<'a> {
 	) -> Result<MerkleProof, Error> {
 		debug!("txhashset: merkle_proof: output: {:?}", output.commit,);
 		// then calculate the Merkle Proof based on the known pos
-		let pos = batch.get_token_output_pos_height(&output.commit)?;
+		let pos = batch.get_token_output_pos(&output.commit)?;
 		let merkle_proof = self
 			.token_output_pmmr
-			.merkle_proof(pos.0)
+			.merkle_proof(pos)
 			.map_err(&ErrorKind::TxHashSetErr)?;
 
 		Ok(merkle_proof)

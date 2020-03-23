@@ -459,7 +459,7 @@ impl StratumServer {
 			COIN_BASE_PART1, COIN_BASE_EXTRA_NOUNCE1, extra_nonce_2_str, coinbase2
 		);
 		trace!("build coin base:{}", coin_base_str);
-		let coin_base_data = util::from_hex(coin_base_str);
+		let coin_base_data = util::from_hex(coin_base_str.as_str());
 		if coin_base_data.is_err() {
 			return Err(serde_json::to_value(false).unwrap());
 		}

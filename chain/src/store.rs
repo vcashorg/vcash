@@ -136,27 +136,41 @@ impl ChainStore {
 
 	/// Get PMMR pos for the given output commitment.
 	pub fn get_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
-		self.get_output_pos_height(commit).map(|(pos, _)| pos)
+		match self.get_output_pos_height(commit)? {
+			Some((pos, _)) => Ok(pos),
+			None => Err(Error::NotFoundErr(format!(
+				"Output position for: {:?}",
+				commit
+			))),
+		}
+	}
+
+	/// Get PMMR pos for the given token output commitment.
+	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+		match self.get_token_output_pos_height(commit)? {
+			Some((pos, _)) => Ok(pos),
+			None => Err(Error::NotFoundErr(format!(
+				"Token Output position for: {:?}",
+				commit
+			))),
+		}
 	}
 
 	/// Get PMMR pos and block height for the given output commitment.
-	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
-		option_to_not_found(
-			self.db
-				.get_ser(&to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec())),
-			|| format!("Output position for: {:?}", commit),
-		)
+	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<Option<(u64, u64)>, Error> {
+		self.db
+			.get_ser(&to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec()))
 	}
 
 	/// Get PMMR pos and block height for the given output commitment.
-	pub fn get_token_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
-		option_to_not_found(
-			self.db.get_ser(&to_key(
-				TOKEN_COMMIT_POS_PREFIX,
-				&mut commit.as_ref().to_vec(),
-			)),
-			|| format!("Token Output position for: {:?}", commit),
-		)
+	pub fn get_token_output_pos_height(
+		&self,
+		commit: &Commitment,
+	) -> Result<Option<(u64, u64)>, Error> {
+		self.db.get_ser(&to_key(
+			TOKEN_COMMIT_POS_PREFIX,
+			&mut commit.as_ref().to_vec(),
+		))
 	}
 
 	/// Builds a new batch to be used with this store.
@@ -296,40 +310,6 @@ impl<'a> Batch<'a> {
 		)
 	}
 
-	/// Delete the output_pos index entry for a spent output.
-	pub fn delete_output_pos_height(&self, commit: &Commitment) -> Result<(), Error> {
-		self.db
-			.delete(&to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec()))
-	}
-
-	/// When using the output_pos iterator we have access to the index keys but not the
-	/// original commitment that the key is constructed from. So we need a way of comparing
-	/// a key with another commitment without reconstructing the commitment from the key bytes.
-	pub fn is_match_output_pos_key(&self, key: &[u8], commit: &Commitment) -> bool {
-		let commit_key = to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec());
-		commit_key == key
-	}
-
-	/// Iterator over the output_pos index.
-	pub fn output_pos_iter(&self) -> Result<SerIterator<(u64, u64)>, Error> {
-		let key = to_key(OUTPUT_POS_PREFIX, &mut "".to_string().into_bytes());
-		self.db.iter(&key)
-	}
-
-	/// Get output_pos from index.
-	pub fn get_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
-		self.get_output_pos_height(commit).map(|(pos, _)| pos)
-	}
-
-	/// Get output_pos and block height from index.
-	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
-		option_to_not_found(
-			self.db
-				.get_ser(&to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec())),
-			|| format!("Output position for commit: {:?}", commit),
-		)
-	}
-
 	/// Save token_output_pos and block height to index.
 	pub fn save_token_output_pos_height(
 		&self,
@@ -343,6 +323,12 @@ impl<'a> Batch<'a> {
 		)
 	}
 
+	/// Delete the output_pos index entry for a spent output.
+	pub fn delete_output_pos_height(&self, commit: &Commitment) -> Result<(), Error> {
+		self.db
+			.delete(&to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec()))
+	}
+
 	/// Delete the token_output_pos index entry for a spent output.
 	pub fn delete_token_output_pos_height(&self, commit: &Commitment) -> Result<(), Error> {
 		self.db.delete(&to_key(
@@ -354,9 +340,23 @@ impl<'a> Batch<'a> {
 	/// When using the output_pos iterator we have access to the index keys but not the
 	/// original commitment that the key is constructed from. So we need a way of comparing
 	/// a key with another commitment without reconstructing the commitment from the key bytes.
+	pub fn is_match_output_pos_key(&self, key: &[u8], commit: &Commitment) -> bool {
+		let commit_key = to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec());
+		commit_key == key
+	}
+
+	/// When using the output_pos iterator we have access to the index keys but not the
+	/// original commitment that the key is constructed from. So we need a way of comparing
+	/// a key with another commitment without reconstructing the commitment from the key bytes.
 	pub fn is_match_token_output_pos_key(&self, key: &[u8], commit: &Commitment) -> bool {
 		let commit_key = to_key(TOKEN_COMMIT_POS_PREFIX, &mut commit.as_ref().to_vec());
 		commit_key == key
+	}
+
+	/// Iterator over the output_pos index.
+	pub fn output_pos_iter(&self) -> Result<SerIterator<(u64, u64)>, Error> {
+		let key = to_key(OUTPUT_POS_PREFIX, &mut "".to_string().into_bytes());
+		self.db.iter(&key)
 	}
 
 	/// Iterator over the token_output_pos index.
@@ -365,24 +365,43 @@ impl<'a> Batch<'a> {
 		self.db.iter(&key)
 	}
 
-	/// Get token_output_pos and block height from index.
-	pub fn get_token_output_pos_height(&self, commit: &Commitment) -> Result<(u64, u64), Error> {
-		option_to_not_found(
-			self.db.get_ser(&to_key(
-				TOKEN_COMMIT_POS_PREFIX,
-				&mut commit.as_ref().to_vec(),
-			)),
-			|| format!("Token Output position for commit: {:?}", commit),
-		)
+	/// Get output_pos from index.
+	pub fn get_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+		match self.get_output_pos_height(commit)? {
+			Some((pos, _)) => Ok(pos),
+			None => Err(Error::NotFoundErr(format!(
+				"Output position for: {:?}",
+				commit
+			))),
+		}
 	}
 
-	/// Clear all entries from the token_output_pos index (must be rebuilt after).
-	pub fn clear_token_output_pos_height(&self) -> Result<(), Error> {
-		let key = to_key(TOKEN_COMMIT_POS_PREFIX, &mut "".to_string().into_bytes());
-		for (k, _) in self.db.iter::<u64>(&key)? {
-			self.db.delete(&k)?;
+	/// Get token_output_pos from index.
+	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+		match self.get_token_output_pos_height(commit)? {
+			Some((pos, _)) => Ok(pos),
+			None => Err(Error::NotFoundErr(format!(
+				"Token Output position for: {:?}",
+				commit
+			))),
 		}
-		Ok(())
+	}
+
+	/// Get output_pos and block height from index.
+	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<Option<(u64, u64)>, Error> {
+		self.db
+			.get_ser(&to_key(OUTPUT_POS_PREFIX, &mut commit.as_ref().to_vec()))
+	}
+
+	/// Get token_output_pos and block height from index.
+	pub fn get_token_output_pos_height(
+		&self,
+		commit: &Commitment,
+	) -> Result<Option<(u64, u64)>, Error> {
+		self.db.get_ser(&to_key(
+			TOKEN_COMMIT_POS_PREFIX,
+			&mut commit.as_ref().to_vec(),
+		))
 	}
 
 	/// Save token_issue_proof_pos to index.
@@ -456,7 +475,7 @@ impl<'a> Batch<'a> {
 	}
 
 	/// Save block_sums for the block.
-	pub fn save_block_sums(&self, h: &Hash, sums: &BlockSums) -> Result<(), Error> {
+	pub fn save_block_sums(&self, h: &Hash, sums: BlockSums) -> Result<(), Error> {
 		self.db
 			.put_ser(&to_key(BLOCK_SUMS_PREFIX, &mut h.to_vec())[..], &sums)
 	}

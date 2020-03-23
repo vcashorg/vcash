@@ -518,8 +518,8 @@ impl Chain {
 	/// spent. This querying is done in a way that is consistent with the
 	/// current chain state, specifically the current winning (valid, most
 	/// work) fork.
-	pub fn is_unspent(&self, output_ref: &OutputIdentifier) -> Result<CommitPos, Error> {
-		self.txhashset.read().is_unspent(output_ref)
+	pub fn get_unspent(&self, output_ref: &OutputIdentifier) -> Result<Option<CommitPos>, Error> {
+		self.txhashset.read().get_unspent(output_ref)
 	}
 
 	/// TODO - where do we call this from? And do we need a rewind first?
@@ -528,8 +528,11 @@ impl Chain {
 	/// spent. This querying is done in a way that is consistent with the
 	/// current chain state, specifically the current winning (valid, most
 	/// work) fork.
-	pub fn is_token_unspent(&self, output_ref: &TokenOutputIdentifier) -> Result<CommitPos, Error> {
-		self.txhashset.read().is_token_unspent(output_ref)
+	pub fn get_token_unspent(
+		&self,
+		output_ref: &TokenOutputIdentifier,
+	) -> Result<Option<CommitPos>, Error> {
+		self.txhashset.read().get_token_unspent(output_ref)
 	}
 
 	/// Retrieves an unspent output using its PMMR position
@@ -806,19 +809,6 @@ impl Chain {
 		Ok(())
 	}
 
-	/// Rebuild the header MMR based on current header_head. jia
-	pub fn rebuild_header_mmr(&self, head: &Tip) -> Result<(), Error> {
-		let mut header_pmmr = self.header_pmmr.write();
-		let mut batch = self.store.batch()?;
-		let header = batch.get_block_header(&head.hash())?;
-		txhashset::header_extending(&mut header_pmmr, &mut batch, |ext, batch| {
-			pipe::rewind_and_apply_header_fork(&header, ext, batch)?;
-			Ok(())
-		})?;
-		batch.commit()?;
-		Ok(())
-	}
-
 	/// Rebuild the sync MMR based on current header_head.
 	/// We rebuild the sync MMR when first entering sync mode so ensure we
 	/// have an MMR we can safely rewind based on the headers received from a peer.
@@ -1032,7 +1022,7 @@ impl Chain {
 				// Save the block_sums (utxo_sum, kernel_sum) to the db for use later.
 				batch.save_block_sums(
 					&header.hash(),
-					&BlockSums {
+					BlockSums {
 						utxo_sum,
 						kernel_sum,
 					},
@@ -1207,19 +1197,14 @@ impl Chain {
 		self.txhashset.read().last_n_output(distance)
 	}
 
-	/// as above, for rangeproofs
-	pub fn get_last_n_rangeproof(&self, distance: u64) -> Vec<(Hash, RangeProof)> {
-		self.txhashset.read().last_n_rangeproof(distance)
-	}
-
-	/// as above, for kernels
-	pub fn get_last_n_kernel(&self, distance: u64) -> Vec<(Hash, TxKernel)> {
-		self.txhashset.read().last_n_kernel(distance)
-	}
-
 	/// returns the last n nodes inserted into the token output sum tree
 	pub fn get_last_n_token_output(&self, distance: u64) -> Vec<(Hash, TokenOutputIdentifier)> {
 		self.txhashset.read().last_n_token_output(distance)
+	}
+
+	/// as above, for rangeproofs
+	pub fn get_last_n_rangeproof(&self, distance: u64) -> Vec<(Hash, RangeProof)> {
+		self.txhashset.read().last_n_rangeproof(distance)
 	}
 
 	/// as above, for token rangeproofs
@@ -1227,19 +1212,24 @@ impl Chain {
 		self.txhashset.read().last_n_token_rangeproof(distance)
 	}
 
+	/// as above, for kernels
+	pub fn get_last_n_kernel(&self, distance: u64) -> Vec<(Hash, TxKernel)> {
+		self.txhashset.read().last_n_kernel(distance)
+	}
+
 	/// as above, for token issue proof
 	pub fn get_last_n_token_issue_proof(&self, distance: u64) -> Vec<(Hash, TokenIssueProof)> {
 		self.txhashset.read().last_n_token_issue_proof(distance)
 	}
 
-	/// as above, for kernels
-	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
-		Ok(self.txhashset.read().get_token_output_pos(commit)?)
-	}
-
 	/// Return Commit's MMR position
 	pub fn get_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
 		Ok(self.txhashset.read().get_output_pos(commit)?)
+	}
+
+	/// as above, for kernels
+	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
+		Ok(self.txhashset.read().get_token_output_pos(commit)?)
 	}
 
 	/// outputs by insertion index
@@ -1274,26 +1264,6 @@ impl Chain {
 		Ok((outputs.0, last_index, output_vec))
 	}
 
-	/// Return unspent outputs as above, but bounded between a particular range of blocks
-	pub fn block_height_range_to_pmmr_indices(
-		&self,
-		start_block_height: u64,
-		end_block_height: Option<u64>,
-	) -> Result<(u64, u64), Error> {
-		let end_block_height = match end_block_height {
-			Some(h) => h,
-			None => self.head_header()?.height,
-		};
-		// Return headers at the given heights
-		let prev_to_start_header =
-			self.get_header_by_height(start_block_height.saturating_sub(1))?;
-		let end_header = self.get_header_by_height(end_block_height)?;
-		Ok((
-			prev_to_start_header.output_mmr_size + 1,
-			end_header.output_mmr_size,
-		))
-	}
-
 	/// outputs by insertion index
 	pub fn unspent_token_outputs_by_pmmr_index(
 		&self,
@@ -1325,6 +1295,26 @@ impl Chain {
 			});
 		}
 		Ok((outputs.0, last_index, output_vec))
+	}
+
+	/// Return unspent outputs as above, but bounded between a particular range of blocks
+	pub fn block_height_range_to_pmmr_indices(
+		&self,
+		start_block_height: u64,
+		end_block_height: Option<u64>,
+	) -> Result<(u64, u64), Error> {
+		let end_block_height = match end_block_height {
+			Some(h) => h,
+			None => self.head_header()?.height,
+		};
+		// Return headers at the given heights
+		let prev_to_start_header =
+			self.get_header_by_height(start_block_height.saturating_sub(1))?;
+		let end_header = self.get_header_by_height(end_block_height)?;
+		Ok((
+			prev_to_start_header.output_mmr_size + 1,
+			end_header.output_mmr_size,
+		))
 	}
 
 	/// Return unspent outputs as above, but bounded between a particular range of blocks
@@ -1462,7 +1452,10 @@ impl Chain {
 	) -> Result<BlockHeader, Error> {
 		let header_pmmr = self.header_pmmr.read();
 		let txhashset = self.txhashset.read();
-		let output_pos = txhashset.is_unspent(output_ref)?;
+		let output_pos = match txhashset.get_unspent(output_ref)? {
+			Some(o) => o,
+			None => return Err(ErrorKind::OutputNotFound.into()),
+		};
 		let hash = header_pmmr.get_header_hash_by_height(output_pos.height)?;
 		Ok(self.get_block_header(&hash)?)
 	}
@@ -1474,7 +1467,10 @@ impl Chain {
 	) -> Result<BlockHeader, Error> {
 		let header_pmmr = self.header_pmmr.read();
 		let txhashset = self.txhashset.read();
-		let output_pos = txhashset.is_token_unspent(output_ref)?;
+		let output_pos = match txhashset.get_token_unspent(output_ref)? {
+			Some(o) => o,
+			None => return Err(ErrorKind::OutputNotFound.into()),
+		};
 		let hash = header_pmmr.get_header_hash_by_height(output_pos.height)?;
 		Ok(self.get_block_header(&hash)?)
 	}
@@ -1715,7 +1711,7 @@ fn setup_head(
 						// Save the block_sums to the db for use later.
 						batch.save_block_sums(
 							&header.hash(),
-							&BlockSums {
+							BlockSums {
 								utxo_sum,
 								kernel_sum,
 							},
@@ -1792,7 +1788,7 @@ fn setup_head(
 			})?;
 
 			// Save the block_sums to the db for use later.
-			batch.save_block_sums(&genesis.hash(), &sums)?;
+			batch.save_block_sums(&genesis.hash(), sums)?;
 			batch.save_block_token_sums(&genesis.hash(), &BlockTokenSums::default())?;
 
 			info!("init: saved genesis: {:?}", genesis.hash());

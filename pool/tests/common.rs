@@ -92,7 +92,7 @@ impl ChainAdapter {
 			utxo_sum,
 			kernel_sum,
 		};
-		batch.save_block_sums(&header.hash(), &block_sums).unwrap();
+		batch.save_block_sums(&header.hash(), block_sums).unwrap();
 
 		let prev_token_sums =
 			if let Ok(prev_token_sums) = batch.get_block_token_sums(&tip.prev_block_h) {

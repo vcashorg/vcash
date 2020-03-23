@@ -110,7 +110,7 @@ async fn update_pool(
 	let fluff = params.get("fluff").is_some();
 
 	let wrapper: TxWrapper = parse_body(req).await?;
-	let tx_bin = util::from_hex(wrapper.tx_hex)
+	let tx_bin = util::from_hex(&wrapper.tx_hex)
 		.map_err(|e| ErrorKind::RequestError(format!("Bad request: {}", e)))?;
 
 	let mut tx_pool = pool.write();

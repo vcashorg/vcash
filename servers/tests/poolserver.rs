@@ -122,7 +122,7 @@ fn test_pool_server() {
 
 	let mut aux_data = BlockAuxData::default();
 	let coin_base = get_grin_magic_data_str(Hash::from_hex(res.cur_hash.as_str()).unwrap());
-	aux_data.coinbase_tx = util::from_hex(coin_base.clone()).unwrap();
+	aux_data.coinbase_tx = util::from_hex(coin_base.as_str()).unwrap();
 	aux_data.aux_header.merkle_root = aux_data.coinbase_tx.clone().dhash();
 	let submit_info = SubmitInfo {
 		header_hash: res.cur_hash,

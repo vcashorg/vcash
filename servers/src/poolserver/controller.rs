@@ -102,7 +102,7 @@ impl OwnerAPIHandler {
 			return Err(ErrorKind::Internal(btc_header_result.clone().err().unwrap()).into());
 		}
 
-		let btc_coinbase_result = util::from_hex(job_info.btc_coinbase.clone());
+		let btc_coinbase_result = util::from_hex(job_info.btc_coinbase.as_str());
 		if btc_coinbase_result.is_err() {
 			return Err(ErrorKind::Internal(
 				"btc coinbase fail to deserilise from hex".to_string(),
@@ -127,7 +127,7 @@ impl OwnerAPIHandler {
 		//job_info.btc_merkle_branch.as_str().split('-').collect();
 		let mut hash_vec: Vec<Hash> = Vec::new();
 		for str in str_vec {
-			let branch_item_ret = util::from_hex(str.to_string());
+			let branch_item_ret = util::from_hex(str);
 			if branch_item_ret.is_err() {
 				return Err(ErrorKind::Internal(
 					format!("btc merkle branch item can not transfer to vecu8:{}", str).to_string(),
