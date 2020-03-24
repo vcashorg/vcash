@@ -480,20 +480,7 @@ impl<'a> Batch<'a> {
 			.put_ser(&to_key(BLOCK_SUMS_PREFIX, &mut h.to_vec())[..], &sums)
 	}
 
-	/// Get block_sums for the block.
-	pub fn get_block_sums(&self, h: &Hash) -> Result<BlockSums, Error> {
-		option_to_not_found(
-			self.db.get_ser(&to_key(BLOCK_SUMS_PREFIX, &mut h.to_vec())),
-			|| format!("Block sums for block: {}", h),
-		)
-	}
-
-	/// Delete the block_sums for the block.
-	fn delete_block_sums(&self, bh: &Hash) -> Result<(), Error> {
-		self.db.delete(&to_key(BLOCK_SUMS_PREFIX, &mut bh.to_vec()))
-	}
-
-	/// Save token_block_sums for the block.
+	/// Save block_token_sums for the block.
 	pub fn save_block_token_sums(&self, h: &Hash, sums: &BlockTokenSums) -> Result<(), Error> {
 		let header = self.get_block_header(h)?;
 		if header.height < global::support_token_height() {
@@ -503,6 +490,14 @@ impl<'a> Batch<'a> {
 		self.db.put_ser(
 			&to_key(TOKEN_EXCESS_SUMS_PREFIX, &mut h.to_vec())[..],
 			&sums,
+		)
+	}
+
+	/// Get block_sums for the block.
+	pub fn get_block_sums(&self, h: &Hash) -> Result<BlockSums, Error> {
+		option_to_not_found(
+			self.db.get_ser(&to_key(BLOCK_SUMS_PREFIX, &mut h.to_vec())),
+			|| format!("Block sums for block: {}", h),
 		)
 	}
 
@@ -518,6 +513,11 @@ impl<'a> Batch<'a> {
 				.get_ser(&to_key(TOKEN_EXCESS_SUMS_PREFIX, &mut h.to_vec())),
 			|| format!("Block token sums for block: {}", h),
 		)
+	}
+
+	/// Delete the block_sums for the block.
+	fn delete_block_sums(&self, bh: &Hash) -> Result<(), Error> {
+		self.db.delete(&to_key(BLOCK_SUMS_PREFIX, &mut bh.to_vec()))
 	}
 
 	/// Delete the token_excess_sums for the block.
@@ -545,27 +545,6 @@ impl<'a> Batch<'a> {
 		}
 	}
 
-	fn get_legacy_input_bitmap(&self, bh: &Hash) -> Result<Bitmap, Error> {
-		if let Ok(Some(bytes)) = self
-			.db
-			.get(&to_key(BLOCK_INPUT_BITMAP_PREFIX, &mut bh.to_vec()))
-		{
-			Ok(Bitmap::deserialize(&bytes))
-		} else {
-			Err(Error::NotFoundErr("legacy block input bitmap".to_string()).into())
-		}
-	}
-
-	/// Get the "spent index" from the db for the specified block.
-	/// If we need to rewind a block then we use this to "unspend" the spent outputs.
-	pub fn get_spent_index(&self, bh: &Hash) -> Result<Vec<CommitPos>, Error> {
-		option_to_not_found(
-			self.db
-				.get_ser(&to_key(BLOCK_SPENT_PREFIX, &mut bh.to_vec())),
-			|| format!("spent index: {}", bh),
-		)
-	}
-
 	/// Get the block token input bitmap based on our spent index.
 	/// Fallback to legacy block input bitmap from the db.
 	pub fn get_block_token_input_bitmap(&self, bh: &Hash) -> Result<Bitmap, Error> {
@@ -580,6 +559,17 @@ impl<'a> Batch<'a> {
 		}
 	}
 
+	fn get_legacy_input_bitmap(&self, bh: &Hash) -> Result<Bitmap, Error> {
+		if let Ok(Some(bytes)) = self
+			.db
+			.get(&to_key(BLOCK_INPUT_BITMAP_PREFIX, &mut bh.to_vec()))
+		{
+			Ok(Bitmap::deserialize(&bytes))
+		} else {
+			Err(Error::NotFoundErr("legacy block input bitmap".to_string()).into())
+		}
+	}
+
 	fn get_legacy_token_input_bitmap(&self, bh: &Hash) -> Result<Bitmap, Error> {
 		if let Ok(Some(bytes)) = self
 			.db
@@ -589,6 +579,16 @@ impl<'a> Batch<'a> {
 		} else {
 			Err(Error::NotFoundErr("legacy block token input bitmap".to_string()).into())
 		}
+	}
+
+	/// Get the "spent index" from the db for the specified block.
+	/// If we need to rewind a block then we use this to "unspend" the spent outputs.
+	pub fn get_spent_index(&self, bh: &Hash) -> Result<Vec<CommitPos>, Error> {
+		option_to_not_found(
+			self.db
+				.get_ser(&to_key(BLOCK_SPENT_PREFIX, &mut bh.to_vec())),
+			|| format!("spent index: {}", bh),
+		)
 	}
 
 	/// Get the "spent index" from the db for the specified block.

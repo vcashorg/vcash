@@ -735,10 +735,15 @@ impl TxHashSet {
 
 		debug!("init_token_output_pos_index: {} utxos", outputs_pos.len());
 
-		outputs_pos.retain(|x| batch.get_token_output_pos_height(&x.0).is_err());
+		outputs_pos.retain(|x| {
+			batch
+				.get_token_output_pos_height(&x.0)
+				.map(|p| p.is_none())
+				.unwrap_or(true)
+		});
 
 		debug!(
-			"init_output_pos_index: {} utxos with missing index entries",
+			"init_token_output_pos_index: {} utxos with missing index entries",
 			outputs_pos.len()
 		);
 

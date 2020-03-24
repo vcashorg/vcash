@@ -1281,7 +1281,7 @@ impl Chain {
 			txhashset.token_rangeproofs_by_pmmr_index(start_index, max_count, max_pmmr_index);
 		if outputs.0 != rangeproofs.0 || outputs.1.len() != rangeproofs.1.len() {
 			return Err(ErrorKind::TxHashSetErr(String::from(
-				"Output and rangeproof sets don't match",
+				"Token Output and rangeproof sets don't match",
 			))
 			.into());
 		}
