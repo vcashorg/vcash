@@ -33,13 +33,13 @@ use crate::p2p::ChainAdapter;
 use crate::util::StopState;
 
 // DNS Seeds with contact email associated
-const MAINNET_DNS_SEEDS: &'static [&'static str] = &[
+const MAINNET_DNS_SEEDS: &[&str] = &[
 	"mainnet.seed.v.cash",
 	"mainnet.seed.rebelgrin.com",
 	"mainnet.seed.weaving.rocks",
 	"mainnet.seed.v0x2a.com",
 ];
-const FLOONET_DNS_SEEDS: &'static [&'static str] = &[
+const FLOONET_DNS_SEEDS: &[&str] = &[
 	"floonet.seed.v.cash",
 	"floonet.seed.rebelgrin.com",
 	"floonet.seed.weaving.rocks",
@@ -122,8 +122,8 @@ pub fn connect_and_monitor(
 				if Utc::now() - prev_ping > Duration::seconds(10) {
 					let total_diff = peers.total_difficulty();
 					let total_height = peers.total_height();
-					if total_diff.is_ok() && total_height.is_ok() {
-						peers.check_all(total_diff.unwrap(), total_height.unwrap());
+					if let (Ok(total_diff), Ok(total_height)) = (total_diff, total_height) {
+						peers.check_all(total_diff, total_height);
 						prev_ping = Utc::now();
 					} else {
 						error!("failed to get peers difficulty and/or height");
@@ -222,7 +222,7 @@ fn monitor_peers(
 
 	// take a random defunct peer and mark it healthy: over a long period any
 	// peer will see another as defunct eventually, gives us a chance to retry
-	if defuncts.len() > 0 {
+	if !defuncts.is_empty() {
 		defuncts.shuffle(&mut thread_rng());
 		let _ = peers.update_state(defuncts[0].addr, p2p::State::Healthy);
 	}
@@ -274,7 +274,7 @@ fn connect_to_seeds_and_preferred_peers(
 		None => trace!("No preferred peers"),
 	};
 
-	if peer_addrs.len() == 0 {
+	if peer_addrs.is_empty() {
 		warn!("No seeds were retrieved.");
 	}
 
@@ -320,10 +320,8 @@ fn listen_for_addrs(
 					last_connect_time.format("%H:%M:%S%.3f").to_string(),
 				);
 				continue;
-			} else {
-				if let Some(history) = connecting_history.get_mut(&addr) {
-					*history = now;
-				}
+			} else if let Some(history) = connecting_history.get_mut(&addr) {
+				*history = now;
 			}
 		}
 		connecting_history.insert(addr, now);
@@ -352,7 +350,7 @@ fn listen_for_addrs(
 		let old: Vec<_> = connecting_history
 			.iter()
 			.filter(|&(_, t)| *t + Duration::seconds(connect_min_interval) < now)
-			.map(|(s, _)| s.clone())
+			.map(|(s, _)| *s)
 			.collect();
 		for addr in old {
 			connecting_history.remove(&addr);
@@ -390,7 +388,7 @@ fn resolve_dns_to_addrs(dns_records: &Vec<String>) -> Vec<PeerAddr> {
 		match dns.to_socket_addrs() {
 			Ok(addrs) => addresses.append(
 				&mut addrs
-					.map(|addr| PeerAddr(addr))
+					.map(PeerAddr)
 					.filter(|addr| !addresses.contains(addr))
 					.collect(),
 			),

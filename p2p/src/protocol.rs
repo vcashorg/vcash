@@ -26,7 +26,7 @@ use chrono::prelude::Utc;
 use rand::{thread_rng, Rng};
 use std::cmp;
 use std::fs::{self, File, OpenOptions};
-use std::io::BufWriter;
+use std::io::{BufWriter, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -61,9 +61,9 @@ impl Protocol {
 }
 
 impl MessageHandler for Protocol {
-	fn consume(
+	fn consume<R: Read>(
 		&self,
-		mut msg: Message,
+		mut msg: Message<R>,
 		stopped: Arc<AtomicBool>,
 		tracker: Arc<Tracker>,
 	) -> Result<Option<Msg>, Error> {
@@ -241,16 +241,17 @@ impl MessageHandler for Protocol {
 				total_bytes_read += bytes_read;
 
 				// Read chunks of headers off the stream and pass them off to the adapter.
-				let chunk_size = 32;
-				for chunk in (0..count).collect::<Vec<_>>().chunks(chunk_size) {
-					let mut headers = vec![];
-					for _ in chunk {
-						let (header, bytes_read) =
-							msg.streaming_read::<core::UntrustedBlockHeader>()?;
-						headers.push(header.into());
-						total_bytes_read += bytes_read;
+				let chunk_size = 32u16;
+				let mut headers = Vec::with_capacity(chunk_size as usize);
+				for i in 1..=count {
+					let (header, bytes_read) =
+						msg.streaming_read::<core::UntrustedBlockHeader>()?;
+					headers.push(header.into());
+					total_bytes_read += bytes_read;
+					if i % chunk_size == 0 || i == count {
+						adapter.headers_received(&headers, &self.peer_info)?;
+						headers.clear();
 					}
-					adapter.headers_received(&headers, &self.peer_info)?;
 				}
 
 				// Now check we read the correct total number of bytes off the stream.

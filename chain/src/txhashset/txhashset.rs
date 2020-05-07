@@ -64,20 +64,14 @@ pub struct PMMRHandle<T: PMMRable> {
 impl<T: PMMRable> PMMRHandle<T> {
 	/// Constructor to create a PMMR handle from an existing directory structure on disk.
 	/// Creates the backend files as necessary if they do not already exist.
-	pub fn new(
-		root_dir: &str,
-		sub_dir: &str,
-		file_name: &str,
+	pub fn new<P: AsRef<Path>>(
+		path: P,
 		prunable: bool,
 		version: ProtocolVersion,
 		header: Option<&BlockHeader>,
 	) -> Result<PMMRHandle<T>, Error> {
-		let path = Path::new(root_dir).join(sub_dir).join(file_name);
-		fs::create_dir_all(path.clone())?;
-		let path_str = path
-			.to_str()
-			.ok_or_else(|| ErrorKind::Other("invalid file path".to_owned()))?;
-		let backend = PMMRBackend::new(path_str.to_string(), prunable, version, header)?;
+		fs::create_dir_all(&path)?;
+		let backend = PMMRBackend::new(&path, prunable, version, header)?;
 		let last_pos = backend.unpruned_size();
 		Ok(PMMRHandle { backend, last_pos })
 	}
@@ -144,50 +138,50 @@ impl TxHashSet {
 		header: Option<&BlockHeader>,
 	) -> Result<TxHashSet, Error> {
 		let output_pmmr_h = PMMRHandle::new(
-			&root_dir,
-			TXHASHSET_SUBDIR,
-			OUTPUT_SUBDIR,
+			Path::new(&root_dir)
+				.join(TXHASHSET_SUBDIR)
+				.join(OUTPUT_SUBDIR),
 			true,
 			ProtocolVersion(1),
 			header,
 		)?;
 
 		let rproof_pmmr_h = PMMRHandle::new(
-			&root_dir,
-			TXHASHSET_SUBDIR,
-			RANGE_PROOF_SUBDIR,
+			Path::new(&root_dir)
+				.join(TXHASHSET_SUBDIR)
+				.join(RANGE_PROOF_SUBDIR),
 			true,
 			ProtocolVersion(1),
 			header,
 		)?;
 		let token_output_pmmr_h = PMMRHandle::new(
-			&root_dir,
-			TXHASHSET_SUBDIR,
-			TOKEN_OUTPUT_SUBDIR,
+			Path::new(&root_dir)
+				.join(TXHASHSET_SUBDIR)
+				.join(TOKEN_OUTPUT_SUBDIR),
 			true,
 			ProtocolVersion(1),
 			header,
 		)?;
 		let token_rproof_pmmr_h = PMMRHandle::new(
-			&root_dir,
-			TXHASHSET_SUBDIR,
-			TOKEN_RANGE_PROOF_SUBDIR,
+			Path::new(&root_dir)
+				.join(TXHASHSET_SUBDIR)
+				.join(TOKEN_RANGE_PROOF_SUBDIR),
 			true,
 			ProtocolVersion(1),
 			header,
 		)?;
 		let token_issue_proof_pmmr_h = PMMRHandle::new(
-			&root_dir,
-			TXHASHSET_SUBDIR,
-			TOKEN_ISSUE_PROOF_SUBDIR,
+			Path::new(&root_dir)
+				.join(TXHASHSET_SUBDIR)
+				.join(TOKEN_ISSUE_PROOF_SUBDIR),
 			false,
 			ProtocolVersion(1),
 			header,
 		)?;
 		let token_kernel_pmmr_h = PMMRHandle::new(
-			&root_dir,
-			TXHASHSET_SUBDIR,
-			TOKEN_KERNEL_SUBDIR,
+			Path::new(&root_dir)
+				.join(TXHASHSET_SUBDIR)
+				.join(TOKEN_KERNEL_SUBDIR),
 			false, // not prunable
 			ProtocolVersion(1),
 			None,
@@ -200,9 +194,9 @@ impl TxHashSet {
 		let versions = vec![ProtocolVersion(2), ProtocolVersion(1)];
 		for version in versions {
 			let handle = PMMRHandle::new(
-				&root_dir,
-				TXHASHSET_SUBDIR,
-				KERNEL_SUBDIR,
+				Path::new(&root_dir)
+					.join(TXHASHSET_SUBDIR)
+					.join(KERNEL_SUBDIR),
 				false, // not prunable
 				version,
 				None,
@@ -284,7 +278,7 @@ impl TxHashSet {
 				let output_pmmr: ReadonlyPMMR<'_, Output, _> =
 					ReadonlyPMMR::at(&self.output_pmmr_h.backend, self.output_pmmr_h.last_pos);
 				if let Some(out) = output_pmmr.get_data(pos) {
-					if OutputIdentifier::from(out) == *output_id {
+					if out == *output_id {
 						Ok(Some(CommitPos { pos, height }))
 					} else {
 						Ok(None)
@@ -313,7 +307,7 @@ impl TxHashSet {
 					self.token_output_pmmr_h.last_pos,
 				);
 				if let Some(out) = output_pmmr.get_data(pos) {
-					if TokenOutputIdentifier::from(out) == *output_id {
+					if out == *output_id {
 						Ok(Some(CommitPos { pos, height }))
 					} else {
 						Ok(None)
@@ -797,13 +791,7 @@ where
 	trace!("Starting new txhashset (readonly) extension.");
 
 	let head = batch.head()?;
-
-	// Find header head based on current header MMR (the rightmost leaf node in the MMR).
-	let header_head = {
-		let hash = handle.head_hash()?;
-		let header = batch.get_block_header(&hash)?;
-		Tip::from_header(&header)
-	};
+	let header_head = batch.header_head()?;
 
 	let res = {
 		let header_pmmr = PMMR::at(&mut handle.backend, handle.last_pos);
@@ -932,13 +920,7 @@ where
 	let bitmap_accumulator: BitmapAccumulator;
 
 	let head = batch.head()?;
-
-	// Find header head based on current header MMR (the rightmost leaf node in the MMR).
-	let header_head = {
-		let hash = header_pmmr.head_hash()?;
-		let header = batch.get_block_header(&hash)?;
-		Tip::from_header(&header)
-	};
+	let header_head = batch.header_head()?;
 
 	// create a child transaction so if the state is rolled back by itself, all
 	// index saving can be undone
@@ -1036,7 +1018,8 @@ where
 	// index saving can be undone
 	let child_batch = batch.child()?;
 
-	// Find chain head based on current MMR (the rightmost leaf node in the MMR).
+	// Note: Extending either the sync_head or header_head MMR here.
+	// Use underlying MMR to determine the "head".
 	let head = match handle.head_hash() {
 		Ok(hash) => {
 			let header = child_batch.get_block_header(&hash)?;
@@ -1716,8 +1699,8 @@ impl<'a> Extension<'a> {
 				header.token_output_mmr_size,
 				header.token_issue_proof_mmr_size,
 				header.token_kernel_mmr_size,
-				&vec![],
-				&vec![],
+				&[],
+				&[],
 			)?;
 			self.apply_to_bitmap_accumulator(&[header.output_mmr_size])?;
 		} else {
@@ -1792,7 +1775,7 @@ impl<'a> Extension<'a> {
 		// Update our BitmapAccumulator based on affected outputs.
 		// We want to "unspend" every rewound spent output.
 		// Treat last_pos as an affected output to ensure we rebuild far enough back.
-		let mut affected_pos = spent_pos.clone();
+		let mut affected_pos = spent_pos;
 		affected_pos.push(self.output_pmmr.last_pos);
 
 		// Remove any entries from the output_pos created by the block being rewound.
@@ -1834,12 +1817,12 @@ impl<'a> Extension<'a> {
 		// reused output commitment. For example an output at pos 1, spent, reused at pos 2.
 		// The output_pos index should be updated to reflect the old pos 1 when unspent.
 		if let Ok(spent) = spent {
-			for (x, y) in block.inputs().into_iter().zip(spent) {
+			for (x, y) in block.inputs().iter().zip(spent) {
 				batch.save_output_pos_height(&x.commitment(), y.pos, y.height)?;
 			}
 		}
 		if let Ok(token_spent) = token_spent {
-			for (x, y) in block.token_inputs().into_iter().zip(token_spent) {
+			for (x, y) in block.token_inputs().iter().zip(token_spent) {
 				batch.save_token_output_pos_height(&x.commitment(), y.pos, y.height)?;
 			}
 		}
@@ -1859,8 +1842,8 @@ impl<'a> Extension<'a> {
 		spent_pos: &[u64],
 		token_spent_pos: &[u64],
 	) -> Result<(), Error> {
-		let bitmap: Bitmap = spent_pos.into_iter().map(|x| *x as u32).collect();
-		let token_bitmap: Bitmap = token_spent_pos.into_iter().map(|x| *x as u32).collect();
+		let bitmap: Bitmap = spent_pos.iter().map(|x| *x as u32).collect();
+		let token_bitmap: Bitmap = token_spent_pos.iter().map(|x| *x as u32).collect();
 		self.output_pmmr
 			.rewind(output_pos, &bitmap)
 			.map_err(&ErrorKind::TxHashSetErr)?;

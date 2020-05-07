@@ -11,14 +11,14 @@ use crate::api;
 use crate::chain;
 use crate::core::consensus::reward;
 use crate::core::core::hash::{Hash, Hashed};
-use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{Block, BlockHeader};
 use crate::core::core::{Output, TxKernel};
 use crate::core::libtx::secp_ser;
 use crate::core::libtx::ProofBuilder;
 use crate::core::{consensus, core, global};
 use crate::keychain::{ExtKeychain, Identifier, Keychain};
-use crate::pool;
+use crate::util::ToHex;
+use crate::{ServerTxPool, ServerVerifierCache};
 use serde_json::{json, Value};
 
 /// Fees in block to use for coinbase amount calculation
@@ -49,8 +49,8 @@ pub struct CbData {
 #[derive(Clone)]
 pub struct BlockHandler {
 	chain: Arc<chain::Chain>,
-	tx_pool: Arc<RwLock<pool::TransactionPool>>,
-	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
+	tx_pool: ServerTxPool,
+	verifier_cache: ServerVerifierCache,
 	stop_state: Arc<StopState>,
 	wallet_listener_url: Option<String>,
 	key_id: Arc<RwLock<Option<Identifier>>>,
@@ -62,8 +62,8 @@ pub struct BlockHandler {
 impl BlockHandler {
 	pub fn new(
 		chain: Arc<chain::Chain>,
-		tx_pool: Arc<RwLock<pool::TransactionPool>>,
-		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
+		tx_pool: ServerTxPool,
+		verifier_cache: ServerVerifierCache,
 		stop_state: Arc<StopState>,
 		wallet_listener_url: Option<String>,
 		notify_urls: Vec<String>,

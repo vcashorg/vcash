@@ -44,7 +44,7 @@ impl Writeable for BlockSums {
 }
 
 impl Readable for BlockSums {
-	fn read(reader: &mut dyn Reader) -> Result<BlockSums, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<BlockSums, ser::Error> {
 		Ok(BlockSums {
 			utxo_sum: Commitment::read(reader)?,
 			kernel_sum: Commitment::read(reader)?,
@@ -134,7 +134,7 @@ impl Writeable for BlockTokenSums {
 }
 
 impl Readable for BlockTokenSums {
-	fn read(reader: &mut dyn Reader) -> Result<BlockTokenSums, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<BlockTokenSums, ser::Error> {
 		let mut token_issue_commit_map: HashMap<TokenKey, Commitment> = HashMap::new();
 		let length = reader.read_u16()?;
 		for _ in 0..length {

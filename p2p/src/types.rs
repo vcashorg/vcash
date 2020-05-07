@@ -140,7 +140,7 @@ impl Writeable for PeerAddr {
 }
 
 impl Readable for PeerAddr {
-	fn read(reader: &mut dyn Reader) -> Result<PeerAddr, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<PeerAddr, ser::Error> {
 		let v4_or_v6 = reader.read_u8()?;
 		if v4_or_v6 == 0 {
 			let ip = reader.read_fixed_bytes(4)?;
@@ -185,8 +185,8 @@ impl<'de> Visitor<'de> for PeerAddrs {
 				Err(_) => {
 					let socket_addrs = entry
 						.to_socket_addrs()
-						.expect(format!("Unable to resolve DNS: {}", entry).as_str());
-					peers.append(&mut socket_addrs.map(|addr| PeerAddr(addr)).collect());
+						.unwrap_or_else(|_| panic!("Unable to resolve DNS: {}", entry));
+					peers.append(&mut socket_addrs.map(PeerAddr).collect());
 				}
 			}
 		}

@@ -41,7 +41,7 @@ use crate::common::stats::{
 };
 use crate::common::types::{Error, PoolServerConfig, ServerConfig, StratumServerConfig};
 use crate::core::core::hash::Hashed;
-use crate::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
+use crate::core::core::verifier_cache::LruVerifierCache;
 use crate::core::ser::ProtocolVersion;
 use crate::core::{consensus, genesis, global, pow};
 use crate::grin::{dandelion_monitor, seed, sync};
@@ -55,6 +55,12 @@ use crate::util::file::get_first_line;
 use crate::util::{RwLock, StopState};
 use grin_util::logger::LogEntry;
 
+/// Arcified  thread-safe TransactionPool with type parameters used by server components
+pub type ServerTxPool =
+	Arc<RwLock<pool::TransactionPool<PoolToChainAdapter, PoolToNetAdapter, LruVerifierCache>>>;
+/// Arcified thread-safe LruVerifierCache
+pub type ServerVerifierCache = Arc<RwLock<LruVerifierCache>>;
+
 /// Grin server holding internal structures.
 pub struct Server {
 	/// server config
@@ -64,10 +70,10 @@ pub struct Server {
 	/// data store access
 	pub chain: Arc<chain::Chain>,
 	/// in-memory transaction pool
-	pub tx_pool: Arc<RwLock<pool::TransactionPool>>,
+	pub tx_pool: ServerTxPool,
 	/// Shared cache for verification results when
 	/// verifying rangeproof and kernel signatures.
-	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
+	verifier_cache: ServerVerifierCache,
 	/// Whether we're currently syncing
 	pub sync_state: Arc<SyncState>,
 	/// To be passed around to collect stats and info
@@ -107,7 +113,7 @@ impl Server {
 						let mut stratum_stats = serv.state_info.stratum_stats.write();
 						stratum_stats.is_enabled = true;
 					}
-					serv.start_stratum_server(c.clone());
+					serv.start_stratum_server(c);
 				}
 			}
 		}
@@ -131,7 +137,7 @@ impl Server {
 	// This uses fs2 and should be safe cross-platform unless somebody abuses the file itself.
 	fn one_grin_at_a_time(config: &ServerConfig) -> Result<Arc<File>, Error> {
 		let path = Path::new(&config.db_root);
-		fs::create_dir_all(path.clone())?;
+		fs::create_dir_all(&path)?;
 		let path = path.join("grin.lock");
 		let lock_file = fs::OpenOptions::new()
 			.read(true)
@@ -290,7 +296,7 @@ impl Server {
 				let key = match config.tls_certificate_key.clone() {
 					Some(k) => k,
 					None => {
-						let msg = format!("Private key for certificate is not set");
+						let msg = "Private key for certificate is not set".to_string();
 						return Err(Error::ArgumentError(msg));
 					}
 				};
@@ -305,16 +311,16 @@ impl Server {
 			tx_pool.clone(),
 			p2p_server.peers.clone(),
 			sync_state.clone(),
-			api_secret.clone(),
-			foreign_api_secret.clone(),
-			tls_conf.clone(),
+			api_secret,
+			foreign_api_secret,
+			tls_conf,
 		)?;
 
 		info!("Starting dandelion monitor: {}", &config.api_http_addr);
 		let dandelion_thread = dandelion_monitor::monitor_transactions(
 			config.dandelion_config.clone(),
 			tx_pool.clone(),
-			pool_net_adapter.clone(),
+			pool_net_adapter,
 			verifier_cache.clone(),
 			stop_state.clone(),
 		)?;
@@ -389,7 +395,7 @@ impl Server {
 		let sync_state = self.sync_state.clone();
 
 		let mut stratum_server = stratumserver::StratumServer::new(
-			config.clone(),
+			config,
 			self.chain.clone(),
 			self.tx_pool.clone(),
 			self.verifier_cache.clone(),
@@ -427,7 +433,7 @@ impl Server {
 		};
 
 		let mut miner = Miner::new(
-			config.clone(),
+			config,
 			self.chain.clone(),
 			self.tx_pool.clone(),
 			self.verifier_cache.clone(),
@@ -534,16 +540,13 @@ impl Server {
 			total_difficulty: head.total_difficulty(),
 		};
 
-		let header_stats = match self.chain.try_header_head(read_timeout)? {
-			Some(head) => self.chain.get_block_header(&head.hash()).map(|header| {
-				Some(ChainStats {
-					latest_timestamp: header.timestamp,
-					height: header.height,
-					last_block_h: header.prev_hash,
-					total_difficulty: header.total_difficulty(),
-				})
-			})?,
-			_ => None,
+		let header_head = self.chain.header_head()?;
+		let header = self.chain.get_block_header(&header_head.hash())?;
+		let header_stats = ChainStats {
+			latest_timestamp: header.timestamp,
+			height: header.height,
+			last_block_h: header.prev_hash,
+			total_difficulty: header.total_difficulty(),
 		};
 
 		let disk_usage_bytes = WalkDir::new(&self.config.db_root)
@@ -555,7 +558,7 @@ impl Server {
 			.filter(|metadata| metadata.is_file())
 			.fold(0, |acc, m| acc + m.len());
 
-		let disk_usage_gb = format!("{:.*}", 3, (disk_usage_bytes as f64 / 1_000_000_000 as f64));
+		let disk_usage_gb = format!("{:.*}", 3, (disk_usage_bytes as f64 / 1_000_000_000_f64));
 
 		Ok(ServerStats {
 			peer_count: self.peer_count(),

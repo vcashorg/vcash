@@ -145,7 +145,7 @@ impl OutputHandler {
 							"Failure to get output for commitment {} with error {}",
 							commit, e
 						);
-						return Err(e.into());
+						return Err(e);
 					}
 				};
 			}
@@ -221,7 +221,7 @@ impl OutputHandler {
 						"Failure to get output for commitment {} with error {}",
 						x, e
 					);
-					return Err(e.into());
+					return Err(e);
 				}
 			};
 		}

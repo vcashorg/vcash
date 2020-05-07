@@ -33,8 +33,7 @@ use grin_core as core;
 use grin_core::global::ChainTypes;
 use keychain::{BlindingFactor, ExtKeychain, Keychain};
 use std::sync::Arc;
-use util::secp;
-use util::RwLock;
+use util::{secp, RwLock, ToHex};
 
 fn verifier_cache() -> Arc<RwLock<dyn VerifierCache>> {
 	Arc::new(RwLock::new(LruVerifierCache::new()))

@@ -30,11 +30,11 @@ use std::cmp::{max, min};
 use std::convert::TryInto;
 use std::sync::Arc;
 use std::{error, fmt};
-use util;
 use util::secp;
 use util::secp::pedersen::{Commitment, RangeProof};
 use util::static_secp_instance;
 use util::RwLock;
+use util::ToHex;
 
 use rand::{thread_rng, Rng};
 use std::collections::{HashMap, HashSet};
@@ -80,7 +80,7 @@ impl Writeable for TokenKey {
 }
 
 impl Readable for TokenKey {
-	fn read(reader: &mut dyn Reader) -> Result<TokenKey, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenKey, ser::Error> {
 		let data = hash::Hash::read(reader)?;
 		Ok(TokenKey(data))
 	}
@@ -230,7 +230,7 @@ impl KernelFeatures {
 	// Always read feature byte, 8 bytes for fee and 8 bytes for lock height.
 	// Fee and lock height may be unused for some kernel variants but we need
 	// to read these bytes and verify they are 0 if unused.
-	fn read_v1(reader: &mut dyn Reader) -> Result<KernelFeatures, ser::Error> {
+	fn read_v1<R: Reader>(reader: &mut R) -> Result<KernelFeatures, ser::Error> {
 		let feature_byte = reader.read_u8()?;
 		let fee = reader.read_u64()?;
 		let lock_height = reader.read_u64()?;
@@ -261,7 +261,7 @@ impl KernelFeatures {
 
 	// V2 kernels only expect bytes specific to each variant.
 	// Coinbase kernels have no associated fee and we do not serialize a fee for these.
-	fn read_v2(reader: &mut dyn Reader) -> Result<KernelFeatures, ser::Error> {
+	fn read_v2<R: Reader>(reader: &mut R) -> Result<KernelFeatures, ser::Error> {
 		let features = match reader.read_u8()? {
 			KernelFeatures::PLAIN_U8 => {
 				let fee = reader.read_u64()?;
@@ -299,7 +299,7 @@ impl Writeable for KernelFeatures {
 }
 
 impl Readable for KernelFeatures {
-	fn read(reader: &mut dyn Reader) -> Result<KernelFeatures, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<KernelFeatures, ser::Error> {
 		match reader.protocol_version().value() {
 			0..=1 => KernelFeatures::read_v1(reader),
 			2..=ProtocolVersion::MAX => KernelFeatures::read_v2(reader),
@@ -376,7 +376,7 @@ impl Writeable for TokenKernelFeatures {
 }
 
 impl Readable for TokenKernelFeatures {
-	fn read(reader: &mut dyn Reader) -> Result<TokenKernelFeatures, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenKernelFeatures, ser::Error> {
 		let features = match reader.read_u8()? {
 			TokenKernelFeatures::PLAIN_TOKEN_U8 => TokenKernelFeatures::PlainToken,
 			TokenKernelFeatures::ISSUE_TOKEN_U8 => TokenKernelFeatures::IssueToken,
@@ -529,7 +529,7 @@ impl Writeable for TxKernel {
 }
 
 impl Readable for TxKernel {
-	fn read(reader: &mut dyn Reader) -> Result<TxKernel, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TxKernel, ser::Error> {
 		Ok(TxKernel {
 			features: KernelFeatures::read(reader)?,
 			excess: Commitment::read(reader)?,
@@ -715,7 +715,7 @@ impl Writeable for TokenTxKernel {
 }
 
 impl Readable for TokenTxKernel {
-	fn read(reader: &mut dyn Reader) -> Result<TokenTxKernel, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenTxKernel, ser::Error> {
 		Ok(TokenTxKernel {
 			features: TokenKernelFeatures::read(reader)?,
 			token_type: TokenKey::read(reader)?,
@@ -934,7 +934,7 @@ impl Writeable for TransactionBody {
 /// Implementation of Readable for a body, defines how to read a
 /// body from a binary stream.
 impl Readable for TransactionBody {
-	fn read(reader: &mut dyn Reader) -> Result<TransactionBody, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TransactionBody, ser::Error> {
 		match reader.protocol_version().value() {
 			0..=1 => TransactionBody::read_v1(reader),
 			2..=ProtocolVersion::MAX => TransactionBody::read_v2(reader),
@@ -1051,7 +1051,7 @@ impl TransactionBody {
 		Ok(())
 	}
 
-	fn read_v1(reader: &mut dyn Reader) -> Result<TransactionBody, ser::Error> {
+	fn read_v1<R: Reader>(reader: &mut R) -> Result<TransactionBody, ser::Error> {
 		let (input_len, output_len, kernel_len) =
 			ser_multiread!(reader, read_u64, read_u64, read_u64);
 
@@ -1081,7 +1081,7 @@ impl TransactionBody {
 		Ok(body)
 	}
 
-	fn read_v2(reader: &mut dyn Reader) -> Result<TransactionBody, ser::Error> {
+	fn read_v2<R: Reader>(reader: &mut R) -> Result<TransactionBody, ser::Error> {
 		let (
 			input_len,
 			token_input_len,
@@ -1652,7 +1652,7 @@ impl Writeable for Transaction {
 /// Implementation of Readable for a transaction, defines how to read a full
 /// transaction from a binary stream.
 impl Readable for Transaction {
-	fn read(reader: &mut dyn Reader) -> Result<Transaction, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<Transaction, ser::Error> {
 		let offset = BlindingFactor::read(reader)?;
 		let body = TransactionBody::read(reader)?;
 		let tx = Transaction { offset, body };
@@ -2254,7 +2254,7 @@ impl Writeable for Input {
 /// Implementation of Readable for a transaction Input, defines how to read
 /// an Input from a binary stream.
 impl Readable for Input {
-	fn read(reader: &mut dyn Reader) -> Result<Input, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<Input, ser::Error> {
 		let features = OutputFeatures::read(reader)?;
 		let commit = Commitment::read(reader)?;
 		Ok(Input::new(features, commit))
@@ -2334,7 +2334,7 @@ impl Writeable for TokenInput {
 /// Implementation of Readable for a transaction Input, defines how to read
 /// an Input from a binary stream.
 impl Readable for TokenInput {
-	fn read(reader: &mut dyn Reader) -> Result<TokenInput, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenInput, ser::Error> {
 		let features = OutputFeatures::read(reader)?;
 		let token_type = TokenKey::read(reader)?;
 		let commit = Commitment::read(reader)?;
@@ -2406,7 +2406,7 @@ impl Writeable for OutputFeatures {
 }
 
 impl Readable for OutputFeatures {
-	fn read(reader: &mut dyn Reader) -> Result<OutputFeatures, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<OutputFeatures, ser::Error> {
 		let features =
 			OutputFeatures::from_u8(reader.read_u8()?).ok_or(ser::Error::CorruptedData)?;
 		Ok(features)
@@ -2464,7 +2464,7 @@ impl Writeable for Output {
 /// Implementation of Readable for a transaction Output, defines how to read
 /// an Output from a binary stream.
 impl Readable for Output {
-	fn read(reader: &mut dyn Reader) -> Result<Output, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<Output, ser::Error> {
 		Ok(Output {
 			features: OutputFeatures::read(reader)?,
 			commit: Commitment::read(reader)?,
@@ -2541,7 +2541,7 @@ impl Writeable for TokenOutput {
 /// Implementation of Readable for a transaction TokenOutput, defines how to read
 /// an TokenOutput from a binary stream.
 impl Readable for TokenOutput {
-	fn read(reader: &mut dyn Reader) -> Result<TokenOutput, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenOutput, ser::Error> {
 		Ok(TokenOutput {
 			features: OutputFeatures::read(reader)?,
 			token_type: TokenKey::read(reader)?,
@@ -2611,6 +2611,11 @@ impl Output {
 		self.proof
 	}
 
+	/// Get range proof as byte slice
+	pub fn proof_bytes(&self) -> &[u8] {
+		&self.proof.proof[..]
+	}
+
 	/// Validates the range proof using the commitment
 	pub fn verify_proof(&self) -> Result<(), Error> {
 		let secp = static_secp_instance();
@@ -2652,6 +2657,11 @@ impl TokenOutput {
 	/// Range proof for the output
 	pub fn proof(&self) -> RangeProof {
 		self.proof
+	}
+
+	/// Get range proof as byte slice
+	pub fn proof_bytes(&self) -> &[u8] {
+		&self.proof.proof[..]
 	}
 
 	/// Validates the range proof using the commitment
@@ -2700,14 +2710,11 @@ impl OutputIdentifier {
 			commit: self.commit,
 		}
 	}
+}
 
-	/// convert an output_identifier to hex string format.
-	pub fn to_hex(&self) -> String {
-		format!(
-			"{:b}{}",
-			self.features as u8,
-			util::to_hex(self.commit.0.to_vec()),
-		)
+impl ToHex for OutputIdentifier {
+	fn to_hex(&self) -> String {
+		format!("{:b}{}", self.features as u8, self.commit.to_hex())
 	}
 }
 
@@ -2720,7 +2727,7 @@ impl Writeable for OutputIdentifier {
 }
 
 impl Readable for OutputIdentifier {
-	fn read(reader: &mut dyn Reader) -> Result<OutputIdentifier, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<OutputIdentifier, ser::Error> {
 		Ok(OutputIdentifier {
 			features: OutputFeatures::read(reader)?,
 			commit: Commitment::read(reader)?,
@@ -2788,14 +2795,11 @@ impl TokenOutputIdentifier {
 			token_type: self.token_type,
 		}
 	}
+}
 
-	/// convert an output_identifier to hex string format.
-	pub fn to_hex(&self) -> String {
-		format!(
-			"{:b}{}",
-			self.features as u8,
-			util::to_hex(self.commit.0.to_vec()),
-		)
+impl ToHex for TokenOutputIdentifier {
+	fn to_hex(&self) -> String {
+		format!("{:b}{}", self.features as u8, self.commit.to_hex())
 	}
 }
 
@@ -2809,7 +2813,7 @@ impl Writeable for TokenOutputIdentifier {
 }
 
 impl Readable for TokenOutputIdentifier {
-	fn read(reader: &mut dyn Reader) -> Result<TokenOutputIdentifier, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenOutputIdentifier, ser::Error> {
 		Ok(TokenOutputIdentifier {
 			features: OutputFeatures::read(reader)?,
 			token_type: TokenKey::read(reader)?,
@@ -2876,7 +2880,7 @@ impl Writeable for TokenIssueProof {
 /// Implementation of Readable for a TokenIssueProof, defines how to read
 /// an TokenIssueProof from a binary stream.
 impl Readable for TokenIssueProof {
-	fn read(reader: &mut dyn Reader) -> Result<TokenIssueProof, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenIssueProof, ser::Error> {
 		Ok(TokenIssueProof {
 			token_type: TokenKey::read(reader)?,
 			commit: Commitment::read(reader)?,

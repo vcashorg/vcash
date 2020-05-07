@@ -45,6 +45,7 @@ use crate::consensus::total_reward;
 use crate::core::{TokenInput, TokenKernelFeatures, TokenKey, TokenOutput, TokenTxKernel};
 use crate::ser::read_multi;
 use std::collections::HashMap;
+use util::ToHex;
 
 /// Get Magic data in coinbase
 pub fn get_grin_magic_data_str(header_hash: Hash) -> String {
@@ -52,9 +53,9 @@ pub fn get_grin_magic_data_str(header_hash: Hash) -> String {
 	// 0x24: length, 36_bytes = 4_bytes + 32_bytes
 	// magic number: 4 bytes
 	// commitment: 32 bytes
-	let mut head = util::to_hex(vec![0x6a, 0x24]);
+	let mut head = vec![0x6a, 0x24].to_hex();
 	head.insert_str(head.len(), "b9e11b6d");
-	let grin_header_vec = util::to_hex(header_hash.to_vec());
+	let grin_header_vec = header_hash.to_hex();
 	head.insert_str(head.len(), grin_header_vec.as_str());
 	head
 }
@@ -150,7 +151,7 @@ pub struct HeaderEntry {
 }
 
 impl Readable for HeaderEntry {
-	fn read(reader: &mut dyn Reader) -> Result<HeaderEntry, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<HeaderEntry, ser::Error> {
 		let hash = Hash::read(reader)?;
 		let timestamp = reader.read_u64()?;
 		let total_difficulty = Difficulty::read(reader)?;
@@ -214,7 +215,7 @@ impl Writeable for HeaderVersion {
 }
 
 impl Readable for HeaderVersion {
-	fn read(reader: &mut dyn Reader) -> Result<HeaderVersion, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<HeaderVersion, ser::Error> {
 		let version = reader.read_u16()?;
 		Ok(HeaderVersion(version))
 	}
@@ -346,7 +347,7 @@ impl Writeable for BlockHeader {
 	}
 }
 
-fn read_block_header(reader: &mut dyn Reader) -> Result<BlockHeader, ser::Error> {
+fn read_block_header<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Error> {
 	let version = HeaderVersion::read(reader)?;
 	let (height, timestamp) = ser_multiread!(reader, read_u64, read_i64);
 	let prev_hash = Hash::read(reader)?;
@@ -428,7 +429,7 @@ fn read_block_header(reader: &mut dyn Reader) -> Result<BlockHeader, ser::Error>
 
 /// Deserialization of a block header
 impl Readable for BlockHeader {
-	fn read(reader: &mut dyn Reader) -> Result<BlockHeader, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Error> {
 		read_block_header(reader)
 	}
 }
@@ -489,8 +490,8 @@ impl BlockHeader {
 		proof: Proof,
 	) -> Result<Self, Error> {
 		// Convert hex pre pow string
-		let mut header_bytes = from_hex(&pre_pow)
-			.map_err(|e| Error::Serialization(ser::Error::HexError(e.to_string())))?;
+		let mut header_bytes =
+			from_hex(&pre_pow).map_err(|e| Error::Serialization(ser::Error::HexError(e)))?;
 		// Serialize and append serialized nonce and proof
 		serialize_default(&mut header_bytes, &nonce)?;
 		serialize_default(&mut header_bytes, &proof)?;
@@ -570,7 +571,7 @@ impl AuxBitHeader {
 	pub fn to_hex(&self) -> String {
 		let mut vec = Vec::new();
 		ser::serialize_default(&mut vec, &self).expect("serialization failed");
-		util::to_hex(vec)
+		vec.to_hex()
 	}
 
 	/// Convert hex string representation back to a Merkle proof instance
@@ -600,7 +601,7 @@ impl Writeable for AuxBitHeader {
 
 /// Deserialization of a block header
 impl Readable for AuxBitHeader {
-	fn read(reader: &mut dyn Reader) -> Result<AuxBitHeader, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<AuxBitHeader, ser::Error> {
 		let version = reader.read_i32_le()?;
 		let prev_hash = Hash::read(reader)?;
 		let merkle_root = Hash::read(reader)?;
@@ -645,7 +646,7 @@ impl Writeable for BlockAuxData {
 }
 
 impl Readable for BlockAuxData {
-	fn read(reader: &mut dyn Reader) -> Result<BlockAuxData, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<BlockAuxData, ser::Error> {
 		let header = AuxBitHeader::read(reader)?;
 
 		let merkle_branch_length = reader.read_u32()?;
@@ -666,7 +667,7 @@ impl BlockAuxData {
 	pub fn to_hex(&self) -> String {
 		let mut vec = Vec::new();
 		ser::serialize_default(&mut vec, &self).expect("serialization failed");
-		util::to_hex(vec)
+		vec.to_hex()
 	}
 
 	/// Convert hex string representation back to BlockAuxData
@@ -690,7 +691,7 @@ pub struct UntrustedBlockHeader(BlockHeader);
 
 /// Deserialization of an untrusted block header
 impl Readable for UntrustedBlockHeader {
-	fn read(reader: &mut dyn Reader) -> Result<UntrustedBlockHeader, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<UntrustedBlockHeader, ser::Error> {
 		let header = read_block_header(reader)?;
 		if header.timestamp
 			> Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC as i64))
@@ -780,7 +781,7 @@ impl Writeable for Block {
 /// Implementation of Readable for a block, defines how to read a full block
 /// from a binary stream.
 impl Readable for Block {
-	fn read(reader: &mut dyn Reader) -> Result<Block, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<Block, ser::Error> {
 		let header = BlockHeader::read(reader)?;
 
 		let aux_data = if header.height >= global::refactor_header_height() {
@@ -1224,7 +1225,7 @@ pub struct UntrustedBlock(Block);
 
 /// Deserialization of an untrusted block header
 impl Readable for UntrustedBlock {
-	fn read(reader: &mut dyn Reader) -> Result<UntrustedBlock, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<UntrustedBlock, ser::Error> {
 		// we validate header here before parsing the body
 		let header = UntrustedBlockHeader::read(reader)?;
 		let aux_data = if header.0.height >= global::refactor_header_height() {

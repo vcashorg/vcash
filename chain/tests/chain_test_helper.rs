@@ -104,11 +104,7 @@ where
 
 		chain.set_txhashset_roots(&mut b).unwrap();
 
-		let edge_bits = if n == 2 {
-			global::min_edge_bits() + 1
-		} else {
-			global::min_edge_bits()
-		};
+		let edge_bits = global::min_edge_bits();
 		b.header.pow.proof.edge_bits = edge_bits;
 		b.header.bits = 0x2100ffff;
 		pow::pow_size(
@@ -118,7 +114,6 @@ where
 			edge_bits,
 		)
 		.unwrap();
-		b.header.pow.proof.edge_bits = edge_bits;
 
 		let bhash = b.hash();
 		let coin_base_str = core::core::get_grin_magic_data_str(b.header.hash());

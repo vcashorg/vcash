@@ -35,7 +35,7 @@ impl PhatChunkStruct {
 }
 
 impl Readable for PhatChunkStruct {
-	fn read(reader: &mut dyn Reader) -> Result<PhatChunkStruct, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<PhatChunkStruct, ser::Error> {
 		let mut retval = PhatChunkStruct::new();
 		for _ in 0..TEST_ALLOC_SIZE {
 			retval.phatness = reader.read_u64()?;
@@ -75,9 +75,9 @@ fn lmdb_allocate() -> Result<(), store::Error> {
 		for i in 0..WRITE_CHUNK_SIZE * 2 {
 			println!("Allocating chunk: {}", i);
 			let chunk = PhatChunkStruct::new();
-			let mut key_val = format!("phat_chunk_set_1_{}", i).as_bytes().to_vec();
+			let key_val = format!("phat_chunk_set_1_{}", i);
 			let batch = store.batch()?;
-			let key = store::to_key(b'P', &mut key_val);
+			let key = store::to_key(b'P', &key_val);
 			batch.put_ser(&key, &chunk)?;
 			batch.commit()?;
 		}
@@ -91,9 +91,9 @@ fn lmdb_allocate() -> Result<(), store::Error> {
 		for i in 0..WRITE_CHUNK_SIZE * 2 {
 			println!("Allocating chunk: {}", i);
 			let chunk = PhatChunkStruct::new();
-			let mut key_val = format!("phat_chunk_set_2_{}", i).as_bytes().to_vec();
+			let key_val = format!("phat_chunk_set_2_{}", i);
 			let batch = store.batch()?;
-			let key = store::to_key(b'P', &mut key_val);
+			let key = store::to_key(b'P', &key_val);
 			batch.put_ser(&key, &chunk)?;
 			batch.commit()?;
 		}

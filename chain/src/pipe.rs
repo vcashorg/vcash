@@ -29,6 +29,7 @@ use crate::util;
 use crate::util::RwLock;
 use grin_store;
 use std::sync::Arc;
+use util::ToHex;
 
 /// Contextual information required to process a new block and either reject or
 /// accept it.
@@ -71,7 +72,7 @@ fn validate_block_auxdata(
 	}
 
 	//2,grin_header_hash is in btc_coinbase
-	let coinbase_str = util::to_hex(bheader.btc_pow.coinbase_tx.clone());
+	let coinbase_str = bheader.btc_pow.coinbase_tx.to_hex();
 	let target_str = get_grin_magic_data_str(bheader.hash());
 	if !coinbase_str.contains(target_str.as_str()) {
 		return Err(ErrorKind::InvalidCoinbase.into());
@@ -205,9 +206,9 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 
 	// Start a chain extension unit of work dependent on the success of the
 	// internal validation and saving operations
-	let ref mut header_pmmr = &mut ctx.header_pmmr;
-	let ref mut txhashset = &mut ctx.txhashset;
-	let ref mut batch = &mut ctx.batch;
+	let header_pmmr = &mut ctx.header_pmmr;
+	let txhashset = &mut ctx.txhashset;
+	let batch = &mut ctx.batch;
 	txhashset::extending(header_pmmr, txhashset, batch, |ext, batch| {
 		rewind_and_apply_fork(&prev, ext, batch)?;
 
@@ -303,6 +304,11 @@ pub fn sync_block_headers(
 		Ok(())
 	})?;
 
+	let header_head = ctx.batch.header_head()?;
+	if has_more_work(last_header, &header_head) {
+		update_header_head(&Tip::from_header(last_header), &mut ctx.batch)?;
+	}
+
 	Ok(())
 }
 
@@ -323,12 +329,7 @@ pub fn process_block_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) ->
 	// If it does not increase total_difficulty beyond our current header_head
 	// then we can (re)accept this header and process the full block (or request it).
 	// This header is on a fork and we should still accept it as the fork may eventually win.
-	let header_head = {
-		let hash = ctx.header_pmmr.head_hash()?;
-		let header = ctx.batch.get_block_header(&hash)?;
-		Tip::from_header(&header)
-	};
-
+	let header_head = ctx.batch.header_head()?;
 	if let Ok(existing) = ctx.batch.get_block_header(&header.hash()) {
 		if !has_more_work(&existing, &header_head) {
 			return Ok(());
@@ -347,6 +348,10 @@ pub fn process_block_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) ->
 
 	validate_header(header, ctx)?;
 	add_block_header(header, &ctx.batch)?;
+
+	if has_more_work(header, &header_head) {
+		update_header_head(&Tip::from_header(header), &mut ctx.batch)?;
+	}
 
 	Ok(())
 }
@@ -491,8 +496,8 @@ fn verify_coinbase_maturity(
 	ext: &txhashset::ExtensionPair<'_>,
 	batch: &store::Batch<'_>,
 ) -> Result<(), Error> {
-	let ref extension = ext.extension;
-	let ref header_extension = ext.header_extension;
+	let extension = &ext.extension;
+	let header_extension = &ext.header_extension;
 	extension
 		.utxo_view(header_extension)
 		.verify_coinbase_maturity(&block.inputs(), block.header.height, batch)
@@ -577,6 +582,19 @@ fn add_block_header(bh: &BlockHeader, batch: &store::Batch<'_>) -> Result<(), Er
 	Ok(())
 }
 
+fn update_header_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Error> {
+	batch
+		.save_header_head(&head)
+		.map_err(|e| ErrorKind::StoreErr(e, "pipe save header head".to_owned()))?;
+
+	debug!(
+		"header head updated to {} at {}",
+		head.last_block_h, head.height
+	);
+
+	Ok(())
+}
+
 fn update_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Error> {
 	batch
 		.save_body_head(&head)
@@ -632,8 +650,8 @@ pub fn rewind_and_apply_fork(
 	ext: &mut txhashset::ExtensionPair<'_>,
 	batch: &store::Batch<'_>,
 ) -> Result<(), Error> {
-	let ref mut extension = ext.extension;
-	let ref mut header_extension = ext.header_extension;
+	let extension = &mut ext.extension;
+	let header_extension = &mut ext.header_extension;
 
 	// Prepare the header MMR.
 	rewind_and_apply_header_fork(header, header_extension, batch)?;
@@ -685,8 +703,8 @@ fn validate_utxo(
 	ext: &mut txhashset::ExtensionPair<'_>,
 	batch: &store::Batch<'_>,
 ) -> Result<(), Error> {
-	let ref mut extension = ext.extension;
-	let ref mut header_extension = ext.header_extension;
+	let extension = &ext.extension;
+	let header_extension = &ext.header_extension;
 	extension
 		.utxo_view(header_extension)
 		.validate_block(block, batch)

@@ -12,6 +12,7 @@ use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::{AuxBitHeader, Block};
 use crate::core::global;
 use crate::util;
+use crate::util::ToHex;
 
 use crate::core::consensus::reward;
 use crate::poolserver::handle_block::BlockHandler;

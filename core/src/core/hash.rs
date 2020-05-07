@@ -20,10 +20,8 @@
 use crate::ser::{self, Error, ProtocolVersion, Readable, Reader, Writeable, Writer};
 use blake2::blake2b::Blake2b;
 use byteorder::{BigEndian, ByteOrder};
-use std::cmp::min;
-use std::convert::AsRef;
-use std::{fmt, ops};
-use util;
+use std::{cmp::min, convert::AsRef, fmt, ops};
+use util::ToHex;
 
 use digest::Digest;
 use sha2::Sha256;
@@ -88,11 +86,6 @@ impl Hash {
 		&self.0
 	}
 
-	/// Convert a hash to hex string format.
-	pub fn to_hex(&self) -> String {
-		util::to_hex(self.to_vec())
-	}
-
 	/// Convert hex string back to hash.
 	pub fn from_hex(hex: &str) -> Result<Hash, Error> {
 		let bytes = util::from_hex(hex)
@@ -153,7 +146,7 @@ impl AsRef<[u8]> for Hash {
 }
 
 impl Readable for Hash {
-	fn read(reader: &mut dyn Reader) -> Result<Hash, ser::Error> {
+	fn read<R: Reader>(reader: &mut R) -> Result<Hash, ser::Error> {
 		let v = reader.read_fixed_bytes(32)?;
 		let mut a = [0; 32];
 		a.copy_from_slice(&v[..]);

@@ -31,13 +31,13 @@ use crate::chain::{self, SyncState};
 use crate::common::stats::{StratumStats, WorkerStats};
 use crate::common::types::StratumServerConfig;
 use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
-use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{get_grin_magic_data_str, Block};
 use crate::core::pow::{compact_to_biguint, compact_to_diff, hash_to_biguint};
 use crate::keychain;
 use crate::mining::mine_block;
-use crate::pool;
 use crate::util;
+use crate::util::ToHex;
+use crate::{ServerTxPool, ServerVerifierCache};
 
 // ----------------------------------------
 // http://www.jsonrpc.org/specification
@@ -224,8 +224,8 @@ pub struct StratumServer {
 	id: String,
 	config: StratumServerConfig,
 	chain: Arc<chain::Chain>,
-	tx_pool: Arc<RwLock<pool::TransactionPool>>,
-	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
+	pub tx_pool: ServerTxPool,
+	verifier_cache: ServerVerifierCache,
 	current_block_versions: HashMap<Hash, (Block, String)>,
 	current_newest_block_hash: Hash,
 	current_difficulty: u32,
@@ -240,8 +240,8 @@ impl StratumServer {
 	pub fn new(
 		config: StratumServerConfig,
 		chain: Arc<chain::Chain>,
-		tx_pool: Arc<RwLock<pool::TransactionPool>>,
-		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
+		tx_pool: ServerTxPool,
+		verifier_cache: ServerVerifierCache,
 		stratum_stats: Arc<RwLock<StratumStats>>,
 	) -> StratumServer {
 		StratumServer {

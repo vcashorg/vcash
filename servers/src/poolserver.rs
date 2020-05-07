@@ -1,8 +1,7 @@
 use crate::chain;
 use crate::common::types::PoolServerConfig;
-use crate::core::core::verifier_cache::VerifierCache;
-use crate::pool;
-use crate::util::{RwLock, StopState};
+use crate::util::StopState;
+use crate::{ServerTxPool, ServerVerifierCache};
 use std::sync::Arc;
 
 pub mod controller;
@@ -10,8 +9,8 @@ pub mod handle_block;
 
 pub fn start_poolserver_service(
 	chain: Arc<chain::Chain>,
-	tx_pool: Arc<RwLock<pool::TransactionPool>>,
-	verifier_cache: Arc<RwLock<dyn VerifierCache>>,
+	tx_pool: ServerTxPool,
+	verifier_cache: ServerVerifierCache,
 	pool_server_config: PoolServerConfig,
 	stop_state: Arc<StopState>,
 ) {
