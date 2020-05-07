@@ -143,8 +143,7 @@ impl BlockHandler {
 			// get the latest chain state and build a block on top of it
 			let head = self.chain.head_header().unwrap();
 			let mut latest_hash = self.chain.head().unwrap().last_block_h;
-			let head_hash = head.hash();
-			assert_eq!(head_hash, latest_hash);
+			let saved_latest_hash = latest_hash.clone();
 
 			let (mut b, fee) = self.get_block();
 
@@ -177,13 +176,13 @@ impl BlockHandler {
 			}
 
 			let new_header_hash = self.chain.head().unwrap().last_block_h;
-			if head.hash() != new_header_hash {
+			if saved_latest_hash != new_header_hash {
 				self.mining_blocks.write().clear();
 				need_notify_pool = true;
 			}
 		}
 
-		warn!("PoolCenter miningloop exit.");
+		warn!("PoolCenter mining loop exit.");
 	}
 
 	fn inner_mining_loop(&self, b: &mut Block, head: &BlockHeader, latest_hash: &mut Hash) -> bool {
