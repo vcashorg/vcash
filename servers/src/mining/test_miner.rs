@@ -182,6 +182,7 @@ impl Miner {
 				b.aux_data.coinbase_tx = util::from_hex(coin_base_str.as_str()).unwrap();
 				b.aux_data.aux_header.merkle_root = b.aux_data.coinbase_tx.dhash();
 				b.aux_data.aux_header.nbits = b.header.bits;
+				b.header.btc_pow = b.aux_data.clone();
 
 				let res = self.chain.process_block(b, chain::Options::MINE);
 				if let Err(e) = res {
