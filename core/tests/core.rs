@@ -24,14 +24,24 @@ use self::core::core::{
 	aggregate, deaggregate, KernelFeatures, Output, Transaction, TxKernel, Weighting,
 };
 use self::core::libtx::build::{self, initial_tx, input, output, with_excess};
-use self::core::libtx::ProofBuilder;
-use self::core::ser;
-use crate::common::{new_block, tokentx1i2o, tx1i1o, tx1i2o, tx2i1o};
+use self::core::libtx::{aggsig, ProofBuilder};
+use self::core::{global, ser};
+use crate::common::tokentx1i2o;
+use crate::common::{new_block, tx1i1o, tx1i2o, tx2i1o};
 use grin_core as core;
 use keychain::{BlindingFactor, ExtKeychain, Keychain};
 use std::sync::Arc;
 use util::static_secp_instance;
 use util::RwLock;
+
+// Setup test with AutomatedTesting chain_type;
+fn test_setup() {
+	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
+}
+
+fn mainnet_setup() {
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
+}
 
 #[test]
 fn simple_tx_ser() {
@@ -61,6 +71,7 @@ fn simple_tx_ser() {
 
 #[test]
 fn simple_tx_ser_deser() {
+	test_setup();
 	let tx = tx2i1o();
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
@@ -73,6 +84,7 @@ fn simple_tx_ser_deser() {
 
 #[test]
 fn tx_double_ser_deser() {
+	test_setup();
 	// checks serializing doesn't mess up the tx and produces consistent results
 	let btx = tx2i1o();
 
@@ -91,6 +103,7 @@ fn tx_double_ser_deser() {
 #[test]
 #[should_panic(expected = "Keychain Error")]
 fn test_zero_commit_fails() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -112,6 +125,7 @@ fn verifier_cache() -> Arc<RwLock<dyn VerifierCache>> {
 
 #[test]
 fn build_tx_kernel() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -141,10 +155,88 @@ fn build_tx_kernel() {
 	assert_eq!(2, tx.fee());
 }
 
+// Proof of concept demonstrating we can build two transactions that share
+// the *same* kernel public excess. This is a key part of building a transaction as two
+// "halves" for NRD kernels.
+// Note: In a real world scenario multiple participants would build the kernel signature
+// using signature aggregation. No party would see the full private kernel excess and
+// the halves would need to be constructed with carefully crafted individual offsets to
+// adjust the excess as required.
+// For the sake of convenience we are simply constructing the kernel directly and we have access
+// to the full private excess.
+#[test]
+fn build_two_half_kernels() {
+	test_setup();
+	let keychain = ExtKeychain::from_random_seed(false).unwrap();
+	let builder = ProofBuilder::new(&keychain);
+	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+	let key_id2 = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
+	let key_id3 = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
+
+	// build kernel with associated private excess
+	let mut kernel = TxKernel::with_features(KernelFeatures::Plain { fee: 2 });
+
+	// Construct the message to be signed.
+	let msg = kernel.msg_to_sign().unwrap();
+
+	// Generate a kernel with public excess and associated signature.
+	let excess = BlindingFactor::rand(&keychain.secp());
+	let skey = excess.secret_key(&keychain.secp()).unwrap();
+	kernel.excess = keychain.secp().commit(0, skey).unwrap();
+	let pubkey = &kernel.excess.to_pubkey(&keychain.secp()).unwrap();
+	kernel.excess_sig =
+		aggsig::sign_with_blinding(&keychain.secp(), &msg, &excess, Some(&pubkey)).unwrap();
+	kernel.verify().unwrap();
+
+	let tx1 = build::transaction_with_kernel(
+		vec![input(10, key_id1), output(8, key_id2.clone())],
+		kernel.clone(),
+		None,
+		excess.clone(),
+		&keychain,
+		&builder,
+	)
+	.unwrap();
+
+	let tx2 = build::transaction_with_kernel(
+		vec![input(8, key_id2), output(6, key_id3)],
+		kernel.clone(),
+		None,
+		excess.clone(),
+		&keychain,
+		&builder,
+	)
+	.unwrap();
+
+	assert_eq!(
+		tx1.validate(Weighting::AsTransaction, verifier_cache()),
+		Ok(()),
+	);
+
+	assert_eq!(
+		tx2.validate(Weighting::AsTransaction, verifier_cache()),
+		Ok(()),
+	);
+
+	// The transactions share an identical kernel.
+	assert_eq!(tx1.kernels()[0], tx2.kernels()[0]);
+
+	// The public kernel excess is shared between both "halves".
+	assert_eq!(tx1.kernels()[0].excess(), tx2.kernels()[0].excess());
+
+	// Each transaction is built from different inputs and outputs.
+	// The offset differs to compensate for the shared excess commitments.
+	assert!(tx1.offset != tx2.offset);
+
+	// For completeness, these are different transactions.
+	assert!(tx1.hash() != tx2.hash());
+}
+
 // Combine two transactions into one big transaction (with multiple kernels)
 // and check it still validates.
 #[test]
 fn transaction_cut_through() {
+	test_setup();
 	let tx1 = tx1i2o();
 	let tx2 = tx2i1o();
 
@@ -166,6 +258,7 @@ fn transaction_cut_through() {
 // Attempt to deaggregate a multi-kernel transaction in a different way
 #[test]
 fn multi_kernel_transaction_deaggregation() {
+	mainnet_setup();
 	let tx1 = tokentx1i2o();
 	let tx2 = tokentx1i2o();
 	let tx3 = tokentx1i2o();
@@ -204,6 +297,7 @@ fn multi_kernel_transaction_deaggregation() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_2() {
+	mainnet_setup();
 	let tx1 = tokentx1i2o();
 	let tx2 = tokentx1i2o();
 	let tx3 = tokentx1i2o();
@@ -229,6 +323,7 @@ fn multi_kernel_transaction_deaggregation_2() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_3() {
+	mainnet_setup();
 	let tx1 = tokentx1i2o();
 	let tx2 = tokentx1i2o();
 	let tx3 = tokentx1i2o();
@@ -255,6 +350,7 @@ fn multi_kernel_transaction_deaggregation_3() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_4() {
+	mainnet_setup();
 	let tx1 = tokentx1i2o();
 	let tx2 = tokentx1i2o();
 	let tx3 = tokentx1i2o();
@@ -290,6 +386,7 @@ fn multi_kernel_transaction_deaggregation_4() {
 
 #[test]
 fn multi_kernel_transaction_deaggregation_5() {
+	mainnet_setup();
 	let tx1 = tokentx1i2o();
 	let tx2 = tokentx1i2o();
 	let tx3 = tokentx1i2o();
@@ -329,6 +426,7 @@ fn multi_kernel_transaction_deaggregation_5() {
 // Attempt to deaggregate a multi-kernel transaction
 #[test]
 fn basic_transaction_deaggregation() {
+	mainnet_setup();
 	let tx1 = tokentx1i2o();
 	let tx2 = tokentx1i2o();
 
@@ -415,6 +513,7 @@ fn tx_hash_diff() {
 /// 2 inputs, 2 outputs transaction.
 #[test]
 fn tx_build_exchange() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -461,6 +560,7 @@ fn tx_build_exchange() {
 
 #[test]
 fn reward_empty_block() {
+	test_setup();
 	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -477,6 +577,7 @@ fn reward_empty_block() {
 
 #[test]
 fn reward_with_tx_block() {
+	test_setup();
 	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -504,6 +605,7 @@ fn reward_with_tx_block() {
 
 #[test]
 fn simple_block() {
+	test_setup();
 	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -527,6 +629,7 @@ fn simple_block() {
 
 #[test]
 fn test_block_with_timelocked_tx() {
+	test_setup();
 	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -587,6 +690,7 @@ fn test_block_with_timelocked_tx() {
 
 #[test]
 pub fn test_verify_1i1o_sig() {
+	test_setup();
 	let tx = tx1i1o();
 	tx.validate(Weighting::AsTransaction, verifier_cache())
 		.unwrap();
@@ -594,6 +698,7 @@ pub fn test_verify_1i1o_sig() {
 
 #[test]
 pub fn test_verify_2i1o_sig() {
+	test_setup();
 	let tx = tx2i1o();
 	tx.validate(Weighting::AsTransaction, verifier_cache())
 		.unwrap();

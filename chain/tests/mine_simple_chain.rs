@@ -84,7 +84,7 @@ fn mine_empty_chain() {
 
 #[test]
 fn mine_short_chain() {
-	let chain_dir = ".grin.genesis";
+	let chain_dir = ".grin.short";
 	clean_output_dir(chain_dir);
 	let chain = mine_chain(chain_dir, 4);
 	assert_eq!(chain.head().unwrap().height, 3);
@@ -121,7 +121,7 @@ fn process_block(chain: &Chain, block: &Block) {
 fn test_block_a_block_b_block_b_fork_header_c_fork_block_c() {
 	let chain_dir = ".grin.block_a_block_b_block_b_fork_header_c_fork_block_c";
 	clean_output_dir(chain_dir);
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
 	let genesis = pow::mine_genesis_block().unwrap();
 	let last_status = RwLock::new(None);
@@ -173,7 +173,7 @@ fn test_block_a_block_b_block_b_fork_header_c_fork_block_c() {
 fn test_block_a_block_b_block_b_fork_header_c_fork_block_c_fork() {
 	let chain_dir = ".grin.block_a_block_b_block_b_fork_header_c_fork_block_c_fork";
 	clean_output_dir(chain_dir);
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
 	let genesis = pow::mine_genesis_block().unwrap();
 	let last_status = RwLock::new(None);
@@ -229,7 +229,7 @@ fn test_block_a_block_b_block_b_fork_header_c_fork_block_c_fork() {
 fn test_block_a_header_b_header_b_fork_block_b_fork_block_b_block_c() {
 	let chain_dir = ".grin.test_block_a_header_b_header_b_fork_block_b_fork_block_b_block_c";
 	clean_output_dir(chain_dir);
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
 	let genesis = pow::mine_genesis_block().unwrap();
 	let last_status = RwLock::new(None);
@@ -285,7 +285,7 @@ fn test_block_a_header_b_header_b_fork_block_b_fork_block_b_block_c() {
 fn test_block_a_header_b_header_b_fork_block_b_fork_block_b_block_c_fork() {
 	let chain_dir = ".grin.test_block_a_header_b_header_b_fork_block_b_fork_block_b_block_c_fork";
 	clean_output_dir(chain_dir);
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
 	let genesis = pow::mine_genesis_block().unwrap();
 	let last_status = RwLock::new(None);
@@ -358,7 +358,7 @@ fn mine_reorg() {
 	const DIR_NAME: &str = ".grin_reorg";
 	clean_output_dir(DIR_NAME);
 
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
 
 	let genesis = pow::mine_genesis_block().unwrap();
@@ -413,7 +413,7 @@ fn mine_reorg() {
 #[test]
 fn mine_forks() {
 	clean_output_dir(".grin2");
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	{
 		let chain = init_chain(".grin2", pow::mine_genesis_block().unwrap());
 		let kc = ExtKeychain::from_random_seed(false).unwrap();
@@ -461,7 +461,7 @@ fn mine_forks() {
 #[test]
 fn mine_losing_fork() {
 	clean_output_dir(".grin3");
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
 	{
 		let chain = init_chain(".grin3", pow::mine_genesis_block().unwrap());
@@ -498,7 +498,7 @@ fn mine_losing_fork() {
 #[test]
 fn longer_fork() {
 	clean_output_dir(".grin4");
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let kc = ExtKeychain::from_random_seed(false).unwrap();
 	// to make it easier to compute the txhashset roots in the test, we
 	// prepare 2 chains, the 2nd will be have the forked blocks we can
@@ -542,7 +542,7 @@ fn longer_fork() {
 
 #[test]
 fn spend_rewind_spend() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	util::init_test_logger();
 	clean_output_dir(".grin_spend_rewind_spend");
 
@@ -622,7 +622,7 @@ fn spend_rewind_spend() {
 #[test]
 fn spend_in_fork_and_compact() {
 	clean_output_dir(".grin6");
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	util::init_test_logger();
 	{
 		let chain = init_chain(".grin6", pow::mine_genesis_block().unwrap());
@@ -806,7 +806,7 @@ fn spend_in_fork_and_compact() {
 
 #[test]
 fn test_block_subsidy_halvings() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	util::init_test_logger();
 	clean_output_dir(".grin7");
 	{
@@ -828,7 +828,7 @@ fn test_block_subsidy_halvings() {
 /// Test ability to retrieve block headers for a given output
 #[test]
 fn output_header_mappings() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	clean_output_dir(".grin_header_for_output");
 	{
 		let chain = init_chain(
@@ -997,7 +997,7 @@ where
 #[test]
 #[ignore]
 fn actual_diff_iter_output() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let genesis_block = pow::mine_genesis_block().unwrap();
 	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 	let chain = chain::Chain::init(

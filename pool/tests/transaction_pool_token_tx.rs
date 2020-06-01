@@ -17,6 +17,7 @@ pub mod common;
 use self::core::core::hash::Hashed;
 use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{transaction, Block, BlockHeader, TokenKey, Transaction, Weighting};
+use self::core::global;
 use self::core::libtx;
 use self::core::pow::Difficulty;
 use self::keychain::{ExtKeychain, Keychain};
@@ -32,6 +33,7 @@ use std::sync::Arc;
 #[test]
 fn test_transaction_pool_token_tx() {
 	util::init_test_logger();
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 
 	let db_root = ".test_transaction_pool_token_tx".to_string();

@@ -82,6 +82,10 @@ pub enum Error {
 	InvalidPow,
 	/// Kernel not valid due to lock_height exceeding block header height
 	KernelLockHeight(u64),
+	/// NRD kernels are not valid prior to HF3.
+	NRDKernelPreHF3,
+	/// NRD kernels are not valid if disabled locally via "feature flag".
+	NRDKernelNotEnabled,
 	/// Underlying tx related error
 	Transaction(transaction::Error),
 	/// Underlying Secp256k1 error (signature validation or invalid public key
@@ -1140,6 +1144,7 @@ impl Block {
 		self.body.validate(Weighting::AsBlock, verifier)?;
 
 		self.verify_kernel_lock_heights()?;
+		self.verify_nrd_kernels_for_header_version()?;
 		self.verify_coinbase()?;
 		self.verify_token_kernel_sum()?;
 
@@ -1190,6 +1195,7 @@ impl Block {
 		Ok(())
 	}
 
+	// Verify any absolute kernel lock heights.
 	fn verify_kernel_lock_heights(&self) -> Result<(), Error> {
 		for k in &self.body.kernels {
 			// check we have no kernels with lock_heights greater than current height
@@ -1207,6 +1213,21 @@ impl Block {
 				if lock_height > self.header.height {
 					return Err(Error::KernelLockHeight(lock_height));
 				}
+			}
+		}
+		Ok(())
+	}
+
+	// NRD kernels are not valid if the global feature flag is disabled.
+	// NRD kernels were introduced in HF3 and are not valid for block version < 4.
+	// Blocks prior to HF3 containing any NRD kernel(s) are invalid.
+	fn verify_nrd_kernels_for_header_version(&self) -> Result<(), Error> {
+		if self.body.kernels.iter().any(|k| k.is_nrd()) {
+			if !global::is_nrd_enabled() {
+				return Err(Error::NRDKernelNotEnabled);
+			}
+			if self.header.height < global::third_hardfork_height() {
+				return Err(Error::NRDKernelPreHF3);
 			}
 		}
 		Ok(())

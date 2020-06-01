@@ -25,11 +25,11 @@ For Pool who wants to mine Vcash, see the [mergedmining docs](doc/pool_merge_min
 
 ## Credits
 
-Tom Elvis Jedusor for the first formulation of Mimblewimble.
+Tom Elvis Jedusor for the first formulation of MimbleWimble.
+
+Ignotus Peverell for the starting of Grin project and turning the MimbleWimble paper into real.
 
 Andrew Poelstra for his related work and improvements.
-
-John Tromp for the Cuckoo Cycle proof of work.
 
 J.K. Rowling for making it despite extraordinary adversity.
 

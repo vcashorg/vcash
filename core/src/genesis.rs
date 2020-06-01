@@ -254,13 +254,13 @@ pub fn genesis_main() -> core::Block {
 mod test {
 	use super::*;
 	use crate::core::hash::Hashed;
-	use crate::global::{self, ChainTypes};
+	use crate::global;
 	use crate::ser::{self, ProtocolVersion};
 	use util::ToHex;
 
 	#[test]
 	fn floonet_genesis_hash() {
-		global::set_mining_mode(ChainTypes::Floonet);
+		global::set_local_chain_type(global::ChainTypes::Floonet);
 		let gen_hash = genesis_floo().hash();
 		println!("floonet genesis hash: {}", gen_hash.to_hex());
 		let gen_bin = ser::ser_vec(&genesis_floo(), ProtocolVersion(1)).unwrap();
@@ -277,7 +277,7 @@ mod test {
 
 	#[test]
 	fn mainnet_genesis_hash() {
-		global::set_mining_mode(ChainTypes::Mainnet);
+		global::set_local_chain_type(global::ChainTypes::Mainnet);
 		let gen_hash = genesis_main().hash();
 		println!("mainnet genesis hash: {}", gen_hash.to_hex());
 		let gen_bin = ser::ser_vec(&genesis_main(), ProtocolVersion(1)).unwrap();

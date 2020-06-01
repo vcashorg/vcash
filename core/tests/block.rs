@@ -13,27 +13,34 @@
 // limitations under the License.
 
 mod common;
-use crate::common::{new_block, tokentx1i2o, tx1i2o, tx2i1o, txissuetoken, txspend1i1o};
-use crate::core::consensus::BLOCK_OUTPUT_WEIGHT;
-use crate::core::core::block::Error;
+use crate::common::{new_block, tx1i2o, tx2i1o, txspend1i1o};
+use crate::core::consensus::{self, BLOCK_OUTPUT_WEIGHT, TESTING_THIRD_HARD_FORK};
+use crate::core::core::block::{Block, BlockHeader, Error, HeaderVersion};
 use crate::core::core::hash::Hashed;
 use crate::core::core::id::ShortIdentifiable;
-use crate::core::core::transaction::{self, TokenKey, Transaction};
-use crate::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
-use crate::core::core::Committed;
-use crate::core::core::{
-	Block, BlockHeader, CompactBlock, HeaderVersion, KernelFeatures, OutputFeatures,
-	TokenKernelFeatures,
+use crate::core::core::transaction::{
+	self, KernelFeatures, NRDRelativeHeight, OutputFeatures, Transaction,
 };
-use crate::core::libtx::build::{self, input, output, token_input, token_output};
+use crate::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
+use crate::core::core::{Committed, CompactBlock};
+use crate::core::libtx::build::{self, input, output};
 use crate::core::libtx::ProofBuilder;
 use crate::core::{global, ser};
 use chrono::Duration;
 use grin_core as core;
-use grin_core::global::ChainTypes;
 use keychain::{BlindingFactor, ExtKeychain, Keychain};
 use std::sync::Arc;
-use util::{secp, RwLock, ToHex};
+use util::{secp, RwLock};
+
+use crate::common::{tokentx1i2o, txissuetoken};
+use crate::core::core::transaction::TokenKey;
+use crate::core::core::TokenKernelFeatures;
+use crate::core::libtx::build::{token_input, token_output};
+
+// Setup test with AutomatedTesting chain_type;
+fn test_setup() {
+	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
+}
 
 fn verifier_cache() -> Arc<RwLock<dyn VerifierCache>> {
 	Arc::new(RwLock::new(LruVerifierCache::new()))
@@ -41,7 +48,7 @@ fn verifier_cache() -> Arc<RwLock<dyn VerifierCache>> {
 
 #[test]
 fn too_large_block() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let max_out = global::max_block_weight() / BLOCK_OUTPUT_WEIGHT;
@@ -78,6 +85,7 @@ fn too_large_block() {
 // block with no inputs/outputs/kernels
 // no fees, no reward, no coinbase
 fn very_empty_block() {
+	test_setup();
 	let b = Block::with_header(BlockHeader::default());
 
 	assert_eq!(
@@ -87,8 +95,182 @@ fn very_empty_block() {
 }
 
 #[test]
+fn block_with_nrd_kernel_pre_post_hf3() {
+	// automated testing - HF{1|2|3} at block heights {3, 6, 9}
+	// Enable the global NRD feature flag. NRD kernels valid at HF3 at height 9.
+	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
+	global::set_local_nrd_enabled(true);
+
+	let keychain = ExtKeychain::from_random_seed(false).unwrap();
+	let builder = ProofBuilder::new(&keychain);
+	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+	let key_id2 = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
+
+	let mut tx = build::transaction(
+		KernelFeatures::NoRecentDuplicate {
+			fee: 2,
+			relative_height: NRDRelativeHeight::new(144).unwrap(),
+		},
+		None,
+		vec![input(7, key_id1), output(5, key_id2)],
+		&keychain,
+		&builder,
+	)
+	.unwrap();
+	let prev_height = TESTING_THIRD_HARD_FORK - 2;
+	let prev = BlockHeader {
+		height: prev_height,
+		version: consensus::header_version(prev_height),
+		..BlockHeader::default()
+	};
+	let b = new_block(
+		vec![&mut tx],
+		&keychain,
+		&builder,
+		&prev,
+		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
+	);
+
+	// Block is invalid at header version 3 if it contains an NRD kernel.
+	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(
+		b.validate(&BlindingFactor::zero(), verifier_cache()),
+		Err(Error::NRDKernelPreHF3)
+	);
+
+	let prev_height = TESTING_THIRD_HARD_FORK - 1;
+	let prev = BlockHeader {
+		height: prev_height,
+		version: consensus::header_version(prev_height),
+		..BlockHeader::default()
+	};
+	let b = new_block(
+		vec![&mut tx],
+		&keychain,
+		&builder,
+		&prev,
+		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
+	);
+
+	// Block is valid at header version 4 (at HF height) if it contains an NRD kernel.
+	assert_eq!(b.header.height, TESTING_THIRD_HARD_FORK);
+	assert_eq!(b.header.version, HeaderVersion(2));
+	assert!(b
+		.validate(&BlindingFactor::zero(), verifier_cache())
+		.is_ok());
+
+	let prev_height = TESTING_THIRD_HARD_FORK;
+	let prev = BlockHeader {
+		height: prev_height,
+		version: consensus::header_version(prev_height),
+		..BlockHeader::default()
+	};
+	let b = new_block(
+		vec![&mut tx],
+		&keychain,
+		&builder,
+		&prev,
+		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
+	);
+
+	// Block is valid at header version 4 if it contains an NRD kernel.
+	assert_eq!(b.header.version, HeaderVersion(2));
+	assert!(b
+		.validate(&BlindingFactor::zero(), verifier_cache())
+		.is_ok());
+}
+
+#[test]
+fn block_with_nrd_kernel_nrd_not_enabled() {
+	// automated testing - HF{1|2|3} at block heights {3, 6, 9}
+	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
+
+	let keychain = ExtKeychain::from_random_seed(false).unwrap();
+	let builder = ProofBuilder::new(&keychain);
+	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+	let key_id2 = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
+
+	let mut tx = build::transaction(
+		KernelFeatures::NoRecentDuplicate {
+			fee: 2,
+			relative_height: NRDRelativeHeight::new(144).unwrap(),
+		},
+		None,
+		vec![input(7, key_id1), output(5, key_id2)],
+		&keychain,
+		&builder,
+	)
+	.unwrap();
+
+	let prev_height = TESTING_THIRD_HARD_FORK - 2;
+	let prev = BlockHeader {
+		height: prev_height,
+		version: consensus::header_version(prev_height),
+		..BlockHeader::default()
+	};
+	let b = new_block(
+		vec![&mut tx],
+		&keychain,
+		&builder,
+		&prev,
+		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
+	);
+
+	// Block is invalid as NRD not enabled.
+	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(
+		b.validate(&BlindingFactor::zero(), verifier_cache()),
+		Err(Error::NRDKernelNotEnabled)
+	);
+
+	let prev_height = TESTING_THIRD_HARD_FORK - 1;
+	let prev = BlockHeader {
+		height: prev_height,
+		version: consensus::header_version(prev_height),
+		..BlockHeader::default()
+	};
+	let b = new_block(
+		vec![&mut tx],
+		&keychain,
+		&builder,
+		&prev,
+		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
+	);
+
+	// Block is invalid as NRD not enabled.
+	assert_eq!(b.header.height, TESTING_THIRD_HARD_FORK);
+	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(
+		b.validate(&BlindingFactor::zero(), verifier_cache()),
+		Err(Error::NRDKernelNotEnabled)
+	);
+
+	let prev_height = TESTING_THIRD_HARD_FORK;
+	let prev = BlockHeader {
+		height: prev_height,
+		version: consensus::header_version(prev_height),
+		..BlockHeader::default()
+	};
+	let b = new_block(
+		vec![&mut tx],
+		&keychain,
+		&builder,
+		&prev,
+		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
+	);
+
+	// Block is invalid as NRD not enabled.
+	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(
+		b.validate(&BlindingFactor::zero(), verifier_cache()),
+		Err(Error::NRDKernelNotEnabled)
+	);
+}
+
+#[test]
 // builds a block with a tx spending another and check that cut_through occurred
 fn block_with_cut_through() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -129,6 +311,7 @@ fn block_with_cut_through() {
 #[test]
 // builds a block with a token tx spending another and check that cut_through occurred
 fn block_with_token_cut_through() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -190,6 +373,7 @@ fn block_with_token_cut_through() {
 
 #[test]
 fn empty_block_with_coinbase_is_valid() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let prev = BlockHeader::default();
@@ -228,6 +412,7 @@ fn empty_block_with_coinbase_is_valid() {
 // invalidates the block and specifically it causes verify_coinbase to fail
 // additionally verifying the merkle_inputs_outputs also fails
 fn remove_coinbase_output_flag() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let prev = BlockHeader::default();
@@ -251,6 +436,7 @@ fn remove_coinbase_output_flag() {
 // test that flipping the COINBASE flag on the kernel features
 // invalidates the block and specifically it causes verify_coinbase to fail
 fn remove_coinbase_kernel_flag() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let prev = BlockHeader::default();
@@ -276,7 +462,7 @@ fn remove_coinbase_kernel_flag() {
 
 #[test]
 fn remove_issuetoken_output_flag() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx = txissuetoken();
@@ -297,6 +483,7 @@ fn remove_issuetoken_output_flag() {
 
 #[test]
 fn remove_issuetoken_kernel_flag() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx = txissuetoken();
@@ -334,7 +521,7 @@ fn serialize_deserialize_header_version() {
 
 #[test]
 fn serialize_deserialize_block_header() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let prev = BlockHeader::default();
@@ -352,7 +539,7 @@ fn serialize_deserialize_block_header() {
 
 #[test]
 fn serialize_deserialize_block() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let tx1 = txissuetoken();
 	let tx2 = tokentx1i2o();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
@@ -377,7 +564,7 @@ fn serialize_deserialize_block() {
 
 #[test]
 fn empty_block_serialized_size() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let prev = BlockHeader::default();
@@ -390,7 +577,7 @@ fn empty_block_serialized_size() {
 
 #[test]
 fn block_single_tx_serialized_size() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx1 = tx1i2o();
@@ -399,12 +586,12 @@ fn block_single_tx_serialized_size() {
 	let b = new_block(vec![&tx1], &keychain, &builder, &prev, &key_id);
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_781);
+	assert_eq!(vec.len(), 2_907);
 }
 
 #[test]
 fn empty_compact_block_serialized_size() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let prev = BlockHeader::default();
@@ -418,7 +605,7 @@ fn empty_compact_block_serialized_size() {
 
 #[test]
 fn compact_block_single_tx_serialized_size() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx1 = tx1i2o();
@@ -433,10 +620,9 @@ fn compact_block_single_tx_serialized_size() {
 
 #[test]
 fn block_10_tx_serialized_size() {
-	global::set_mining_mode(global::ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
-	global::set_mining_mode(global::ChainTypes::Mainnet);
 
 	let mut txs = vec![];
 	for _ in 0..10 {
@@ -471,7 +657,7 @@ fn block_10_tx_serialized_size() {
 
 #[test]
 fn compact_block_10_tx_serialized_size() {
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 
@@ -491,6 +677,7 @@ fn compact_block_10_tx_serialized_size() {
 
 #[test]
 fn compact_block_hash_with_nonce() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx = tx1i2o();
@@ -522,6 +709,7 @@ fn compact_block_hash_with_nonce() {
 
 #[test]
 fn compact_block_hash_with_nonce_for_token_tx() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx = tokentx1i2o();
@@ -553,6 +741,7 @@ fn compact_block_hash_with_nonce_for_token_tx() {
 
 #[test]
 fn convert_block_to_compact_block() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx1 = tx1i2o();
@@ -577,6 +766,7 @@ fn convert_block_to_compact_block() {
 
 #[test]
 fn convert_block_to_compact_block_for_token_tx() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx1 = tokentx1i2o();
@@ -601,6 +791,7 @@ fn convert_block_to_compact_block_for_token_tx() {
 
 #[test]
 fn hydrate_empty_compact_block() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let prev = BlockHeader::default();
@@ -615,6 +806,7 @@ fn hydrate_empty_compact_block() {
 
 #[test]
 fn serialize_deserialize_compact_block() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let tx1 = tx1i2o();
@@ -643,6 +835,7 @@ fn serialize_deserialize_compact_block() {
 // Duplicate a range proof from a valid output into another of the same amount
 #[test]
 fn same_amount_outputs_copy_range_proof() {
+	test_setup();
 	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = keychain::ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -693,6 +886,7 @@ fn same_amount_outputs_copy_range_proof() {
 // Swap a range proof with the right private key but wrong amount
 #[test]
 fn wrong_amount_range_proof() {
+	test_setup();
 	let keychain = keychain::ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = keychain::ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -754,6 +948,7 @@ fn wrong_amount_range_proof() {
 
 #[test]
 fn reissue_token() {
+	test_setup();
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
 	let builder = ProofBuilder::new(&keychain);
 	let key_id1 = keychain::ExtKeychain::derive_key_id(1, 1, 0, 0, 0);

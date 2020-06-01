@@ -16,7 +16,9 @@ pub mod common;
 
 use self::core::core::hash::Hash;
 use self::core::core::verifier_cache::LruVerifierCache;
-use self::core::core::{BlockHeader, BlockSums, BlockTokenSums, Transaction};
+use self::core::core::BlockTokenSums;
+use self::core::core::{BlockHeader, BlockSums, Transaction};
+use self::core::global;
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::types::{BlockChain, PoolError};
 use self::util::RwLock;
@@ -71,6 +73,7 @@ impl BlockChain for CoinbaseMaturityErrorChainAdapter {
 /// Test we correctly verify coinbase maturity when adding txs to the pool.
 #[test]
 fn test_coinbase_maturity() {
+	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 
 	// Mocking this up with an adapter that will raise an error for coinbase

@@ -229,25 +229,25 @@ pub fn verify_partial_sig(
 /// let secp = Secp256k1::with_caps(ContextFlag::Commit);
 /// let keychain = ExtKeychain::from_random_seed(false).unwrap();
 /// let fees = 10_000;
-/// let value = reward(0, fees);
+/// let reward_value = 50_000_000_000 + fees;
 /// let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 /// let switch = SwitchCommitmentType::Regular;
-/// let commit = keychain.commit(value, &key_id, switch).unwrap();
+/// let commit = keychain.commit(reward_value, &key_id, switch).unwrap();
 /// let builder = proof::ProofBuilder::new(&keychain);
-/// let rproof = proof::create(&keychain, &builder, value, &key_id, switch, commit, None).unwrap();
+/// let rproof = proof::create(&keychain, &builder, reward_value, &key_id, switch, commit, None).unwrap();
 /// let output = Output {
 ///     features: OutputFeatures::Coinbase,
 ///     commit: commit,
 ///     proof: rproof,
 /// };
 /// let height = 20;
-/// let over_commit = secp.commit_value(reward(0, fees)).unwrap();
+/// let over_commit = secp.commit_value(reward_value).unwrap();
 /// let out_commit = output.commitment();
 /// let features = KernelFeatures::HeightLocked{fee: 0, lock_height: height};
 /// let msg = features.kernel_sig_msg().unwrap();
 /// let excess = secp.commit_sum(vec![out_commit], vec![over_commit]).unwrap();
 /// let pubkey = excess.to_pubkey(&secp).unwrap();
-/// let sig = aggsig::sign_from_key_id(&secp, &keychain, &msg, value, &key_id, None, Some(&pubkey)).unwrap();
+/// let sig = aggsig::sign_from_key_id(&secp, &keychain, &msg, reward_value, &key_id, None, Some(&pubkey)).unwrap();
 /// ```
 
 pub fn sign_from_key_id<K>(
@@ -296,25 +296,25 @@ where
 /// let secp = Secp256k1::with_caps(ContextFlag::Commit);
 /// let keychain = ExtKeychain::from_random_seed(false).unwrap();
 /// let fees = 10_000;
-/// let value = reward(0, fees);
+/// let reward_value = 50_000_000_000 + fees;
 /// let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 /// let switch = SwitchCommitmentType::Regular;
-/// let commit = keychain.commit(value, &key_id, switch).unwrap();
+/// let commit = keychain.commit(reward_value, &key_id, switch).unwrap();
 /// let builder = proof::ProofBuilder::new(&keychain);
-/// let rproof = proof::create(&keychain, &builder, value, &key_id, switch, commit, None).unwrap();
+/// let rproof = proof::create(&keychain, &builder, reward_value, &key_id, switch, commit, None).unwrap();
 /// let output = Output {
 ///     features: OutputFeatures::Coinbase,
 ///     commit: commit,
 ///     proof: rproof,
 /// };
 /// let height = 20;
-/// let over_commit = secp.commit_value(reward(0, fees)).unwrap();
+/// let over_commit = secp.commit_value(reward_value).unwrap();
 /// let out_commit = output.commitment();
 /// let features = KernelFeatures::HeightLocked{fee: 0, lock_height: height};
 /// let msg = features.kernel_sig_msg().unwrap();
 /// let excess = secp.commit_sum(vec![out_commit], vec![over_commit]).unwrap();
 /// let pubkey = excess.to_pubkey(&secp).unwrap();
-/// let sig = aggsig::sign_from_key_id(&secp, &keychain, &msg, value, &key_id, None, Some(&pubkey)).unwrap();
+/// let sig = aggsig::sign_from_key_id(&secp, &keychain, &msg, reward_value, &key_id, None, Some(&pubkey)).unwrap();
 ///
 /// // Verify the signature from the excess commit
 /// let sig_verifies =
@@ -441,6 +441,16 @@ pub fn verify_single(
 	)
 }
 
+/// Verify a batch of signatures.
+pub fn verify_batch(
+	secp: &Secp256k1,
+	sigs: &Vec<Signature>,
+	msgs: &Vec<Message>,
+	pubkeys: &Vec<PublicKey>,
+) -> bool {
+	aggsig::verify_batch(secp, sigs, msgs, pubkeys)
+}
+
 /// Just a simple sig, creates its own nonce, etc
 pub fn sign_with_blinding(
 	secp: &Secp256k1,
@@ -449,7 +459,6 @@ pub fn sign_with_blinding(
 	pubkey_sum: Option<&PublicKey>,
 ) -> Result<Signature, Error> {
 	let skey = &blinding.secret_key(&secp)?;
-	//let pubkey_sum = PublicKey::from_secret_key(&secp, &skey)?;
 	let sig = aggsig::sign_single(secp, &msg, skey, None, None, None, pubkey_sum, None)?;
 	Ok(sig)
 }

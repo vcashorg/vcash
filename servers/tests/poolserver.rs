@@ -79,7 +79,7 @@ pub fn config(n: u16, test_name_dir: &str, seed_n: u16) -> servers::ServerConfig
 #[test]
 fn test_pool_server() {
 	util::init_test_logger();
-	global::set_mining_mode(ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 
 	let test_name_dir = "pool_server";
 	clean_all_output(test_name_dir);

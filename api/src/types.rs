@@ -643,6 +643,10 @@ impl TxKernelPrintable {
 			KernelFeatures::Plain { fee } => (fee, 0),
 			KernelFeatures::Coinbase => (0, 0),
 			KernelFeatures::HeightLocked { fee, lock_height } => (fee, lock_height),
+			KernelFeatures::NoRecentDuplicate {
+				fee,
+				relative_height,
+			} => (fee, relative_height.into()),
 		};
 		TxKernelPrintable {
 			features,
@@ -719,10 +723,14 @@ pub struct BlockHeaderPrintable {
 	pub timestamp: String,
 	/// Merklish root of all the commitments in the TxHashSet
 	pub output_root: String,
+	/// Size of the output MMR
+	pub output_mmr_size: u64,
 	/// Merklish root of all range proofs in the TxHashSet
 	pub range_proof_root: String,
 	/// Merklish root of all transaction kernels in the TxHashSet
 	pub kernel_root: String,
+	/// Size of the kernel MMR
+	pub kernel_mmr_size: u64,
 	/// Merklish root of all the token commitments in the TxHashSet
 	pub token_output_root: String,
 	/// Merklish root of all token range proofs in the TxHashSet
@@ -757,8 +765,10 @@ impl BlockHeaderPrintable {
 			prev_root: header.prev_root.to_hex(),
 			timestamp: header.timestamp.to_rfc3339(),
 			output_root: header.output_root.to_hex(),
+			output_mmr_size: header.output_mmr_size,
 			range_proof_root: header.range_proof_root.to_hex(),
 			kernel_root: header.kernel_root.to_hex(),
+			kernel_mmr_size: header.kernel_mmr_size,
 			token_output_root: header.token_output_root.to_hex(),
 			token_range_proof_root: header.token_range_proof_root.to_hex(),
 			token_issue_proof_root: header.token_issue_proof_root.to_hex(),

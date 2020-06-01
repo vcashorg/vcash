@@ -18,10 +18,8 @@ use self::chain::store::ChainStore;
 use self::chain::types::Tip;
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::verifier_cache::VerifierCache;
-use self::core::core::{
-	Block, BlockHeader, BlockSums, BlockTokenSums, Committed, KernelFeatures, TokenKernelFeatures,
-	TokenKey, Transaction,
-};
+use self::core::core::{Block, BlockHeader, BlockSums, Committed, KernelFeatures, Transaction};
+use self::core::core::{BlockTokenSums, TokenKernelFeatures, TokenKey};
 use self::core::libtx;
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::types::*;
@@ -278,30 +276,15 @@ where
 {
 	let input_sum = input_values.iter().sum::<u64>() as i64;
 	let output_sum = output_values.iter().sum::<u64>() as i64;
-
 	let fees: i64 = input_sum - output_sum;
 	assert!(fees >= 0);
 
-	let mut tx_elements = Vec::new();
-
-	for input_value in input_values {
-		let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
-		tx_elements.push(libtx::build::input(input_value, key_id));
-	}
-
-	for output_value in output_values {
-		let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
-		tx_elements.push(libtx::build::output(output_value, key_id));
-	}
-
-	libtx::build::transaction(
-		KernelFeatures::Plain { fee: fees as u64 },
-		None,
-		tx_elements,
+	test_transaction_with_kernel_features(
 		keychain,
-		&libtx::ProofBuilder::new(keychain),
+		input_values,
+		output_values,
+		KernelFeatures::Plain { fee: fees as u64 },
 	)
-	.unwrap()
 }
 
 pub fn test_issue_token_transaction<K>(
@@ -383,6 +366,37 @@ where
 	libtx::build::transaction(
 		KernelFeatures::Plain { fee: fees as u64 },
 		Some(TokenKernelFeatures::PlainToken),
+		tx_elements,
+		keychain,
+		&libtx::ProofBuilder::new(keychain),
+	)
+	.unwrap()
+}
+
+pub fn test_transaction_with_kernel_features<K>(
+	keychain: &K,
+	input_values: Vec<u64>,
+	output_values: Vec<u64>,
+	kernel_features: KernelFeatures,
+) -> Transaction
+where
+	K: Keychain,
+{
+	let mut tx_elements = Vec::new();
+
+	for input_value in input_values {
+		let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
+		tx_elements.push(libtx::build::input(input_value, key_id));
+	}
+
+	for output_value in output_values {
+		let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
+		tx_elements.push(libtx::build::output(output_value, key_id));
+	}
+
+	libtx::build::transaction(
+		kernel_features,
+		None,
 		tx_elements,
 		keychain,
 		&libtx::ProofBuilder::new(keychain),

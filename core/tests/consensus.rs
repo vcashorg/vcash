@@ -274,7 +274,7 @@ fn repeat_offs(from: u64, interval: u64, diff: u64, len: u64) -> Vec<HeaderInfo>
 
 #[test]
 fn test_total_reward() {
-	global::set_mining_mode(global::ChainTypes::Mainnet);
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
 	let total = 21000000 as f64;
 	assert_eq!(total_reward(0, true), 50 * GRIN_BASE as u64);
 	let first_half = total * 0.5;
@@ -310,7 +310,7 @@ fn test_total_reward() {
 #[test]
 fn adjustment_scenarios() {
 	// Use production parameters for genesis diff
-	global::set_mining_mode(global::ChainTypes::Mainnet);
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
 
 	// Genesis block with initial diff
 	let chain_sim = create_chain_sim(global::initial_block_difficulty());
@@ -384,7 +384,7 @@ fn adjustment_scenarios() {
 #[test]
 #[ignore]
 fn next_target_adjustment() {
-	global::set_mining_mode(global::ChainTypes::AutomatedTesting);
+	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
 	let cur_time = Utc::now().timestamp() as u64;
 	let diff_min = Difficulty::min();
 
@@ -490,7 +490,7 @@ fn next_target_adjustment() {
 fn test_secondary_pow_ratio() {
 	// Tests for mainnet chain type.
 	{
-		global::set_mining_mode(global::ChainTypes::Mainnet);
+		global::set_local_chain_type(global::ChainTypes::Mainnet);
 		assert_eq!(global::is_floonet(), false);
 
 		assert_eq!(secondary_pow_ratio(1), 90);
@@ -532,7 +532,7 @@ fn test_secondary_pow_ratio() {
 
 	// Tests for testnet4 chain type (covers pre and post hardfork).
 	{
-		global::set_mining_mode(global::ChainTypes::Floonet);
+		global::set_local_chain_type(global::ChainTypes::Floonet);
 		assert_eq!(global::is_floonet(), true);
 
 		assert_eq!(secondary_pow_ratio(1), 90);
@@ -581,7 +581,7 @@ fn test_secondary_pow_scale() {
 
 	// mainnet testing
 	{
-		global::set_mining_mode(global::ChainTypes::Mainnet);
+		global::set_local_chain_type(global::ChainTypes::Mainnet);
 		assert_eq!(global::is_floonet(), false);
 
 		// all primary, factor should increase so it becomes easier to find a high

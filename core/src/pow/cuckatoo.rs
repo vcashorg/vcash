@@ -340,6 +340,7 @@ where
 #[cfg(test)]
 mod test {
 	use super::*;
+	use crate::global;
 
 	// Cuckatoo 29 Solution for Header [0u8;80] - nonce 20
 	static V1_29: [u64; 42] = [
@@ -363,6 +364,7 @@ mod test {
 
 	#[test]
 	fn cuckatoo() {
+		global::set_local_chain_type(global::ChainTypes::Mainnet);
 		let ret = basic_solve::<u32>();
 		if let Err(r) = ret {
 			panic!("basic_solve u32: Error: {}", r);

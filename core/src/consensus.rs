@@ -153,6 +153,9 @@ pub const MAX_BLOCK_WEIGHT: usize = 100_000;
 /// Fork every 6 months.
 pub const HARD_FORK_INTERVAL: u64 = YEAR_HEIGHT;
 
+/// AutomatedTesting and UserTesting HF3 height.
+pub const TESTING_THIRD_HARD_FORK: u64 = 9;
+
 /// Check whether the block version is valid at a given height, implements
 /// 6 months interval scheduled hard forks for the first 2 years.
 pub fn header_version(height: u64) -> HeaderVersion {
@@ -423,6 +426,8 @@ mod test {
 	#[test]
 	#[ignore]
 	fn test_graph_weight() {
+		global::set_local_chain_type(global::ChainTypes::Mainnet);
+
 		// initial weights
 		assert_eq!(graph_weight(1, 31), 256 * 31);
 		assert_eq!(graph_weight(1, 32), 512 * 32);
@@ -468,7 +473,7 @@ mod test {
 
 	#[test]
 	fn test_next_bit_difficulty() {
-		global::set_mining_mode(ChainTypes::AutomatedTesting);
+		global::set_local_chain_type(ChainTypes::AutomatedTesting);
 		let compact0 = next_bit_difficulty(
 			2016,
 			0x1d00ffff,

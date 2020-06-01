@@ -1,10 +1,10 @@
-# Grin's Security Process
+# VCash's Security Process
 
-Grin has a [code of conduct](CODE_OF_CONDUCT.md) and the handling of vulnerability disclosure is no exception. We are committed to conduct our security process in a professional and civil manner. Public shaming, under-reporting or misrepresentation of vulnerabilities will not be tolerated.
+VCash has a [code of conduct](CODE_OF_CONDUCT.md) and the handling of vulnerability disclosure is no exception. We are committed to conduct our security process in a professional and civil manner. Public shaming, under-reporting or misrepresentation of vulnerabilities will not be tolerated.
 
 ## Responsible Disclosure Standard
 
-Grin follows a
+VCash follows a
 [community standard for responsible disclosure](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e08d2736ea9dbe43484a3317e4bce214163bd0#the-standard)
 in cryptocurrency and related software. This document is a public commitment to
 following the standard.
@@ -23,7 +23,7 @@ explained in the following sections.
 
 ## Receiving Disclosures
 
-Grin is committed to working with researchers who submit security vulnerability
+VCash is committed to working with researchers who submit security vulnerability
 notifications to us to resolve those issues on an appropriate timeline and perform
 a coordinated release, giving credit to the reporter if they would like.
 
@@ -34,21 +34,13 @@ and [details](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e0
 guidelines. More information is available about the
 [expected timelines for the full disclosure cycle](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e08d2736ea9dbe43484a3317e4bce214163bd0#standard-disclosure-timelines).
 
-For all security related issues, Grin has 3 main points of contact:
-
-* Daniel Lehnberg, daniel.lehnberg at protonmail.com [PGP key](https://github.com/mimblewimble/grin-security/blob/master/keys/lehnberg.asc)
-* hashmap, hashmap.dev at protonmail.com [PGP key](https://github.com/mimblewimble/grin-security/blob/master/keys/hashmap.asc)
-* John Woeltz, joltz at protonmail.com [PGP key](https://github.com/mimblewimble/grin-security/blob/master/keys/j01tz.asc)
-
-Send all communications PGP encrypted to all parties.
-
 ## Sending Disclosures
 
 In the case where we become aware of security issues affecting other projects
-that has never affected Grin, our intention is to inform those projects of
+that has never affected VCash, our intention is to inform those projects of
 security issues on a best effort basis.
 
-In the case where we fix a security issue in Grin that also affects the
+In the case where we fix a security issue in VCash that also affects the
 following neighboring projects, our intention is to engage in responsible
 disclosures with them as described in the adopted
 [standard](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e08d2736ea9dbe43484a3317e4bce214163bd0#a-standard-for-responsible-disclosure-in-cryptocurrency-and-related-software),
@@ -57,15 +49,15 @@ subject to the deviations described in the
 
 ## Bilateral Responsible Disclosure Agreements
 
-_Grin does not currently have any established bilateral disclosure agreements._
+_VCash does not currently have any established bilateral disclosure agreements._
 
 ## Recognition and Bug Bounties
 
-Grin's responsible disclosure standard includes some general language about
+VCash's responsible disclosure standard includes some general language about
 [Bounty Payments](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e08d2736ea9dbe43484a3317e4bce214163bd0#bounty-payments)
 and [Acknowledgements](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e08d2736ea9dbe43484a3317e4bce214163bd0#acknowledgements).
 
-Grin is a **traditional open source project with limited to no direct funding**.
+VCash is a **traditional open source project with limited to no direct funding**.
 As such, we have little means with which to compensate security researchers for
 their contributions. We recognize this is a shame and intend to do our best to
 still make these worth while by:
@@ -75,14 +67,12 @@ page linked from our website, with a links of their choosing.
 * Acting as reference whenever this is needed.
 * Setting up retroactive bounties whenever possible.
 
-There is not currently a formal bug bounty program for Grin as it would require
-a high level of resources and engagement to operate in good faith. More
-[funding](https://grin.mw/fund) can help provide the necessary
-resources to run one in the future for the Grin community.
+There is not currently a formal bug bounty program for VCash as it would require
+a high level of resources and engagement to operate in good faith. 
 
 ## Deviations from the Standard
 
-Grin is a technology that provides strong privacy with zero-knowledge
+VCash is a technology that provides strong privacy with zero-knowledge
 commitments and rangeproofs. Due to the nature of the cryptography used, if a
 counterfeiting bug results it could be exploited without a way to identify
 which data was corrupted. This renders rollbacks or other fork-based attempted
@@ -98,8 +88,3 @@ In the case of a counterfeiting or privacy-breaking bug, however, we might decid
 not to include those details with our reports to partners ahead of coordinated
 release, so long as we are sure that they are vulnerable.
 
-## More Information
-
-Additional security-related information about the Grin project including previous
-audits, CVEs, canaries, signatures and PGP public keys can be found in the
-[grin-security](https://github.com/mimblewimble/grin-security) repository.
