@@ -153,6 +153,21 @@ pub const MAX_BLOCK_WEIGHT: usize = 100_000;
 /// Fork every 6 months.
 pub const HARD_FORK_INTERVAL: u64 = YEAR_HEIGHT;
 
+/// Floonet first hard fork height, set to happen around 2019-06-20
+pub const FLOONET_FIRST_HARD_FORK: u64 = 185_040;
+
+/// Floonet second hard fork height, set to happen around 2019-12-19
+pub const FLOONET_SECOND_HARD_FORK: u64 = 298_080;
+
+/// Floonet second hard fork height, set to happen around 2020-06-20
+pub const FLOONET_THIRD_HARD_FORK: u64 = 552_960;
+
+/// AutomatedTesting and UserTesting HF1 height.
+pub const TESTING_FIRST_HARD_FORK: u64 = 3;
+
+/// AutomatedTesting and UserTesting HF2 height.
+pub const TESTING_SECOND_HARD_FORK: u64 = 6;
+
 /// AutomatedTesting and UserTesting HF3 height.
 pub const TESTING_THIRD_HARD_FORK: u64 = 9;
 
@@ -198,19 +213,19 @@ pub const DIFFICULTY_DAMP_FACTOR: u64 = 3;
 pub const AR_SCALE_DAMP_FACTOR: u64 = 13;
 
 /// Compute weight of a graph as number of siphash bits defining the graph
-/// Must be made dependent on height to phase out C31 in early 2020
-/// Later phase outs are on hold for now
+/// The height dependence allows a 30-week linear transition from C31+ to C32+ starting after 1 year
 pub fn graph_weight(_height: u64, _edge_bits: u8) -> u64 {
 	1
 	//	let mut xpr_edge_bits = edge_bits as u64;
 	//
-	//	let bits_over_min = edge_bits.saturating_sub(global::min_edge_bits());
-	//	let expiry_height = (1 << bits_over_min) * YEAR_HEIGHT;
-	//	if height >= expiry_height {
+	//	let expiry_height = YEAR_HEIGHT;
+	//	if edge_bits == 31 && height >= expiry_height {
 	//		xpr_edge_bits = xpr_edge_bits.saturating_sub(1 + (height - expiry_height) / WEEK_HEIGHT);
 	//	}
+	//	// For C31 xpr_edge_bits reaches 0 at height YEAR_HEIGHT + 30 * WEEK_HEIGHT
+	//	// 30 weeks after Jan 15, 2020 would be Aug 12, 2020
 	//
-	//	(2 << (edge_bits - global::base_edge_bits()) as u64) * xpr_edge_bits
+	//	(2u64 << (edge_bits - global::base_edge_bits()) as u64) * xpr_edge_bits
 }
 
 /// Minimum difficulty, enforced in diff retargetting

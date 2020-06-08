@@ -18,7 +18,6 @@ use grin_p2p as p2p;
 use grin_util as util;
 use grin_util::StopState;
 
-use self::core::global::{self, ChainTypes};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::{thread, time};
