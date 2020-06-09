@@ -177,16 +177,16 @@ pub fn header_version(height: u64) -> HeaderVersion {
 	// uncomment below as we go from hard fork to hard fork
 	if height < global::support_token_height() {
 		HeaderVersion(1)
-	/*} else if height < 2 * HARD_FORK_INTERVAL {
-		version == 2
-	} else if height < 3 * HARD_FORK_INTERVAL {
+	} else if height < global::solve_block_withholding_height() {
+		HeaderVersion(2)
+	/*} else if height < 3 * HARD_FORK_INTERVAL {
 		version == 3
 	} else if height < 4 * HARD_FORK_INTERVAL {
 		version == 4
 	} else if height >= 5 * HARD_FORK_INTERVAL {
 		version > 4 */
 	} else {
-		HeaderVersion(2)
+		HeaderVersion(3)
 	}
 }
 

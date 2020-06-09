@@ -6,17 +6,17 @@ use std::thread;
 
 use crate::api::{
 	parse_body, response, result_to_response, ApiServer, Error, ErrorKind,
-	/*BasicAuthMiddleware,*/ Handler, ResponseFuture, Router, TLSConfig,
+	/*BasicAuthMiddleware,*/ Handler, QueryParams, ResponseFuture, Router, TLSConfig,
 };
 use crate::core::core::hash::{Hash, Hashed};
-use crate::core::core::{AuxBitHeader, Block};
+use crate::core::core::AuxBitHeader;
 use crate::core::global;
 use crate::util;
 use crate::util::ToHex;
 
 use crate::core::consensus::reward;
 use crate::poolserver::handle_block::BlockHandler;
-use crate::poolserver::handle_block::JobInfo;
+use crate::poolserver::handle_block::{JobInfo, SolveBlockWithholdingJobInfo};
 
 pub fn start_pool_server(
 	handler: BlockHandler,
@@ -57,6 +57,17 @@ impl OwnerAPIHandler {
 		}
 	}
 
+	fn get_mining_block_v2(
+		&self,
+		miner_bits: Vec<u32>,
+	) -> Result<SolveBlockWithholdingJobInfo, Error> {
+		let job_info = self.real_handler.get_bitmining_block_v2(miner_bits);
+		match job_info {
+			Ok(job_info) => Ok(job_info),
+			Err(e) => Err(ErrorKind::Internal(e).into()),
+		}
+	}
+
 	fn get_mining_block(&self) -> Result<JobInfo, Error> {
 		let new_block = self.real_handler.get_bitmining_block();
 		match new_block {
@@ -76,40 +87,21 @@ impl OwnerAPIHandler {
 	}
 
 	fn submit_aux_block(&self, job_info: SubmitInfo) -> Result<(), Error> {
-		let header_hash_result = Hash::from_hex(job_info.header_hash.as_str());
-		let block_data_ref: Option<Block>;
-		match header_hash_result.clone() {
-			Ok(header_hash) => {
-				let result = self.real_handler.get_miningblock_by_hash(&header_hash);
-				match result {
-					Ok(block) => block_data_ref = Some(block),
-					Err(e) => {
-						return Err(ErrorKind::Internal(e).into());
-					}
-				}
-			}
-			Err(e) => {
-				return Err(ErrorKind::Internal(
-					format!("fail to decode hash string to Hash:{}", e).to_string(),
-				)
-				.into());
-			}
-		}
+		let header_hash = Hash::from_hex(job_info.header_hash.as_str()).map_err(|e| {
+			ErrorKind::Internal(format!("fail to decode hash string to Hash:{}", e).to_string())
+		})?;
 
-		let mut block_data = block_data_ref.unwrap();
+		let mut block_data = self
+			.real_handler
+			.get_miningblock_by_hash(&header_hash)
+			.map_err(|e| ErrorKind::Internal(e))?;
 
-		let btc_header_result = AuxBitHeader::from_hex(job_info.btc_header.as_str());
-		if btc_header_result.is_err() {
-			return Err(ErrorKind::Internal(btc_header_result.clone().err().unwrap()).into());
-		}
+		let btc_header = AuxBitHeader::from_hex(job_info.btc_header.as_str())
+			.map_err(|e| ErrorKind::Internal(e))?;
 
-		let btc_coinbase_result = util::from_hex(job_info.btc_coinbase.as_str());
-		if btc_coinbase_result.is_err() {
-			return Err(ErrorKind::Internal(
-				"btc coinbase fail to deserilise from hex".to_string(),
-			)
-			.into());
-		}
+		let btc_coinbase = util::from_hex(job_info.btc_coinbase.as_str()).map_err(|_e| {
+			ErrorKind::Internal("btc coinbase fail to deserilise from hex".to_string())
+		})?;
 
 		let mut str_vec: Vec<&str> = Vec::new();
 		let branch = job_info.btc_merkle_branch.as_str();
@@ -128,14 +120,12 @@ impl OwnerAPIHandler {
 		//job_info.btc_merkle_branch.as_str().split('-').collect();
 		let mut hash_vec: Vec<Hash> = Vec::new();
 		for str in str_vec {
-			let branch_item_ret = util::from_hex(str);
-			if branch_item_ret.is_err() {
-				return Err(ErrorKind::Internal(
+			let mut branch_item = util::from_hex(str).map_err(|_e| {
+				ErrorKind::Internal(
 					format!("btc merkle branch item can not transfer to vecu8:{}", str).to_string(),
 				)
-				.into());
-			}
-			let mut branch_item = branch_item_ret.unwrap();
+			})?;
+
 			branch_item.reverse();
 			let hash = Hash::from_vec(&branch_item);
 			hash_vec.push(hash);
@@ -143,13 +133,13 @@ impl OwnerAPIHandler {
 
 		// This is a full solution, submit it to the network
 		if block_data.header.height >= global::refactor_header_height() {
-			block_data.header.btc_pow.aux_header = btc_header_result.unwrap();
+			block_data.header.btc_pow.aux_header = btc_header;
 			block_data.header.btc_pow.merkle_branch = hash_vec;
-			block_data.header.btc_pow.coinbase_tx = btc_coinbase_result.unwrap();
+			block_data.header.btc_pow.coinbase_tx = btc_coinbase;
 		} else {
-			block_data.aux_data.aux_header = btc_header_result.unwrap();
+			block_data.aux_data.aux_header = btc_header;
 			block_data.aux_data.merkle_branch = hash_vec;
-			block_data.aux_data.coinbase_tx = btc_coinbase_result.unwrap();
+			block_data.aux_data.coinbase_tx = btc_coinbase;
 		};
 
 		match self.real_handler.submit_block(block_data) {
@@ -170,6 +160,29 @@ impl Handler for OwnerAPIHandler {
 			.unwrap()
 		{
 			"getauxblock" => result_to_response(self.get_mining_block()),
+			"getauxblockv2" => {
+				let mut miner_bits: Vec<u32> = vec![];
+
+				let query = match req.uri().query() {
+					Some(q) => q,
+					None => return response(StatusCode::BAD_REQUEST, ""),
+				};
+
+				let params = QueryParams::from(query);
+				let mut format_error = false;
+				params.process_multival_param("minerbits", |bits| {
+					let bits = bits.parse::<u32>();
+					match bits {
+						Ok(bits) => miner_bits.push(bits),
+						Err(_) => format_error = true,
+					};
+				});
+				if format_error {
+					response(StatusCode::BAD_REQUEST, "")
+				} else {
+					result_to_response(self.get_mining_block_v2(miner_bits))
+				}
+			}
 			_ => response(StatusCode::BAD_REQUEST, ""),
 		}
 	}

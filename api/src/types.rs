@@ -741,6 +741,8 @@ pub struct BlockHeaderPrintable {
 	pub token_kernel_root: String,
 	/// mergemining diff
 	pub bits: u32,
+	/// diff mask
+	pub mask: String,
 	/// Nonce increment used to mine this block.
 	pub nonce: u64,
 	/// Size of the cuckoo graph
@@ -774,6 +776,7 @@ impl BlockHeaderPrintable {
 			token_issue_proof_root: header.token_issue_proof_root.to_hex(),
 			token_kernel_root: header.token_kernel_root.to_hex(),
 			bits: header.bits,
+			mask: header.mask.to_hex(),
 			nonce: header.pow.nonce,
 			edge_bits: header.pow.edge_bits(),
 			cuckoo_solution: header.pow.proof.nonces.clone(),

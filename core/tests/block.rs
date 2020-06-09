@@ -154,7 +154,7 @@ fn block_with_nrd_kernel_pre_post_hf3() {
 
 	// Block is valid at header version 4 (at HF height) if it contains an NRD kernel.
 	assert_eq!(b.header.height, TESTING_THIRD_HARD_FORK);
-	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(b.header.version, HeaderVersion(3));
 	assert!(b
 		.validate(&BlindingFactor::zero(), verifier_cache())
 		.is_ok());
@@ -174,7 +174,7 @@ fn block_with_nrd_kernel_pre_post_hf3() {
 	);
 
 	// Block is valid at header version 4 if it contains an NRD kernel.
-	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(b.header.version, HeaderVersion(3));
 	assert!(b
 		.validate(&BlindingFactor::zero(), verifier_cache())
 		.is_ok());
@@ -239,7 +239,7 @@ fn block_with_nrd_kernel_nrd_not_enabled() {
 
 	// Block is invalid as NRD not enabled.
 	assert_eq!(b.header.height, TESTING_THIRD_HARD_FORK);
-	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(b.header.version, HeaderVersion(3));
 	assert_eq!(
 		b.validate(&BlindingFactor::zero(), verifier_cache()),
 		Err(Error::NRDKernelNotEnabled)
@@ -260,7 +260,7 @@ fn block_with_nrd_kernel_nrd_not_enabled() {
 	);
 
 	// Block is invalid as NRD not enabled.
-	assert_eq!(b.header.version, HeaderVersion(2));
+	assert_eq!(b.header.version, HeaderVersion(3));
 	assert_eq!(
 		b.validate(&BlindingFactor::zero(), verifier_cache()),
 		Err(Error::NRDKernelNotEnabled)
@@ -586,7 +586,7 @@ fn block_single_tx_serialized_size() {
 	let b = new_block(vec![&tx1], &keychain, &builder, &prev, &key_id);
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_907);
+	assert_eq!(vec.len(), 2907);
 }
 
 #[test]

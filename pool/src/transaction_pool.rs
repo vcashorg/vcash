@@ -20,7 +20,7 @@
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::id::ShortId;
 use self::core::core::verifier_cache::VerifierCache;
-use self::core::core::{transaction, Block, BlockHeader, Transaction, Weighting};
+use self::core::core::{transaction, Block, BlockHeader, HeaderVersion, Transaction, Weighting};
 use self::core::global;
 use self::util::RwLock;
 use crate::pool::Pool;
@@ -144,7 +144,7 @@ where
 			if !global::is_nrd_enabled() {
 				return Err(PoolError::NRDKernelNotEnabled);
 			}
-			if header.height < global::third_hardfork_height() {
+			if header.version < HeaderVersion(3) {
 				return Err(PoolError::NRDKernelPreHF3);
 			}
 		}

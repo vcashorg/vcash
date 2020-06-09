@@ -70,7 +70,7 @@ fn test_nrd_kernels_disabled() {
 	);
 
 	let header = chain.head_header().unwrap();
-	assert!(header.version < HeaderVersion(4));
+	assert!(header.version < HeaderVersion(3));
 
 	assert_eq!(
 		pool.add_to_pool(test_source(), tx_1.clone(), false, &header),
@@ -81,7 +81,7 @@ fn test_nrd_kernels_disabled() {
 	add_some_blocks(&chain, 5, &keychain);
 	let header = chain.head_header().unwrap();
 	assert_eq!(header.height, consensus::TESTING_THIRD_HARD_FORK);
-	assert_eq!(header.version, HeaderVersion(2));
+	assert_eq!(header.version, HeaderVersion(3));
 
 	// NRD kernel support not enabled via feature flag, so not valid.
 	assert_eq!(
