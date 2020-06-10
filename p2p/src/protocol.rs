@@ -51,11 +51,11 @@ impl Protocol {
 	}
 
 	fn check_protocol_version(&self) -> Result<(), Error> {
-		if self.adapter.total_height()? >= global::support_token_height() {
-			if self.peer_info.version.value() < 2 {
-				return Err(Error::LowProtocolVersion);
-			}
+		//if self.adapter.total_height()? >= global::support_token_height() {
+		if self.peer_info.version.value() < 2 {
+			return Err(Error::LowProtocolVersion);
 		}
+		//}
 
 		if self.adapter.total_height()? >= global::solve_block_withholding_height() {
 			if self.peer_info.version.value() < 3 {

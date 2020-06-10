@@ -36,7 +36,7 @@ use util::OneTime;
 /// Note: We also use a specific (possible different) protocol version
 /// for both the backend database and MMR data files.
 /// This defines the p2p layer protocol version for this node.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Automated testing edge_bits
 pub const AUTOMATED_TESTING_MIN_EDGE_BITS: u8 = 9;
@@ -110,16 +110,16 @@ const REFACTOR_HEADER_HEIGHT: u64 = (45_120 + 720);
 const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
 
 /// Support header without Cuckoo Cycle Proof
-const SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 82_000;
+const SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 78_500;
 
 /// Testing support header without Cuckoo Cycle Proof
-const FLOONET_SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 180;
+const FLOONET_SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 5_200;
 
 /// Number of blocks to reuse a txhashset zip for (automated testing and user testing).
 pub const TESTING_TXHASHSET_ARCHIVE_INTERVAL: u64 = 10;
 
 /// Number of blocks to reuse a txhashset zip for.
-pub const TXHASHSET_ARCHIVE_INTERVAL: u64 = 12 * 60;
+pub const TXHASHSET_ARCHIVE_INTERVAL: u64 = 12 * 6;
 
 /// Types of chain a server can run with, dictates the genesis block and
 /// and mining parameters used.

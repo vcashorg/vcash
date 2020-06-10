@@ -94,8 +94,14 @@ impl Handshake {
 		local_diff: Difficulty,
 	) -> Result<ProtocolVersion, Error> {
 		let cur_height = local_diff.to_num() - 1;
-		if cur_height >= global::support_token_height() {
-			if other.value() < 2 {
+		//if cur_height >= global::support_token_height() {
+		if other.value() < 2 {
+			return Err(Error::LowProtocolVersion);
+		}
+		//}
+
+		if cur_height >= global::solve_block_withholding_height() {
+			if other.value() < 3 {
 				return Err(Error::LowProtocolVersion);
 			}
 		}
