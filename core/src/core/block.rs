@@ -309,9 +309,9 @@ impl Default for BlockHeader {
 impl PartialEq for BlockHeader {
 	fn eq(&self, other: &Self) -> bool {
 		if self.height >= global::support_token_height() {
-			(self.is_pre_pow_equal(other) && self.btc_pow == other.btc_pow)
+			self.is_pre_pow_equal(other) && self.btc_pow == other.btc_pow
 		} else {
-			(self.is_pre_pow_equal(other) && self.pow == other.pow)
+			self.is_pre_pow_equal(other) && self.pow == other.pow
 		}
 	}
 }
@@ -544,7 +544,7 @@ impl BlockHeader {
 	}
 
 	fn is_pre_pow_equal(&self, other: &Self) -> bool {
-		(self.version == other.version
+		self.version == other.version
 			&& self.height == other.height
 			&& self.prev_hash == other.prev_hash
 			&& self.prev_root == other.prev_root
@@ -563,7 +563,7 @@ impl BlockHeader {
 			&& self.token_output_mmr_size == other.token_output_mmr_size
 			&& self.token_issue_proof_mmr_size == other.token_issue_proof_mmr_size
 			&& self.token_kernel_mmr_size == other.token_kernel_mmr_size
-			&& self.mask == other.mask)
+			&& self.mask == other.mask
 	}
 }
 

@@ -348,7 +348,7 @@ impl OutputRoots {
 }
 
 /// Minimal struct representing a known MMR position and associated block height.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CommitPos {
 	/// MMR position
 	pub pos: u64,
@@ -425,14 +425,14 @@ impl Default for Tip {
 impl PartialEq for Tip {
 	fn eq(&self, other: &Self) -> bool {
 		if self.height >= global::support_token_height() {
-			(self.height == other.height
-				&& self.last_block_h == other.last_block_h
-				&& self.prev_block_h == other.prev_block_h)
-		} else {
-			(self.height == other.height
+			self.height == other.height
 				&& self.last_block_h == other.last_block_h
 				&& self.prev_block_h == other.prev_block_h
-				&& self.total_difficulty == other.total_difficulty)
+		} else {
+			self.height == other.height
+				&& self.last_block_h == other.last_block_h
+				&& self.prev_block_h == other.prev_block_h
+				&& self.total_difficulty == other.total_difficulty
 		}
 	}
 }

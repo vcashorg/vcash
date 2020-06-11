@@ -79,7 +79,6 @@ fn test_coinbase_maturity() {
 
 		chain.set_txhashset_roots(&mut block).unwrap();
 
-		block.header.bits = 0x2100ffff;
 		pow::pow_size(
 			&mut block.header,
 			next_header_info.difficulty,
@@ -170,7 +169,6 @@ fn test_coinbase_maturity() {
 
 			chain.set_txhashset_roots(&mut block).unwrap();
 
-			block.header.bits = 0x2100ffff;
 			pow::pow_size(
 				&mut block.header,
 				next_header_info.difficulty,
@@ -261,7 +259,6 @@ fn test_coinbase_maturity() {
 
 				chain.set_txhashset_roots(&mut block).unwrap();
 
-				block.header.bits = 0x2100ffff;
 				pow::pow_size(
 					&mut block.header,
 					next_header_info.difficulty,
@@ -293,7 +290,6 @@ fn test_coinbase_maturity() {
 
 			chain.set_txhashset_roots(&mut block).unwrap();
 
-			block.header.bits = 0x2100ffff;
 			pow::pow_size(
 				&mut block.header,
 				next_header_info.difficulty,

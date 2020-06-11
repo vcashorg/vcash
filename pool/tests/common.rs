@@ -19,13 +19,13 @@ use self::chain::Chain;
 use self::core::consensus;
 use self::core::core::hash::Hash;
 use self::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
-use self::core::core::{Block, BlockHeader, BlockSums, KernelFeatures, Transaction};
+use self::core::core::{Block, BlockHeader, BlockSums, KernelFeatures, Transaction, TxKernel};
 use self::core::core::{BlockTokenSums, TokenKernelFeatures, TokenKey};
 use self::core::genesis;
 use self::core::global;
 use self::core::libtx::{build, reward, ProofBuilder};
 use self::core::pow;
-use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
+use self::keychain::{BlindingFactor, ExtKeychain, ExtKeychainPath, Keychain};
 use self::pool::types::*;
 use self::pool::TransactionPool;
 use self::util::RwLock;
@@ -101,7 +101,6 @@ where
 
 	let edge_bits = global::min_edge_bits();
 	block.header.pow.proof.edge_bits = edge_bits;
-	block.header.bits = 0x2100ffff;
 	pow::pow_size(
 		&mut block.header,
 		next_header_info.difficulty,
@@ -153,9 +152,11 @@ impl BlockChain for ChainAdapter {
 	}
 
 	fn validate_tx(&self, tx: &Transaction) -> Result<(), pool::PoolError> {
-		self.chain
-			.validate_tx(tx)
-			.map_err(|_| PoolError::Other("failed to validate tx".into()))
+		self.chain.validate_tx(tx).map_err(|e| match e.kind() {
+			chain::ErrorKind::Transaction(txe) => txe.into(),
+			chain::ErrorKind::NRDRelativeHeight => PoolError::NRDKernelRelativeHeight,
+			_ => PoolError::Other("failed to validate tx".into()),
+		})
 	}
 
 	fn verify_coinbase_maturity(&self, tx: &Transaction) -> Result<(), PoolError> {
@@ -362,6 +363,39 @@ where
 		kernel_features,
 		None,
 		tx_elements,
+		keychain,
+		&ProofBuilder::new(keychain),
+	)
+	.unwrap()
+}
+
+pub fn test_transaction_with_kernel<K>(
+	keychain: &K,
+	input_values: Vec<u64>,
+	output_values: Vec<u64>,
+	kernel: TxKernel,
+	excess: BlindingFactor,
+) -> Transaction
+where
+	K: Keychain,
+{
+	let mut tx_elements = Vec::new();
+
+	for input_value in input_values {
+		let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
+		tx_elements.push(build::input(input_value, key_id));
+	}
+
+	for output_value in output_values {
+		let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
+		tx_elements.push(build::output(output_value, key_id));
+	}
+
+	build::transaction_with_kernel(
+		tx_elements,
+		kernel,
+		None,
+		excess,
 		keychain,
 		&ProofBuilder::new(keychain),
 	)

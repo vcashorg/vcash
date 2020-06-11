@@ -104,13 +104,13 @@ const SUPPORT_TOKEN_HEIGHT: u64 = 45_120;
 const FLOONET_SUPPORT_TOKEN_HEIGHT: u64 = 160;
 
 /// Support header without Cuckoo Cycle Proof
-const REFACTOR_HEADER_HEIGHT: u64 = (45_120 + 720);
+const REFACTOR_HEADER_HEIGHT: u64 = 45_120 + 720;
 
 /// Testing support header without Cuckoo Cycle Proof
 const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
 
 /// Support header without Cuckoo Cycle Proof
-const SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 78_500;
+const SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 80_000;
 
 /// Testing support header without Cuckoo Cycle Proof
 const FLOONET_SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 5_200;

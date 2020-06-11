@@ -20,7 +20,6 @@ use serde;
 use serde_json;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::error::Error;
 use std::io::{BufRead, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -301,7 +300,7 @@ impl StratumServer {
 							info!(
 								"(Server ID: {}) Failed to parse JSONRpc: {} - {:?}",
 								self.id,
-								e.description(),
+								e,
 								the_message.as_bytes(),
 							);
 							workers_l[num].error = true;
