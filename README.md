@@ -31,8 +31,6 @@ Ignotus Peverell for the starting of Grin project and turning the MimbleWimble p
 
 Andrew Poelstra for his related work and improvements.
 
-J.K. Rowling for making it despite extraordinary adversity.
-
 ## License
 
 Apache License v2.0.
