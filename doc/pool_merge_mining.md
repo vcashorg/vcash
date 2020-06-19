@@ -127,8 +127,8 @@ Get masked mining job info for current height, masked mining job info can solve 
 
 * **URL**
 
-  * /v1/pool/getauxblockv2?minerbits==x
-  * /v1/pool/getauxblockv2?minerbits==x,y,z
+  * /v1/pool/getauxblockv2?minerbits=x&minerbits=y&minerbits=z
+  * /v1/pool/getauxblockv2?minerbits=x,y,z
 
 * **Method:**
 
