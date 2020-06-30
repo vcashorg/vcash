@@ -59,7 +59,7 @@ use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 
 pub use crate::pow::common::{
 	biguint_to_compact, biguint_to_hash, compact_to_biguint, compact_to_diff, hash_to_biguint,
-	pow_hash_after_mask, random_mask,
+	pow_hash_after_mask, random_mask, BITSTODIFF2NTABLE,
 };
 
 const MAX_SOLS: u32 = 10;

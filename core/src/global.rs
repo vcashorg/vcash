@@ -17,12 +17,18 @@
 //! should be used sparingly.
 
 use crate::consensus::{
-	HeaderInfo, BLOCK_TIME_SEC, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT,
-	DIFFICULTY_ADJUST_WINDOW, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD, TESTING_THIRD_HARD_FORK,
+	HeaderInfo, BLOCK_TIME_SEC_ORIGIN, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT_ORIGIN,
+	DIFFICULTY_ADJUST_WINDOW_ORIGIN, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
+	TESTING_THIRD_HARD_FORK,
 };
 use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
 use std::cell::Cell;
 use util::OneTime;
+
+use crate::consensus::{
+	FLOONET_REFACTOR_HEADER_HEIGHT, FLOONET_SUPPORT_TOKEN_HEIGHT, FLOONET_THIRD_HARD_FORK_HEIGHT,
+	REFACTOR_HEADER_HEIGHT, SUPPORT_TOKEN_HEIGHT, THIRD_HARD_FORK_HEIGHT, YEAR_HEIGHT_ORIGIN,
+};
 
 /// An enum collecting sets of parameters used throughout the
 /// code wherever mining is needed. This should allow for
@@ -89,37 +95,22 @@ pub const PEER_EXPIRATION_REMOVE_TIME: i64 = PEER_EXPIRATION_DAYS * 24 * 3600;
 /// Will compact the txhashset to remove pruned data.
 /// Will also remove old blocks and associated data from the database.
 /// For a node configured as "archival_mode = true" only the txhashset will be compacted.
-pub const COMPACTION_CHECK: u64 = DAY_HEIGHT;
+pub const COMPACTION_CHECK: u64 = DAY_HEIGHT_ORIGIN;
 
 /// Subsidy amount half height
-const HALVINGINTERVAL: u64 = 210000;
+const HALVINGINTERVAL: u64 = 1050000;
+
+/// Floonet Subsidy amount half height
+const FLOONET_HALVINGINTERVAL: u64 = YEAR_HEIGHT_ORIGIN;
 
 /// Testing Subsidy amount half height
-const AUTOTEST_HALVINGINTERVAL: u64 = DAY_HEIGHT;
-
-/// Support issue token tx height
-const SUPPORT_TOKEN_HEIGHT: u64 = 45_120;
-
-/// Testing support issue token tx height
-const FLOONET_SUPPORT_TOKEN_HEIGHT: u64 = 160;
-
-/// Support header without Cuckoo Cycle Proof
-const REFACTOR_HEADER_HEIGHT: u64 = 45_120 + 720;
-
-/// Testing support header without Cuckoo Cycle Proof
-const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
-
-/// Support header without Cuckoo Cycle Proof
-const SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 80_000;
-
-/// Testing support header without Cuckoo Cycle Proof
-const FLOONET_SOLVE_BLOCK_WITHHOLDING_HEIGHT: u64 = 5_200;
+const AUTOTEST_HALVINGINTERVAL: u64 = DAY_HEIGHT_ORIGIN;
 
 /// Number of blocks to reuse a txhashset zip for (automated testing and user testing).
 pub const TESTING_TXHASHSET_ARCHIVE_INTERVAL: u64 = 10;
 
 /// Number of blocks to reuse a txhashset zip for.
-pub const TXHASHSET_ARCHIVE_INTERVAL: u64 = 12 * 6;
+pub const TXHASHSET_ARCHIVE_INTERVAL: u64 = 12 * 30;
 
 /// Types of chain a server can run with, dictates the genesis block and
 /// and mining parameters used.
@@ -260,6 +251,7 @@ where
 pub fn halving_interval() -> u64 {
 	match get_chain_type() {
 		ChainTypes::Mainnet => HALVINGINTERVAL,
+		ChainTypes::Floonet => FLOONET_HALVINGINTERVAL,
 		_ => AUTOTEST_HALVINGINTERVAL,
 	}
 }
@@ -283,10 +275,10 @@ pub fn refactor_header_height() -> u64 {
 }
 
 /// Third Hard Fork:Block withholding attack and NRD Kernel
-pub fn solve_block_withholding_height() -> u64 {
+pub fn third_hard_fork_height() -> u64 {
 	match get_chain_type() {
-		ChainTypes::Floonet => FLOONET_SOLVE_BLOCK_WITHHOLDING_HEIGHT,
-		ChainTypes::Mainnet => SOLVE_BLOCK_WITHHOLDING_HEIGHT,
+		ChainTypes::Floonet => FLOONET_THIRD_HARD_FORK_HEIGHT,
+		ChainTypes::Mainnet => THIRD_HARD_FORK_HEIGHT,
 		_ => TESTING_THIRD_HARD_FORK,
 	}
 }
@@ -432,7 +424,7 @@ where
 	T: IntoIterator<Item = HeaderInfo>,
 {
 	// Convert iterator to vector, so we can append to it if necessary
-	let needed_block_count = DIFFICULTY_ADJUST_WINDOW as usize + 1;
+	let needed_block_count = DIFFICULTY_ADJUST_WINDOW_ORIGIN as usize + 1;
 	let mut last_n: Vec<HeaderInfo> = cursor.into_iter().take(needed_block_count).collect();
 
 	// Only needed just after blockchain launch... basically ensures there's
@@ -443,7 +435,7 @@ where
 		let last_ts_delta = if n > 1 {
 			last_n[0].timestamp - last_n[1].timestamp
 		} else {
-			BLOCK_TIME_SEC
+			BLOCK_TIME_SEC_ORIGIN
 		};
 		let last_diff = last_n[0].difficulty;
 

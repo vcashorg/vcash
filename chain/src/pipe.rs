@@ -95,14 +95,11 @@ fn validate_block_auxdata(
 
 	// 4, diff context validate
 	let pre_header = prev_header_store(bheader, &mut ctx.batch)?;
-	let nbits = if (pre_header.height + 1) % consensus::DIFFICULTY_ADJUST_WINDOW != 0 {
+	let nbits = if !consensus::is_on_difficulty_adjust_window(pre_header.height + 1) {
 		pre_header.bits
 	} else {
-		let start_height = if pre_header.height >= (consensus::DIFFICULTY_ADJUST_WINDOW - 1) {
-			pre_header.height - (consensus::DIFFICULTY_ADJUST_WINDOW - 1)
-		} else {
-			0
-		};
+		let start_height =
+			pre_header.height - (consensus::difficulty_adjust_window(pre_header.height) - 1);
 		let start_hash = ctx.header_pmmr.get_header_hash_by_height(start_height)?;
 		let start_head = ctx.batch.get_block_header(&start_hash)?;
 		consensus::next_bit_difficulty(

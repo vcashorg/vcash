@@ -16,6 +16,7 @@ use crate::core::core::{Output, TxKernel};
 use crate::core::libtx::secp_ser;
 use crate::core::libtx::ProofBuilder;
 use crate::core::pow::random_mask;
+use crate::core::pow::BITSTODIFF2NTABLE;
 use crate::core::{consensus, core, global};
 use crate::keychain::{ExtKeychain, Identifier, Keychain};
 use crate::util::ToHex;
@@ -86,12 +87,17 @@ impl BlockHandler {
 
 	pub fn get_bitmining_block_v2(
 		&self,
-		miner_bits: Vec<u32>,
+		mut miner_bits: Vec<u32>,
 	) -> Result<SolveBlockWithholdingJobInfo, String> {
 		let mining_block = { self.waiting_bitming_block.read().clone() };
 		match mining_block {
 			Some((block, fee)) => {
-				if block.header.height >= global::solve_block_withholding_height() {
+				if block.header.height >= global::third_hard_fork_height() {
+					if miner_bits.len() == 0 {
+						for key in BITSTODIFF2NTABLE.keys() {
+							miner_bits.push(*key);
+						}
+					}
 					let mut job_infos = vec![];
 					for miner_bit in miner_bits {
 						let mask = match random_mask(miner_bit) {
@@ -103,6 +109,7 @@ impl BlockHandler {
 						let job_info = MinerJobInfo {
 							cur_hash: block.header.hash().to_hex(),
 							miner_base_bits: miner_bit,
+							miner_diff_2n: BITSTODIFF2NTABLE.get(&miner_bit).map_or(-1, |v| *v),
 							mask: mask.to_hex(),
 						};
 						job_infos.push(job_info);
@@ -122,7 +129,7 @@ impl BlockHandler {
 				} else {
 					Err(format!(
 						"Feature Solve Block withholding Attack will be activated at height {}.",
-						global::solve_block_withholding_height()
+						global::third_hard_fork_height()
 					))
 				}
 			}
@@ -373,14 +380,10 @@ impl BlockHandler {
 		// Determine the difficulty our block should be at.
 		// Note: do not keep the difficulty_iter in scope (it has an active batch).
 		let difficulty = consensus::next_difficulty(head.height + 1, self.chain.difficulty_iter()?);
-		let nbits = if (head.height + 1) % consensus::DIFFICULTY_ADJUST_WINDOW != 0 {
+		let nbits = if !consensus::is_on_difficulty_adjust_window(head.height + 1) {
 			head.bits
 		} else {
-			let start_height = if head.height >= (consensus::DIFFICULTY_ADJUST_WINDOW - 1) {
-				head.height - (consensus::DIFFICULTY_ADJUST_WINDOW - 1)
-			} else {
-				0
-			};
+			let start_height = head.height - (consensus::difficulty_adjust_window(head.height) - 1);
 			let first_head = self.chain.get_header_by_height(start_height)?;
 			consensus::next_bit_difficulty(
 				head.height,
@@ -606,6 +609,8 @@ pub struct MinerJobInfo {
 	pub cur_hash: String,
 	/// miner base diff
 	pub miner_base_bits: u32,
+	/// miner base difficulty of 2^N, might be -1 if miner_base_bits is not in BITSTODIFF2NTABLE.
+	pub miner_diff_2n: i32,
 	/// diff mask
 	pub mask: String,
 }

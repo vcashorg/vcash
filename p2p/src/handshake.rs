@@ -100,7 +100,7 @@ impl Handshake {
 		}
 		//}
 
-		if cur_height >= global::solve_block_withholding_height() {
+		if cur_height >= global::third_hard_fork_height() {
 			if other.value() < 3 {
 				return Err(Error::LowProtocolVersion);
 			}

@@ -127,6 +127,7 @@ Get masked mining job info for current height, masked mining job info can solve 
 
 * **URL**
 
+  * /v1/pool/getauxblockv2
   * /v1/pool/getauxblockv2?minerbits=x&minerbits=y&minerbits=z
   * /v1/pool/getauxblockv2?minerbits=x,y,z
 
@@ -136,7 +137,7 @@ Get masked mining job info for current height, masked mining job info can solve 
   
 * **URL Params**
 
-    **Required:**
+    **Optional:**
     `minerbits=[string]`
 
 * **Data Params**
@@ -148,17 +149,18 @@ Get masked mining job info for current height, masked mining job info can solve 
   * **Code:** 200
   * **Content:**
 
-    | Field            | Type     | Description                                |
-    |:-----------------|:---------|:-------------------------------------------|
-    | height           | number   | VCash height                               |
-    | prev_hash        | string   | VCash prev header hash                     |
-    | bits             | number   | bits for Bitcoin                           |
-    | base_rewards     | number   | VCash coinbase subsidy                     |
-    | transactions_fee | number   | VCash transaction fee                      |
-    | miner_info       | object   | Miner Info for a giving Bitcoin miner bits |
-    | miner_base_bits  | number   | bits for Bitcoin miner share difficulty    |
-    | cur_hash         | string   | VCash header hash for miner_base_bits      |
-    | mask             | string   | Random mask hash for miner_base_bits       |
+    | Field            | Type     | Description                                                             |
+    |:-----------------|:---------|:------------------------------------------------------------------------|
+    | height           | number   | VCash height                                                            |
+    | prev_hash        | string   | VCash prev header hash                                                  |
+    | bits             | number   | bits for Bitcoin                                                        |
+    | base_rewards     | number   | VCash coinbase subsidy                                                  |
+    | transactions_fee | number   | VCash transaction fee                                                   |
+    | miner_info       | object   | Miner Info for a giving Bitcoin miner bits                              |
+    | miner_base_bits  | number   | bits for Bitcoin miner share difficulty                                 |
+    | miner_diff_2n    | number   | 2^n for Bitcoin miner share difficulty, might be -1 when n != 0, 1...63 |
+    | cur_hash         | string   | VCash header hash for miner_base_bits                                   |
+    | mask             | string   | Random mask hash for miner_base_bits                                    |
     
 
 * **Error Response:**
@@ -190,21 +192,25 @@ Get masked mining job info for current height, masked mining job info can solve 
       {
         "cur_hash": "6c0d3ac003f6c470204c3568c4dd36eacd1ae5246b8a0091b3ef2110b20f8463",
         "miner_base_bits": 457179072,
+        "miner_diff_2n": 10,
         "mask": "da478173dc4328761885ebe92d836b2980abbbad031062ff42aa000000000000"
       },
       {
         "cur_hash": "a90ba31960808affb0281d7124c789cfede8a2d22d2e257a7818dcecbbe5ff0b",
         "miner_base_bits": 437256176,
+        "miner_diff_2n": 20,
         "mask": "8d82a5ea7a82deb218a0121f89f04627965223eb7e1f8fb95f00000000000000"
       },
       {
         "cur_hash": "4bb63cec226c09b425e77ef2bbd2f863ee203cc82ff334adbee9a644a6515ccf",
         "miner_base_bits": 419692540,
+        "miner_diff_2n": 30,
         "mask": "c91174f6efaca813dad45ee296810fa634fb1c4a854d82090000000000000000"
       },
       {
         "cur_hash": "65eb80d6de3e9acf9977355cb1c48d20d8639c700b9b52ebcf2290e7d4e04fd8",
         "miner_base_bits": 436591499,
+        "miner_diff_2n": -1,
         "mask": "58470a06ff5fd49fab9b463ee57e24a00ae58bc4f72333c3e500000000000000"
       }
     ]

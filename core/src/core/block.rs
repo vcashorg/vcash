@@ -394,7 +394,7 @@ fn read_block_header<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Erro
 		(ZERO_HASH, ZERO_HASH, ZERO_HASH, ZERO_HASH, 0, 0, 0)
 	};
 
-	let mask = if height >= global::solve_block_withholding_height() {
+	let mask = if height >= global::third_hard_fork_height() {
 		let mask = Hash::read(reader)?;
 		mask
 	} else {
@@ -480,7 +480,7 @@ impl BlockHeader {
 			);
 		}
 
-		if self.height >= global::solve_block_withholding_height() {
+		if self.height >= global::third_hard_fork_height() {
 			writer.write_fixed_bytes(&self.mask)?;
 		}
 
@@ -714,7 +714,7 @@ impl Readable for UntrustedBlockHeader {
 	fn read<R: Reader>(reader: &mut R) -> Result<UntrustedBlockHeader, ser::Error> {
 		let header = read_block_header(reader)?;
 		if header.timestamp
-			> Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC as i64))
+			> Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC_ADJUSTED as i64))
 		{
 			// refuse blocks more than 12 blocks intervals in future (as in bitcoin)
 			// TODO add warning in p2p code if local time is too different from peers

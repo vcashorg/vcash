@@ -28,6 +28,7 @@ use crate::core::hash::Hash as BitHash;
 use crate::num_bigint::BigUint;
 use crate::pow::num::FromPrimitive;
 use rand::{thread_rng, Rng};
+use std::collections::HashMap;
 
 /// Operations needed for edge type (going to be u32 or u64)
 pub trait EdgeType: PrimInt + ToPrimitive + Mul + BitOrAssign + Hash {}
@@ -317,6 +318,78 @@ pub fn pow_hash_after_mask(hash: BitHash, mask: BitHash) -> BitHash {
 	}
 
 	return BitHash::from_vec(new_bytes.as_ref());
+}
+
+lazy_static! {
+	///Miner bits and it`s corresponding difficulty value of 2^N table.
+	pub static ref BITSTODIFF2NTABLE:HashMap<u32, i32> = {
+		let mut map = HashMap::new();
+		map.insert(486604799, 0);// 2^0
+		map.insert(478150528, 1);// 2^1
+		map.insert(473956288, 2);// 2^2
+		map.insert(471859168, 3);// 2^3
+		map.insert(470810608, 4);// 2^4
+		map.insert(470286328, 5);// 2^5
+		map.insert(470024188, 6);// 2^6
+		map.insert(469893118, 7);// 2^7
+		map.insert(469827583, 8);// 2^8
+		map.insert(461373312, 9);// 2^9
+		map.insert(457179072, 10);// 2^10
+		map.insert(455081952, 11);// 2^11
+		map.insert(454033392, 12);// 2^12
+		map.insert(453509112, 13);// 2^13
+		map.insert(453246972, 14);// 2^14
+		map.insert(453115902, 15);// 2^15
+		map.insert(453050367, 16);// 2^16
+		map.insert(444596096, 17);// 2^17
+		map.insert(440401856, 18);// 2^18
+		map.insert(438304736, 19);// 2^19
+		map.insert(437256176, 20);// 2^20
+		map.insert(436731896, 21);// 2^21
+		map.insert(436469756, 22);// 2^22
+		map.insert(436338686, 23);// 2^23
+		map.insert(436273151, 24);// 2^24
+		map.insert(427818880, 25);// 2^25
+		map.insert(423624640, 26);// 2^26
+		map.insert(421527520, 27);// 2^27
+		map.insert(420478960, 28);// 2^28
+		map.insert(419954680, 29);// 2^29
+		map.insert(419692540, 30);// 2^30
+		map.insert(419561470, 31);// 2^31
+		map.insert(419495935, 32);// 2^32
+		map.insert(411041664, 33);// 2^33
+		map.insert(406847424, 34);// 2^34
+		map.insert(404750304, 35);// 2^35
+		map.insert(403701744, 36);// 2^36
+		map.insert(403177464, 37);// 2^37
+		map.insert(402915324, 38);// 2^38
+		map.insert(402784254, 39);// 2^39
+		map.insert(402718719, 40);// 2^40
+		map.insert(394264448, 41);// 2^41
+		map.insert(390070208, 42);// 2^42
+		map.insert(387973088, 43);// 2^43
+		map.insert(386924528, 44);// 2^44
+		map.insert(386400248, 45);// 2^45
+		map.insert(386138108, 46);// 2^46
+		map.insert(386007038, 47);// 2^47
+		map.insert(385941503, 48);// 2^48
+		map.insert(377487232, 49);// 2^49
+		map.insert(373292992, 50);// 2^50
+		map.insert(371195872, 51);// 2^51
+		map.insert(370147312, 52);// 2^52
+		map.insert(369623032, 53);// 2^53
+		map.insert(369360892, 54);// 2^54
+		map.insert(369229822, 55);// 2^55
+		map.insert(369164287, 56);// 2^56
+		map.insert(360710016, 57);// 2^57
+		map.insert(356515776, 58);// 2^58
+		map.insert(354418656, 59);// 2^59
+		map.insert(353370096, 60);// 2^60
+		map.insert(352845816, 61);// 2^61
+		map.insert(352583676, 62);// 2^62
+		map.insert(352452606, 63);// 2^63
+		map
+	};
 }
 
 #[cfg(test)]

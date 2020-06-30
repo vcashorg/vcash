@@ -227,7 +227,6 @@ impl Server {
 			net_adapter.clone(),
 			genesis.hash(),
 			stop_state.clone(),
-			shared_chain.clone(),
 		)?);
 
 		// Initialize various adapters with our dynamic set of connected peers.
@@ -504,12 +503,13 @@ impl Server {
 
 			let block_time_sum = diff_entries.iter().fold(0, |sum, t| sum + t.duration);
 			let block_diff_sum = diff_entries.iter().fold(0, |sum, d| sum + d.difficulty);
+			let difficulty_adjust_window = consensus::difficulty_adjust_window(height as u64);
 			DiffStats {
 				height: height as u64,
 				last_blocks: diff_entries,
-				average_block_time: block_time_sum / (consensus::DIFFICULTY_ADJUST_WINDOW - 1),
-				average_difficulty: block_diff_sum / (consensus::DIFFICULTY_ADJUST_WINDOW - 1),
-				window_size: consensus::DIFFICULTY_ADJUST_WINDOW,
+				average_block_time: block_time_sum / (difficulty_adjust_window - 1),
+				average_difficulty: block_diff_sum / (difficulty_adjust_window - 1),
+				window_size: difficulty_adjust_window,
 			}
 		};
 

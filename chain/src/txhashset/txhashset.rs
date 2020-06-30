@@ -15,7 +15,7 @@
 //! Utility structs to handle the 3 MMRs (output, rangeproof,
 //! kernel) along the overall header MMR conveniently and transactionally.
 
-use crate::core::consensus::WEEK_HEIGHT;
+use crate::core::consensus::WEEK_HEIGHT_ADJUSTED;
 use crate::core::core::committed::Committed;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::merkle_proof::MerkleProof;
@@ -609,7 +609,7 @@ impl TxHashSet {
 		batch: &Batch<'_>,
 	) -> Result<(), Error> {
 		let head = batch.head()?;
-		let cutoff = head.height.saturating_sub(WEEK_HEIGHT * 2);
+		let cutoff = head.height.saturating_sub(WEEK_HEIGHT_ADJUSTED * 2);
 		let cutoff_hash = header_pmmr.get_header_hash_by_height(cutoff)?;
 		let cutoff_header = batch.get_block_header(&cutoff_hash)?;
 		self.verify_kernel_pos_index(&cutoff_header, header_pmmr, batch)

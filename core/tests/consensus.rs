@@ -17,8 +17,9 @@ use grin_core as core;
 use self::core::consensus::*;
 //use self::core::core::block::HeaderVersion;
 use self::core::global;
+use self::core::pow::compact_to_diff;
 use self::core::pow::Difficulty;
-use chrono::prelude::Utc;
+use chrono::prelude::{TimeZone, Utc};
 use std::fmt::{self, Display};
 
 /// Last n blocks for difficulty calculation purposes
@@ -273,37 +274,245 @@ fn repeat_offs(from: u64, interval: u64, diff: u64, len: u64) -> Vec<HeaderInfo>
 }
 
 #[test]
+fn test_halving_height() {
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
+	assert_eq!(global::third_hard_fork_height(), 80640);
+	//first halving
+	assert_eq!(first_halving_height(), 727440);
+	//second halving
+	assert_eq!(first_halving_height() + global::halving_interval(), 1777440);
+	//third halving
+	assert_eq!(
+		first_halving_height() + 2 * global::halving_interval(),
+		2827440
+	);
+}
+
+#[test]
+fn test_reward() {
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
+
+	//before third_hard_fork
+	let before_third_hard_fork_height_reward = REWARD;
+	assert_eq!(
+		reward(global::third_hard_fork_height() - 1, 0),
+		before_third_hard_fork_height_reward
+	);
+
+	//third_hard_fork
+	let third_hard_fork_height_reward = REWARD_ADJUSTED;
+	assert_eq!(
+		reward(global::third_hard_fork_height(), 0),
+		third_hard_fork_height_reward
+	);
+
+	//before first halving
+	let before_first_halving_height_reward = REWARD_ADJUSTED;
+	assert_eq!(
+		reward(first_halving_height() - 1, 0),
+		before_first_halving_height_reward
+	);
+
+	//first halving
+	let first_halving_height_reward = REWARD_ADJUSTED / 2;
+	assert_eq!(
+		reward(first_halving_height(), 0),
+		first_halving_height_reward
+	);
+
+	//before second halving
+	let before_second_halving_height_reward = REWARD_ADJUSTED / 2;
+	assert_eq!(
+		reward(first_halving_height() + global::halving_interval() - 1, 0),
+		before_second_halving_height_reward
+	);
+
+	//second halving
+	let second_halving_height_reward = REWARD_ADJUSTED / 4;
+	assert_eq!(
+		reward(first_halving_height() + global::halving_interval(), 0),
+		second_halving_height_reward
+	);
+}
+
+#[test]
 fn test_total_reward() {
 	global::set_local_chain_type(global::ChainTypes::Mainnet);
 	let total = 21000000 as f64;
 	assert_eq!(total_reward(0, true), 50 * GRIN_BASE as u64);
+	let third_hard_fork = 4032000 as f64;
 	let first_half = total * 0.5;
 	let second_half = total * 0.75;
 	let third_half = total * 0.875;
+
+	//before third_hard_fork
 	assert_eq!(
-		total_reward(209999, true),
+		total_reward(global::third_hard_fork_height() - 1, true),
+		(third_hard_fork * GRIN_BASE as f64) as u64
+	);
+
+	//third_hard_fork
+	assert_eq!(
+		total_reward(global::third_hard_fork_height(), true),
+		((third_hard_fork + 10 as f64) * GRIN_BASE as f64) as u64
+	);
+
+	//before first halving
+	assert_eq!(
+		total_reward(first_halving_height() - 1, true),
 		(first_half * GRIN_BASE as f64) as u64
 	);
+
+	//first halving
 	assert_eq!(
-		total_reward(210000, true),
-		((first_half + 25 as f64) * GRIN_BASE as f64) as u64
+		total_reward(first_halving_height(), true),
+		((first_half + 5 as f64) * GRIN_BASE as f64) as u64
 	);
+
+	//before second halving
 	assert_eq!(
-		total_reward(419999, true),
+		total_reward(
+			first_halving_height() + global::halving_interval() - 1,
+			true
+		),
 		(second_half * GRIN_BASE as f64) as u64
 	);
+
+	//second halving
 	assert_eq!(
-		total_reward(420000, true),
-		((second_half + 12.5) * GRIN_BASE as f64) as u64
+		total_reward(first_halving_height() + global::halving_interval(), true),
+		((second_half + 2.5) * GRIN_BASE as f64) as u64
 	);
+
+	//before third halving
 	assert_eq!(
-		total_reward(629999, true),
+		total_reward(
+			first_halving_height() + 2 * global::halving_interval() - 1,
+			true
+		),
 		(third_half * GRIN_BASE as f64) as u64
 	);
+
+	//third halving
 	assert_eq!(
-		total_reward(630000, true),
-		((third_half + 6.25) * GRIN_BASE as f64) as u64
+		total_reward(
+			first_halving_height() + 2 * global::halving_interval(),
+			true
+		),
+		((third_half + 1.25) * GRIN_BASE as f64) as u64
 	);
+}
+
+#[test]
+fn test_next_bit_difficulty() {
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
+	//before third_hard_fork: not on adjust window
+	let compact0 = next_bit_difficulty(
+		2016,
+		0x180ffff0, // 2^36
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 1, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact0), 68719476736_u64);
+
+	//before third_hard_fork:mainnet min diff is 0x18120f14, as 60883825480,
+	let compact0 = next_bit_difficulty(
+		2016 * 2 - 1,
+		0x180ffff0, // 2^36
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 1, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact0), 60883825480_u64);
+
+	//before third_hard_fork: diff * 2
+	let compact1 = next_bit_difficulty(
+		2016 * 3 - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 8).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact1), 2199023255552_u64); //2199023255552_u64 is 2^41
+
+	//before third_hard_fork: diff * 4
+	let compact1 = next_bit_difficulty(
+		2016 * 4 - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 2).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact1), 4398046511104_u64); //4398046511104_u64 is 2^42
+
+	//before third_hard_fork:diff / 4
+	let compact2 = next_bit_difficulty(
+		2016 * 5 - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2018, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact2), 274877906944_u64); //274877906944_u64 is 2^38
+
+	//at third_hard_fork  diff / 5
+	let compact3 = next_bit_difficulty(
+		global::third_hard_fork_height() - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 15).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact3), 219902325555_u64);
+
+	//at third_hard_fork  diff / 10
+	let compact3 = next_bit_difficulty(
+		global::third_hard_fork_height() - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 29).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact3), 109951162777_u64);
+
+	//after third_hard_fork: not on adjust window
+	let compact0 = next_bit_difficulty(
+		global::third_hard_fork_height() + 10080,
+		0x180ffff0, // 2^36
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 1, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact0), 68719476736_u64);
+
+	//after third_hard_fork:mainnet min diff is 0x18120f14, as 60883825480,
+	let compact0 = next_bit_difficulty(
+		global::third_hard_fork_height() + 10080 - 1,
+		0x180ffff0, // 2^36
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 1, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact0), 60883825480_u64);
+
+	//after third_hard_fork: diff * 2
+	let compact1 = next_bit_difficulty(
+		global::third_hard_fork_height() + 10080 * 2 - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 8).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact1), 2199023255552_u64); //2199023255552_u64 is 2^41
+
+	//after third_hard_fork: diff * 4
+	let compact1 = next_bit_difficulty(
+		global::third_hard_fork_height() + 10080 * 3 - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 2).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact1), 4398046511104_u64); //4398046511104_u64 is 2^42
+
+	//after third_hard_fork:diff / 4
+	let compact2 = next_bit_difficulty(
+		global::third_hard_fork_height() + 10080 * 4 - 1,
+		0x1800ffff, // 2^40
+		Utc.ymd(2019, 3, 1).and_hms(0, 0, 0).timestamp(),
+		Utc.ymd(2018, 3, 1).and_hms(0, 0, 0).timestamp(),
+	);
+	assert_eq!(compact_to_diff(compact2), 274877906944_u64); //274877906944_u64 is 2^38
 }
 
 /// Checks different next_target adjustments and difficulty boundaries
@@ -573,8 +782,8 @@ fn test_secondary_pow_ratio() {
 	}
 }
 
+/*
 #[test]
-#[ignore]
 fn test_secondary_pow_scale() {
 	let window = DIFFICULTY_ADJUST_WINDOW;
 	let mut hi = HeaderInfo::from_diff_scaling(Difficulty::from_num(10), 100);
@@ -654,7 +863,6 @@ fn test_secondary_pow_scale() {
 	}
 }
 
-/*
 #[test]
 fn hard_forks() {
 	// Tests for mainnet chain type.

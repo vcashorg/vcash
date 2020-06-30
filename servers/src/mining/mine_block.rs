@@ -189,14 +189,10 @@ fn build_block(
 	// Determine the difficulty our block should be at.
 	// Note: do not keep the difficulty_iter in scope (it has an active batch).
 	let difficulty = consensus::next_difficulty(head.height + 1, chain.difficulty_iter()?);
-	let nbits = if (head.height + 1) % consensus::DIFFICULTY_ADJUST_WINDOW != 0 {
+	let nbits = if !consensus::is_on_difficulty_adjust_window(head.height + 1) {
 		head.bits
 	} else {
-		let start_height = if head.height >= (consensus::DIFFICULTY_ADJUST_WINDOW - 1) {
-			head.height - (consensus::DIFFICULTY_ADJUST_WINDOW - 1)
-		} else {
-			0
-		};
+		let start_height = head.height - (consensus::difficulty_adjust_window(head.height) - 1);
 		let first_head = chain.get_header_by_height(start_height)?;
 		consensus::next_bit_difficulty(
 			head.height,

@@ -44,7 +44,6 @@ pub struct Server {
 	handshake: Arc<Handshake>,
 	pub peers: Arc<Peers>,
 	stop_state: Arc<StopState>,
-	chain: Arc<chain::Chain>,
 }
 
 // TODO TLS
@@ -57,7 +56,6 @@ impl Server {
 		adapter: Arc<dyn ChainAdapter>,
 		genesis: Hash,
 		stop_state: Arc<StopState>,
-		chain: Arc<chain::Chain>,
 	) -> Result<Server, Error> {
 		Ok(Server {
 			config: config.clone(),
@@ -65,7 +63,6 @@ impl Server {
 			handshake: Arc::new(Handshake::new(genesis, config.clone())),
 			peers: Arc::new(Peers::new(PeerStore::new(db_root)?, adapter, config)),
 			stop_state,
-			chain,
 		})
 	}
 
@@ -187,7 +184,6 @@ impl Server {
 					&self.handshake,
 					self.peers.clone(),
 				)?;
-				self.check_is_legal(&peer)?;
 				let peer = Arc::new(peer);
 				self.peers.add_connected(peer.clone())?;
 				Ok(peer)
@@ -223,30 +219,7 @@ impl Server {
 		if self.peers.is_banned(peer.info.addr) {
 			return Err(Error::Banned);
 		}
-		self.check_is_legal(&peer)?;
 		self.peers.add_connected(Arc::new(peer))?;
-		Ok(())
-	}
-
-	fn check_is_legal(&self, peer: &Peer) -> Result<(), Error> {
-		let head = self.chain.head_header()?;
-		let self_diff = self.peers.total_difficulty()?;
-		if (peer
-			.info
-			.total_difficulty()
-			.to_num()
-			.saturating_sub(self_diff.to_num())
-			>= global::cut_through_horizon().into())
-			&& (Utc::now().timestamp() - head.timestamp.timestamp() < 86400)
-		{
-			warn!(
-				"Peer {} has a fraud height, total_difficulty = {}",
-				peer.info.addr,
-				peer.info.total_difficulty()
-			);
-			return Err(Error::FraudNode);
-		}
-
 		Ok(())
 	}
 

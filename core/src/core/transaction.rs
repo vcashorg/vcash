@@ -188,10 +188,10 @@ impl From<NRDRelativeHeight> for u64 {
 }
 
 impl NRDRelativeHeight {
-	const MAX: u64 = consensus::WEEK_HEIGHT;
+	const MAX: u64 = consensus::WEEK_HEIGHT_ADJUSTED;
 
 	/// Create a new NRDRelativeHeight from the provided height.
-	/// Checks height is valid (between 1 and WEEK_HEIGHT inclusive).
+	/// Checks height is valid (between 1 and WEEK_HEIGHT_ADJUSTED inclusive).
 	pub fn new(height: u64) -> Result<Self, Error> {
 		NRDRelativeHeight::try_from(height)
 	}
@@ -3428,7 +3428,7 @@ mod test {
 
 		// NRD with relative height WEEK_HEIGHT+1 is invalid.
 		vec.clear();
-		let invalid_height = consensus::WEEK_HEIGHT + 1;
+		let invalid_height = consensus::WEEK_HEIGHT_ADJUSTED + 1;
 		ser::serialize_default(&mut vec, &(3u8, 10u64, invalid_height as u16))?;
 		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
 		assert_eq!(res.err(), Some(ser::Error::CorruptedData));

@@ -57,7 +57,7 @@ impl Protocol {
 		}
 		//}
 
-		if self.adapter.total_height()? >= global::solve_block_withholding_height() {
+		if self.adapter.total_height()? >= global::third_hard_fork_height() {
 			if self.peer_info.version.value() < 3 {
 				return Err(Error::LowProtocolVersion);
 			}
