@@ -21,7 +21,7 @@ use crate::consensus::{
 	DIFFICULTY_ADJUST_WINDOW_ORIGIN, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
 	TESTING_THIRD_HARD_FORK, YEAR_HEIGHT_ADJUSTED,
 };
-use crate::pow::{self, new_cuckatoo_ctx, EdgeType, PoWContext};
+use crate::pow::{self, new_cuckatoo_ctx, PoWContext};
 use std::cell::Cell;
 use util::OneTime;
 
@@ -228,10 +228,7 @@ pub fn create_pow_context<T>(
 	edge_bits: u8,
 	proof_size: usize,
 	max_sols: u32,
-) -> Result<Box<dyn PoWContext<T>>, pow::Error>
-where
-	T: EdgeType + 'static,
-{
+) -> Result<Box<dyn PoWContext>, pow::Error> {
 	//	let chain_type = CHAIN_TYPE.read().clone();
 	//	match chain_type {
 	//		// Mainnet has Cuckaroo29 for AR and Cuckatoo30+ for AF
