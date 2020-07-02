@@ -582,8 +582,8 @@ fn spend_rewind_spend() {
 			KernelFeatures::Plain { fee: 20000 },
 			None,
 			vec![
-				build::coinbase_input(consensus::REWARD, key_id_coinbase.clone()),
-				build::output(consensus::REWARD - 20000, key_id30.clone()),
+				build::coinbase_input(consensus::REWARD_ORIGIN, key_id_coinbase.clone()),
+				build::output(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
 			],
 			&kc,
 			&pb,
@@ -656,11 +656,11 @@ fn spend_in_fork_and_compact() {
 		let token_key = TokenKey::new_token_key();
 		let issue_token_tx = build::transaction(
 			KernelFeatures::Plain {
-				fee: consensus::REWARD,
+				fee: consensus::REWARD_ORIGIN,
 			},
 			Some(TokenKernelFeatures::IssueToken),
 			vec![
-				build::coinbase_input(consensus::REWARD, key_id3),
+				build::coinbase_input(consensus::REWARD_ORIGIN, key_id3),
 				build::token_output(token_amount, token_key, true, key_id_token.clone()),
 			],
 			&kc,
@@ -681,8 +681,8 @@ fn spend_in_fork_and_compact() {
 			KernelFeatures::Plain { fee: 20000 },
 			Some(TokenKernelFeatures::PlainToken),
 			vec![
-				build::coinbase_input(consensus::REWARD, key_id2.clone()),
-				build::output(consensus::REWARD - 20000, key_id30.clone()),
+				build::coinbase_input(consensus::REWARD_ORIGIN, key_id2.clone()),
+				build::output(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
 				build::token_input(token_amount, token_key, true, key_id_token.clone()),
 				build::token_output(token_amount, token_key, false, key_id_token1.clone()),
 			],
@@ -702,8 +702,8 @@ fn spend_in_fork_and_compact() {
 			KernelFeatures::Plain { fee: 20000 },
 			Some(TokenKernelFeatures::PlainToken),
 			vec![
-				build::input(consensus::REWARD - 20000, key_id30.clone()),
-				build::output(consensus::REWARD - 40000, key_id31.clone()),
+				build::input(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
+				build::output(consensus::REWARD_ORIGIN - 40000, key_id31.clone()),
 				build::token_input(token_amount, token_key, false, key_id_token1.clone()),
 				build::token_output(token_amount, token_key, false, key_id_token2.clone()),
 			],

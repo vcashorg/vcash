@@ -131,7 +131,7 @@ fn get_diff_stats(chain_sim: &Vec<HeaderInfo>) -> DiffStats {
 
 	let sum_blocks: Vec<HeaderInfo> = global::difficulty_data_to_vector(diff_iter.iter().cloned())
 		.into_iter()
-		.take(DIFFICULTY_ADJUST_WINDOW as usize)
+		.take(DIFFICULTY_ADJUST_WINDOW_ORIGIN as usize)
 		.collect();
 
 	let sum_entries: Vec<DiffBlock> = sum_blocks
@@ -177,9 +177,9 @@ fn get_diff_stats(chain_sim: &Vec<HeaderInfo>) -> DiffStats {
 	DiffStats {
 		height: tip_height as u64,
 		last_blocks: diff_entries,
-		average_block_time: block_time_sum / (DIFFICULTY_ADJUST_WINDOW),
-		average_difficulty: block_diff_sum / (DIFFICULTY_ADJUST_WINDOW),
-		window_size: DIFFICULTY_ADJUST_WINDOW,
+		average_block_time: block_time_sum / (DIFFICULTY_ADJUST_WINDOW_ORIGIN),
+		average_difficulty: block_diff_sum / (DIFFICULTY_ADJUST_WINDOW_ORIGIN),
+		window_size: DIFFICULTY_ADJUST_WINDOW_ORIGIN,
 		block_time_sum: block_time_sum,
 		block_diff_sum: block_diff_sum,
 		latest_ts: latest_ts,
@@ -230,7 +230,10 @@ fn print_chain_sim(chain_sim: Vec<(HeaderInfo, DiffStats)>) {
 	let mut last_time = 0;
 	let mut first = true;
 	println!("Constants");
-	println!("DIFFICULTY_ADJUST_WINDOW: {}", DIFFICULTY_ADJUST_WINDOW);
+	println!(
+		"DIFFICULTY_ADJUST_WINDOW: {}",
+		DIFFICULTY_ADJUST_WINDOW_ORIGIN
+	);
 	println!("BLOCK_TIME_WINDOW: {}", BLOCK_TIME_WINDOW);
 	println!("CLAMP_FACTOR: {}", CLAMP_FACTOR);
 	println!("DAMP_FACTOR: {}", DIFFICULTY_DAMP_FACTOR);
@@ -293,7 +296,7 @@ fn test_reward() {
 	global::set_local_chain_type(global::ChainTypes::Mainnet);
 
 	//before third_hard_fork
-	let before_third_hard_fork_height_reward = REWARD;
+	let before_third_hard_fork_height_reward = REWARD_ORIGIN;
 	assert_eq!(
 		reward(global::third_hard_fork_height() - 1, 0),
 		before_third_hard_fork_height_reward
@@ -603,9 +606,9 @@ fn next_target_adjustment() {
 	let hinext = next_difficulty(
 		1,
 		repeat(
-			BLOCK_TIME_SEC / 4,
+			BLOCK_TIME_SEC_ORIGIN / 4,
 			hi.clone(),
-			DIFFICULTY_ADJUST_WINDOW,
+			BLOCK_TIME_SEC_ORIGIN,
 			None,
 		),
 	);
@@ -616,10 +619,14 @@ fn next_target_adjustment() {
 	assert_ne!(hinext.secondary_scaling, MIN_DIFFICULTY as u32);
 
 	// just enough data, right interval, should stay constant
-	let just_enough = DIFFICULTY_ADJUST_WINDOW + 1;
+	let just_enough = DIFFICULTY_ADJUST_WINDOW_ORIGIN + 1;
 	hi.difficulty = Difficulty::from_num(10000);
 	assert_eq!(
-		next_difficulty(1, repeat(BLOCK_TIME_SEC, hi.clone(), just_enough, None)).difficulty,
+		next_difficulty(
+			1,
+			repeat(BLOCK_TIME_SEC_ORIGIN, hi.clone(), just_enough, None)
+		)
+		.difficulty,
 		Difficulty::from_num(10000)
 	);
 
@@ -631,13 +638,13 @@ fn next_target_adjustment() {
 
 	// checking averaging works
 	hi.difficulty = Difficulty::from_num(500);
-	let sec = DIFFICULTY_ADJUST_WINDOW / 2;
-	let mut s1 = repeat(BLOCK_TIME_SEC, hi.clone(), sec, Some(cur_time));
+	let sec = DIFFICULTY_ADJUST_WINDOW_ORIGIN / 2;
+	let mut s1 = repeat(BLOCK_TIME_SEC_ORIGIN, hi.clone(), sec, Some(cur_time));
 	let mut s2 = repeat_offs(
-		cur_time + (sec * BLOCK_TIME_SEC) as u64,
-		BLOCK_TIME_SEC,
+		cur_time + (sec * BLOCK_TIME_SEC_ORIGIN) as u64,
+		BLOCK_TIME_SEC_ORIGIN,
 		1500,
-		DIFFICULTY_ADJUST_WINDOW / 2,
+		DIFFICULTY_ADJUST_WINDOW_ORIGIN / 2,
 	);
 	s2.append(&mut s1);
 	assert_eq!(

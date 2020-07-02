@@ -39,7 +39,7 @@ where
 		keychain,
 		&ProofBuilder::new(keychain),
 		key_id,
-		0,
+		prev.height + 1,
 		fee,
 		false,
 	)
@@ -107,8 +107,8 @@ fn mine_block_with_nrd_kernel_and_nrd_feature_enabled() {
 		},
 		None,
 		vec![
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
-			build::output(consensus::REWARD - 20000, key_id2.clone()),
+			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
+			build::output(consensus::REWARD_ORIGIN - 20000, key_id2.clone()),
 		],
 		&keychain,
 		&pb,
@@ -156,8 +156,8 @@ fn mine_invalid_block_with_nrd_kernel_and_nrd_feature_enabled_before_hf() {
 		},
 		None,
 		vec![
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
-			build::output(consensus::REWARD - 20000, key_id2.clone()),
+			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
+			build::output(consensus::REWARD_ORIGIN - 20000, key_id2.clone()),
 		],
 		&keychain,
 		&pb,

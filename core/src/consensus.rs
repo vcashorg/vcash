@@ -189,20 +189,20 @@ pub const MAX_BLOCK_WEIGHT: usize = 100_000;
 /// Support issue token tx height
 pub const SUPPORT_TOKEN_HEIGHT: u64 = 45_120;
 
-/// Testing support issue token tx height
+/// Floonet support issue token tx height
 pub const FLOONET_SUPPORT_TOKEN_HEIGHT: u64 = 160;
 
 /// Support header without Cuckoo Cycle Proof
 pub const REFACTOR_HEADER_HEIGHT: u64 = 45_120 + 720;
 
-/// Testing support header without Cuckoo Cycle Proof
+/// Floonet support header without Cuckoo Cycle Proof
 pub const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
 
-/// Support header without Cuckoo Cycle Proof
+/// Support solution for block withholding attack and Adjust BLOCK_TIME_SEC
 pub const THIRD_HARD_FORK_HEIGHT: u64 = 80_640;
 
-/// Testing support header without Cuckoo Cycle Proof
-pub const FLOONET_THIRD_HARD_FORK_HEIGHT: u64 = 5_200;
+/// Floonet support solution for block withholding attack and Adjust BLOCK_TIME_SEC
+pub const FLOONET_THIRD_HARD_FORK_HEIGHT: u64 = 200;
 
 /// AutomatedTesting and UserTesting HF3 height.
 pub const TESTING_THIRD_HARD_FORK: u64 = 9;

@@ -152,7 +152,7 @@ fn block_with_nrd_kernel_pre_post_hf3() {
 		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
 	);
 
-	// Block is valid at header version 4 (at HF height) if it contains an NRD kernel.
+	// Block is valid at header version 3 (at HF height) if it contains an NRD kernel.
 	assert_eq!(b.header.height, TESTING_THIRD_HARD_FORK);
 	assert_eq!(b.header.version, HeaderVersion(3));
 	assert!(b
@@ -173,7 +173,7 @@ fn block_with_nrd_kernel_pre_post_hf3() {
 		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
 	);
 
-	// Block is valid at header version 4 if it contains an NRD kernel.
+	// Block is valid at header version 3 if it contains an NRD kernel.
 	assert_eq!(b.header.version, HeaderVersion(3));
 	assert!(b
 		.validate(&BlindingFactor::zero(), verifier_cache())
