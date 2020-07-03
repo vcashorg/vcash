@@ -202,7 +202,7 @@ pub const FLOONET_REFACTOR_HEADER_HEIGHT: u64 = 170;
 pub const THIRD_HARD_FORK_HEIGHT: u64 = 80_640;
 
 /// Floonet support solution for block withholding attack and Adjust BLOCK_TIME_SEC
-pub const FLOONET_THIRD_HARD_FORK_HEIGHT: u64 = 200;
+pub const FLOONET_THIRD_HARD_FORK_HEIGHT: u64 = 864;
 
 /// AutomatedTesting and UserTesting HF3 height.
 pub const TESTING_THIRD_HARD_FORK: u64 = 9;

@@ -51,8 +51,9 @@ impl Protocol {
 	}
 
 	fn check_protocol_version(&self) -> Result<(), Error> {
+		let minimum_compatible_protocol_version = if global::is_floonet() { 3 } else { 2 };
 		//if self.adapter.total_height()? >= global::support_token_height() {
-		if self.peer_info.version.value() < 2 {
+		if self.peer_info.version.value() < minimum_compatible_protocol_version {
 			return Err(Error::LowProtocolVersion);
 		}
 		//}
