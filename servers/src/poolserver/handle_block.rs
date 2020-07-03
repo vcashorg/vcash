@@ -59,7 +59,8 @@ pub struct BlockHandler {
 	key_id: Arc<RwLock<Option<Identifier>>>,
 	waiting_bitming_block: Arc<RwLock<Option<(Block, u64)>>>,
 	mining_blocks: Arc<RwLock<HashMap<Hash, Block>>>,
-	notify_urls: Arc<Vec<String>>,
+	notify_urls: Vec<String>,
+	notify_urls_v2: Vec<String>,
 }
 
 impl BlockHandler {
@@ -70,6 +71,7 @@ impl BlockHandler {
 		stop_state: Arc<StopState>,
 		wallet_listener_url: Option<String>,
 		notify_urls: Vec<String>,
+		notify_urls_v2: Vec<String>,
 	) -> BlockHandler {
 		BlockHandler {
 			chain,
@@ -81,7 +83,8 @@ impl BlockHandler {
 			key_id: Arc::new(RwLock::new(None)),
 			waiting_bitming_block: Arc::new(RwLock::new(None)),
 			mining_blocks: Arc::new(RwLock::new(HashMap::new())),
-			notify_urls: Arc::new(notify_urls),
+			notify_urls,
+			notify_urls_v2,
 		}
 	}
 
@@ -313,6 +316,29 @@ impl BlockHandler {
 				}
 				Err(_) => {
 					error!("PoolCenter nofity pool failed getting bitmining block");
+				}
+			}
+		}
+
+		if self.notify_urls_v2.len() > 0 {
+			let new_block = self.get_bitmining_block_v2(vec![]);
+			match new_block {
+				Ok(job_info) => {
+					warn!("PoolCenter notify pool v2 at height {}", job_info.height);
+					let mut iter = self.notify_urls_v2.iter();
+					while let Some(item) = iter.next() {
+						let res = api::client::post_no_ret(item.as_str(), None, &job_info);
+						if res.is_err() {
+							error!(
+								"PoolCenter nofity pool v2 failed at {}, reason {}",
+								item,
+								res.err().unwrap()
+							);
+						}
+					}
+				}
+				Err(_) => {
+					error!("PoolCenter nofity pool v2 failed getting bitmining block");
 				}
 			}
 		}

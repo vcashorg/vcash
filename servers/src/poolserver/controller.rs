@@ -165,7 +165,7 @@ impl Handler for OwnerAPIHandler {
 
 				let query = match req.uri().query() {
 					Some(q) => q,
-					None => return response(StatusCode::BAD_REQUEST, ""),
+					None => "",
 				};
 
 				let params = QueryParams::from(query);

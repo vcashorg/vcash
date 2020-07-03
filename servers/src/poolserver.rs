@@ -21,6 +21,7 @@ pub fn start_poolserver_service(
 		stop_state,
 		pool_server_config.wallet_listener_url,
 		pool_server_config.chain_notify_url,
+		pool_server_config.chain_notify_url_v2.unwrap_or(vec![]),
 	);
 
 	let result =

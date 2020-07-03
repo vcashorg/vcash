@@ -263,6 +263,14 @@ fn comments() -> HashMap<String, String> {
 	);
 
 	retval.insert(
+		"chain_notify_url_v2".to_string(),
+		"
+#the addresses which pool server will post v2 mine block param when chain height grows
+"
+		.to_string(),
+	);
+
+	retval.insert(
 		"[server.p2p_config]".to_string(),
 		"
 #########################################

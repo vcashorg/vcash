@@ -283,6 +283,9 @@ pub struct PoolServerConfig {
 
 	/// Address which pool server will post new mine block param when chain height grows
 	pub chain_notify_url: Vec<String>,
+
+	/// v2 address which pool server will post new mine block param when chain height grows
+	pub chain_notify_url_v2: Option<Vec<String>>,
 }
 
 impl Default for PoolServerConfig {
@@ -292,6 +295,7 @@ impl Default for PoolServerConfig {
 			pool_server_addr: "127.0.0.1:3517".to_string(),
 			wallet_listener_url: Some("http://127.0.0.1:3515".to_string()),
 			chain_notify_url: Vec::new(),
+			chain_notify_url_v2: Some(Vec::new()),
 		}
 	}
 }
