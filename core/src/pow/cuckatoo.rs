@@ -314,6 +314,7 @@ impl CuckatooContext {
 #[cfg(test)]
 mod test {
 	use super::*;
+	use crate::global;
 
 	// Cuckatoo 29 Solution for Header [0u8;80] - nonce 20
 	static V1_29: [u64; 42] = [

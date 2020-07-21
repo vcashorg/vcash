@@ -118,6 +118,7 @@ impl PoWContext for CuckarooContext {
 #[cfg(test)]
 mod test {
 	use super::*;
+	use crate::global;
 
 	// empty header, nonce 71
 	static V1_19_HASH: [u64; 4] = [
