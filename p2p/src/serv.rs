@@ -116,6 +116,10 @@ impl Server {
 					}
 					match self.handle_new_peer(stream) {
 						Err(Error::ConnectionClose) => debug!("shutting down, ignoring a new peer"),
+						Err(Error::LowProtocolVersion) => debug!(
+							"Error accepting peer {} for low protocol version",
+							peer_addr.to_string()
+						),
 						Err(e) => {
 							debug!("Error accepting peer {}: {:?}", peer_addr.to_string(), e);
 							let _ = self.peers.add_banned(peer_addr, ReasonForBan::BadHandshake);
