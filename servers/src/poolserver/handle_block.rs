@@ -217,8 +217,13 @@ impl BlockHandler {
 				{
 					*self.waiting_bitming_block.write() = Some((b, fee));
 				}
+				let handler = self.clone();
 				if need_notify_pool {
-					self.notify_pool();
+					let _ = thread::Builder::new()
+						.name("height_notify".to_string())
+						.spawn(move || {
+							handler.notify_pool();
+						});
 					need_notify_pool = false;
 				}
 
@@ -315,7 +320,7 @@ impl BlockHandler {
 					}
 				}
 				Err(_) => {
-					error!("PoolCenter nofity pool failed getting bitmining block");
+					error!("PoolCenter notify pool failed getting mining block");
 				}
 			}
 		}
@@ -338,7 +343,7 @@ impl BlockHandler {
 					}
 				}
 				Err(_) => {
-					error!("PoolCenter nofity pool v2 failed getting bitmining block");
+					error!("PoolCenter notify pool v2 failed getting mining block");
 				}
 			}
 		}
