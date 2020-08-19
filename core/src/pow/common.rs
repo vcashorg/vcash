@@ -29,6 +29,7 @@ use crate::num_bigint::BigUint;
 use crate::pow::num::FromPrimitive;
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
+use util::ToHex;
 
 /// Operations needed for edge type (going to be u32 or u64)
 pub trait EdgeType: PrimInt + ToPrimitive + Mul + BitOrAssign + Hash {}
@@ -289,6 +290,13 @@ pub fn pow_hash_after_mask(hash: BitHash, mask: BitHash) -> BitHash {
 	return BitHash::from_vec(new_bytes.as_ref());
 }
 
+/// convert hash to big endian hex format
+pub fn hash_to_big_endian_hex(hash: BitHash) -> String {
+	let mut hash_data = hash.to_vec();
+	hash_data.reverse();
+	hash_data.to_hex()
+}
+
 lazy_static! {
 	///Miner bits and it`s corresponding difficulty value of 2^N table.
 	pub static ref BITSTODIFF2NTABLE:HashMap<u32, i32> = {
@@ -365,7 +373,6 @@ lazy_static! {
 mod test {
 	use super::*;
 	use crate::core::hash::ZERO_HASH;
-	use util::ToHex;
 
 	#[test]
 	fn pow_hash_after_mask_test() {
@@ -408,57 +415,57 @@ mod test {
 	fn random_mask_test() {
 		// diff 2^0, hash = "00000000ffff0000000000000000000000000000000000000000000000000000"
 		let bits_0 = 486604799;
-		let random_0 = random_mask(bits_0).unwrap().to_hex();
-		let random_str_0 = random_0.as_str();
-		assert!(random_str_0.ends_with("0000000000"));
+		let random_0 = random_mask(bits_0).unwrap();
+		let random_str_0 = hash_to_big_endian_hex(random_0);
+		assert!(random_str_0.starts_with("0000000000"));
 
 		// diff 2^10, hash = "00000000003fffc0000000000000000000000000000000000000000000000000"
 		let bits_1 = 457179072;
-		let random_1 = random_mask(bits_1).unwrap().to_hex();
-		let random_str_1 = random_1.as_str();
-		assert!(random_str_1.ends_with("000000000000"));
+		let random_1 = random_mask(bits_1).unwrap();
+		let random_str_1 = hash_to_big_endian_hex(random_1);
+		assert!(random_str_1.starts_with("000000000000"));
 
 		// diff 2^20, hash = "0000000000000ffff00000000000000000000000000000000000000000000000"
 		let bits_2 = 437256176;
-		let random_2 = random_mask(bits_2).unwrap().to_hex();
-		let random_str_2 = random_2.as_str();
-		assert!(random_str_2.ends_with("00000000000000"));
+		let random_2 = random_mask(bits_2).unwrap();
+		let random_str_2 = hash_to_big_endian_hex(random_2);
+		assert!(random_str_2.starts_with("00000000000000"));
 
 		// diff 2^30, hash = "0000000000000003fffc00000000000000000000000000000000000000000000"
 		let bits_3 = 419692540;
-		let random_3 = random_mask(bits_3).unwrap().to_hex();
-		let random_str_3 = random_3.as_str();
-		assert!(random_str_3.ends_with("0000000000000000"));
+		let random_3 = random_mask(bits_3).unwrap();
+		let random_str_3 = hash_to_big_endian_hex(random_3);
+		assert!(random_str_3.starts_with("0000000000000000"));
 
 		// diff 2^40, hash = "000000000000000000ffff000000000000000000000000000000000000000000"
 		let bits_4 = 402718719;
-		let random_4 = random_mask(bits_4).unwrap().to_hex();
-		let random_str_4 = random_4.as_str();
-		assert!(random_str_4.ends_with("00000000000000000000"));
+		let random_4 = random_mask(bits_4).unwrap();
+		let random_str_4 = hash_to_big_endian_hex(random_4);
+		assert!(random_str_4.starts_with("00000000000000000000"));
 
 		// diff 2^50, hash = "000000000000000000003fffc000000000000000000000000000000000000000"
 		let bits_5 = 373292992;
-		let random_5 = random_mask(bits_5).unwrap().to_hex();
-		let random_str_5 = random_5.as_str();
-		assert!(random_str_5.ends_with("0000000000000000000000"));
+		let random_5 = random_mask(bits_5).unwrap();
+		let random_str_5 = hash_to_big_endian_hex(random_5);
+		assert!(random_str_5.starts_with("0000000000000000000000"));
 
 		// diff 2^60, hash = "00000000000000000000000ffff0000000000000000000000000000000000000"
 		let bits_6 = 353370096;
-		let random_6 = random_mask(bits_6).unwrap().to_hex();
-		let random_str_6 = random_6.as_str();
-		assert!(random_str_6.ends_with("000000000000000000000000"));
+		let random_6 = random_mask(bits_6).unwrap();
+		let random_str_6 = hash_to_big_endian_hex(random_6);
+		assert!(random_str_6.starts_with("000000000000000000000000"));
 
 		// hash = "00000000000005db8b0000000000000000000000000000000000000000000000"
 		let bits_7 = 436591499;
-		let random_7 = random_mask(bits_7).unwrap().to_hex();
-		let random_str_7 = random_7.as_str();
-		assert!(random_str_7.ends_with("00000000000000"));
+		let random_7 = random_mask(bits_7).unwrap();
+		let random_str_7 = hash_to_big_endian_hex(random_7);
+		assert!(random_str_7.starts_with("00000000000000"));
 
 		// hash = "0000000000000000896c00000000000000000000000000000000000000000000"
 		let bits_8 = 419465580;
-		let random_8 = random_mask(bits_8).unwrap().to_hex();
-		let random_str_8 = random_8.as_str();
-		assert!(random_str_8.ends_with("000000000000000000"));
+		let random_8 = random_mask(bits_8).unwrap();
+		let random_str_8 = hash_to_big_endian_hex(random_8);
+		assert!(random_str_8.starts_with("000000000000000000"));
 	}
 
 	#[test]

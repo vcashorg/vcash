@@ -18,6 +18,7 @@ use crate::chain;
 use crate::core::core::hash::Hashed;
 use crate::core::core::merkle_proof::MerkleProof;
 use crate::core::core::{KernelFeatures, TokenKernelFeatures, TokenKey, TokenTxKernel, TxKernel};
+use crate::core::pow::{hash_to_big_endian_hex, pow_hash_after_mask};
 use crate::core::{core, ser};
 use crate::p2p;
 use crate::util::secp::pedersen;
@@ -709,7 +710,7 @@ impl BlockHeaderInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockHeaderPrintable {
-	// Hash
+	/// Block header Hash
 	pub hash: String,
 	/// Version of the block
 	pub version: u16,
@@ -743,22 +744,18 @@ pub struct BlockHeaderPrintable {
 	pub bits: u32,
 	/// diff mask
 	pub mask: String,
-	/// Nonce increment used to mine this block.
-	pub nonce: u64,
-	/// Size of the cuckoo graph
-	pub edge_bits: u8,
-	/// Nonces of the cuckoo solution
-	pub cuckoo_solution: Vec<u64>,
-	/// Total accumulated difficulty since genesis block
-	pub total_difficulty: u64,
-	/// Variable difficulty scaling factor for secondary proof of work
-	pub secondary_scaling: u32,
+	/// bitcoin header hash
+	pub btc_header_hash: String,
+	/// pow hash
+	pub pow_hash: String,
 	/// Total kernel offset since genesis block
 	pub total_kernel_offset: String,
 }
 
 impl BlockHeaderPrintable {
 	pub fn from_header(header: &core::BlockHeader) -> BlockHeaderPrintable {
+		let btc_header_hash = header.btc_pow.aux_header.dhash();
+		let pow_hash = pow_hash_after_mask(btc_header_hash, header.mask);
 		BlockHeaderPrintable {
 			hash: header.hash().to_hex(),
 			version: header.version.into(),
@@ -776,12 +773,9 @@ impl BlockHeaderPrintable {
 			token_issue_proof_root: header.token_issue_proof_root.to_hex(),
 			token_kernel_root: header.token_kernel_root.to_hex(),
 			bits: header.bits,
-			mask: header.mask.to_hex(),
-			nonce: header.pow.nonce,
-			edge_bits: header.pow.edge_bits(),
-			cuckoo_solution: header.pow.proof.nonces.clone(),
-			total_difficulty: header.pow.total_difficulty.to_num(),
-			secondary_scaling: header.pow.secondary_scaling,
+			mask: hash_to_big_endian_hex(header.mask),
+			btc_header_hash: hash_to_big_endian_hex(btc_header_hash),
+			pow_hash: hash_to_big_endian_hex(pow_hash),
 			total_kernel_offset: header.total_kernel_offset.to_hex(),
 		}
 	}
@@ -842,8 +836,6 @@ pub struct BlockPrintable {
 	pub token_outputs: Vec<OutputPrintable>,
 	/// A printable version of the transaction kernels
 	pub token_kernels: Vec<TokenTxKernelPrintable>,
-	///aux data for verify diffcuilty
-	pub aux_data: BlockAuxHeaderPrintable,
 }
 
 impl BlockPrintable {
@@ -912,7 +904,6 @@ impl BlockPrintable {
 			token_inputs,
 			token_outputs,
 			token_kernels,
-			aux_data: BlockAuxHeaderPrintable::from_block_aux_date(&block.aux_data),
 		})
 	}
 }
