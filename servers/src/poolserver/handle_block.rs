@@ -11,7 +11,7 @@ use crate::api;
 use crate::chain;
 use crate::core::consensus::reward;
 use crate::core::core::hash::{Hash, Hashed};
-use crate::core::core::{Block, BlockHeader};
+use crate::core::core::Block;
 use crate::core::core::{Output, TxKernel};
 use crate::core::libtx::secp_ser;
 use crate::core::libtx::ProofBuilder;
@@ -188,117 +188,57 @@ impl BlockHandler {
 		Ok(())
 	}
 
-	pub fn mining_loop(&self) {
-		info!("(PoolCenter Starting miner loop.",);
+	pub fn run_loop(&self) {
+		info!("(PoolCenter Starting run loop.",);
 		let mut need_notify_pool = false;
 		loop {
 			if self.stop_state.is_stopped() {
 				break;
 			}
 
-			trace!("in miner loop. key_id: {:?}", self.key_id);
+			trace!("in run loop. key_id: {:?}", self.key_id);
 
 			// get the latest chain state and build a block on top of it
-			let head = self.chain.head_header().unwrap();
-			let mut latest_hash = self.chain.head().unwrap().last_block_h;
-			let saved_latest_hash = latest_hash.clone();
+			let head = self.chain.head().unwrap();
+			let latest_hash = head.last_block_h;
 
-			let (mut b, fee) = self.get_block();
+			let (b, fee) = self.get_block();
+			{
+				*self.waiting_bitming_block.write() = Some((b, fee));
+			}
 
-			let sol = self.inner_mining_loop(&mut b, &head, &mut latest_hash);
-
-			// we found a solution
-			if sol {
-				debug!(
-					"PoolCenter Found valid proof of work, block {} (prev_root {}).",
-					b.hash(),
-					b.header.prev_root,
-				);
-				{
-					*self.waiting_bitming_block.write() = Some((b, fee));
-				}
+			if need_notify_pool {
 				let handler = self.clone();
-				if need_notify_pool {
-					let _ = thread::Builder::new()
-						.name("height_notify".to_string())
-						.spawn(move || {
-							handler.notify_pool();
-						});
-					need_notify_pool = false;
-				}
-
-				//sleep 20s, if chain head change break immediately
-				let sleep_deadline = Utc::now().timestamp() + 20;
-				while Utc::now().timestamp() < sleep_deadline {
-					let new_header_hash = self.chain.head().unwrap().last_block_h;
-					if head.hash() != new_header_hash {
-						break;
-					}
-					thread::sleep(Duration::from_millis(1));
-				}
+				let notify_height = head.height + 1;
+				let _ = thread::Builder::new()
+					.name("height_notify".to_string())
+					.spawn(move || {
+						handler.notify_pool(notify_height);
+					});
+				need_notify_pool = false;
 			}
 
-			let new_header_hash = self.chain.head().unwrap().last_block_h;
-			if saved_latest_hash != new_header_hash {
-				self.mining_blocks.write().clear();
-				need_notify_pool = true;
+			//sleep 20s, if chain head change break immediately
+			let sleep_deadline = Utc::now().timestamp() + 20;
+			while Utc::now().timestamp() < sleep_deadline {
+				let new_header_hash = self.chain.head().unwrap().last_block_h;
+				if latest_hash != new_header_hash {
+					need_notify_pool = true;
+					break;
+				}
+				thread::sleep(Duration::from_millis(50));
 			}
 		}
 
-		warn!("PoolCenter mining loop exit.");
+		warn!("PoolCenter run loop exit.");
 	}
 
-	fn inner_mining_loop(&self, b: &mut Block, head: &BlockHeader, latest_hash: &mut Hash) -> bool {
-		// look for a pow for at most 2 sec on the same block (to give a chance to new
-		// transactions) and as long as the head hasn't changed
-		let deadline = Utc::now().timestamp_millis() + 3_i64 * 1000;
-
-		debug!(
-			"PoolCenter Mining Cuckoo{} for max 3s on {} @ {} [{}].",
-			global::min_edge_bits(),
-			b.header.total_difficulty(),
-			b.header.height,
-			latest_hash
-		);
-		let mut iter_count = 0;
-
-		while head.hash() == *latest_hash && Utc::now().timestamp() < deadline {
-			let mut ctx = global::create_pow_context::<u32>(
-				head.height,
-				global::min_edge_bits(),
-				global::proofsize(),
-				10,
-			)
-			.unwrap();
-			ctx.set_header_nonce(b.header.pre_pow(), None, true)
-				.unwrap();
-			if let Ok(proofs) = ctx.find_cycles() {
-				b.header.pow.proof = proofs[0].clone();
-				let proof_diff = b.header.pow.to_difficulty(b.header.height);
-				if proof_diff >= (b.header.total_difficulty() - head.total_difficulty()) {
-					debug!(
-						"PoolServer found solution for height = {} before deadline in {}, iter_count = {}",b.header.height,
-						deadline - Utc::now().timestamp_millis(), iter_count,
-					);
-					return true;
-				}
-			}
-
-			b.header.pow.nonce += 1;
-			*latest_hash = self.chain.head().unwrap().last_block_h;
-			iter_count += 1;
-		}
-
-		debug!("PoolCenter No solution found in 3s",);
-		false
-	}
-
-	fn notify_pool(&self) {
+	fn notify_pool(&self, height: u64) {
+		info!("PoolCenter notify pool at height {}", height);
 		if self.notify_urls.len() > 0 {
 			let new_block = self.get_bitmining_block();
 			match new_block {
 				Ok((block, fee)) => {
-					warn!("PoolCenter notify pool at height {}", block.header.height);
 					let info = JobInfo {
 						height: block.header.height,
 						cur_hash: block.header.hash().to_hex(),
@@ -329,7 +269,6 @@ impl BlockHandler {
 			let new_block = self.get_bitmining_block_v2(vec![]);
 			match new_block {
 				Ok(job_info) => {
-					warn!("PoolCenter notify pool v2 at height {}", job_info.height);
 					let mut iter = self.notify_urls_v2.iter();
 					while let Some(item) = iter.next() {
 						let res = api::client::post_no_ret(item.as_str(), None, &job_info);

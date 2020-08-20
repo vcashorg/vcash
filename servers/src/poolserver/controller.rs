@@ -39,7 +39,7 @@ pub fn start_pool_server(
 	let _ = thread::Builder::new()
 		.name("poolserver_miner".to_string())
 		.spawn(move || {
-			handler.mining_loop();
+			handler.run_loop();
 		});
 	Ok(())
 }
