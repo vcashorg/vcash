@@ -184,7 +184,7 @@ where
 
 			debug!("Building output: {}, {:?}", value, commit);
 
-			let rproof = proof::create(
+			let proof = proof::create(
 				build.keychain,
 				build.builder,
 				value,
@@ -195,11 +195,7 @@ where
 			)?;
 
 			Ok((
-				tx.with_output(Output {
-					features: OutputFeatures::Plain,
-					commit,
-					proof: rproof,
-				}),
+				tx.with_output(Output::new(OutputFeatures::Plain, commit, proof)),
 				sum.add_key_id(key_id.to_value_path(value)),
 				token_sum,
 			))
@@ -235,7 +231,7 @@ where
 				commit
 			);
 
-			let rproof = proof::create(
+			let proof = proof::create(
 				build.keychain,
 				build.builder,
 				value,
@@ -245,16 +241,13 @@ where
 				None,
 			)?;
 
+			let features = match is_token_issue {
+				true => OutputFeatures::TokenIssue,
+				false => OutputFeatures::Token,
+			};
+
 			Ok((
-				tx.with_token_output(TokenOutput {
-					features: match is_token_issue {
-						true => OutputFeatures::TokenIssue,
-						false => OutputFeatures::Token,
-					},
-					token_type,
-					commit,
-					proof: rproof,
-				}),
+				tx.with_token_output(TokenOutput::new(features, token_type, commit, proof)),
 				sum,
 				token_sum.add_key_id(key_id.to_value_path(value)),
 			))
@@ -297,7 +290,7 @@ where
 ///
 pub fn partial_transaction<K, B>(
 	tx: Transaction,
-	elems: Vec<Box<Append<K, B>>>,
+	elems: &[Box<Append<K, B>>],
 	keychain: &K,
 	builder: &B,
 ) -> Result<(Transaction, BlindingFactor, BlindingFactor), Error>
@@ -322,7 +315,7 @@ where
 pub fn transaction<K, B>(
 	features: KernelFeatures,
 	token_featrues: Option<TokenKernelFeatures>,
-	elems: Vec<Box<Append<K, B>>>,
+	elems: &[Box<Append<K, B>>],
 	keychain: &K,
 	builder: &B,
 ) -> Result<Transaction, Error>
@@ -349,7 +342,7 @@ where
 /// NOTE: Only used in tests (for convenience).
 /// Cannot recommend passing private excess around like this in the real world.
 pub fn transaction_with_kernel<K, B>(
-	elems: Vec<Box<Append<K, B>>>,
+	elems: &[Box<Append<K, B>>],
 	kernel: TxKernel,
 	token_featrues: Option<TokenKernelFeatures>,
 	excess: BlindingFactor,
@@ -373,7 +366,7 @@ where
 
 	if token_featrues.is_some() {
 		let mut token_kern = TokenTxKernel::with_features(token_featrues.unwrap());
-		token_kern.token_type = tx.token_outputs()[0].token_type.clone();
+		token_kern.token_type = tx.token_outputs()[0].token_type();
 		let token_blind_sum = ctx.keychain.blind_sum(&token_sum)?;
 		let token_msg = token_kern.msg_to_sign()?;
 		let token_key = token_blind_sum.secret_key(&keychain.secp())?;
@@ -426,7 +419,7 @@ mod test {
 		let tx = transaction(
 			KernelFeatures::Plain { fee: 2 },
 			None,
-			vec![input(10, key_id1), input(12, key_id2), output(20, key_id3)],
+			&[input(10, key_id1), input(12, key_id2), output(20, key_id3)],
 			&keychain,
 			&builder,
 		)
@@ -449,7 +442,7 @@ mod test {
 		let tx = transaction(
 			KernelFeatures::Plain { fee: 2 },
 			None,
-			vec![input(10, key_id1), input(12, key_id2), output(20, key_id3)],
+			&[input(10, key_id1), input(12, key_id2), output(20, key_id3)],
 			&keychain,
 			&builder,
 		)
@@ -471,7 +464,7 @@ mod test {
 		let tx = transaction(
 			KernelFeatures::Plain { fee: 4 },
 			None,
-			vec![input(6, key_id1), output(2, key_id2)],
+			&[input(6, key_id1), output(2, key_id2)],
 			&keychain,
 			&builder,
 		)

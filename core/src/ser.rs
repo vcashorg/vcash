@@ -71,6 +71,10 @@ pub enum Error {
 	DuplicateError,
 	/// Block header version (hard-fork schedule).
 	InvalidBlockVersion,
+	/// Unsupported protocol version
+	UnsupportedProtocolVersion,
+	/// Unexpected protocol version
+	UnexpectedProtocolVersion,
 }
 
 impl From<io::Error> for Error {
@@ -94,6 +98,8 @@ impl fmt::Display for Error {
 			Error::TooLargeReadErr => f.write_str("too large read"),
 			Error::HexError(ref e) => write!(f, "hex error {:?}", e),
 			Error::InvalidBlockVersion => f.write_str("invalid block version"),
+			Error::UnsupportedProtocolVersion => f.write_str("unsupported protocol version"),
+			Error::UnexpectedProtocolVersion => f.write_str("unexpected protocol version"),
 		}
 	}
 }
@@ -117,6 +123,8 @@ impl error::Error for Error {
 			Error::TooLargeReadErr => "too large read",
 			Error::HexError(_) => "hex error",
 			Error::InvalidBlockVersion => "invalid block version",
+			Error::UnsupportedProtocolVersion => "unsupported protocol version",
+			Error::UnexpectedProtocolVersion => "unexpected protocol version",
 		}
 	}
 }
@@ -128,6 +136,16 @@ pub enum SerializationMode {
 	Full,
 	/// Serialize the data that defines the object
 	Hash,
+}
+
+impl SerializationMode {
+	/// Hash mode?
+	pub fn is_hash_mode(&self) -> bool {
+		match self {
+			SerializationMode::Hash => true,
+			_ => false,
+		}
+	}
 }
 
 /// Implementations defined how different numbers and binary structures are
@@ -365,7 +383,7 @@ impl ProtocolVersion {
 	/// negotiation in the p2p layer. Connected peers will negotiate a suitable
 	/// protocol version for serialization/deserialization of p2p messages.
 	pub fn local() -> ProtocolVersion {
-		ProtocolVersion(PROTOCOL_VERSION)
+		PROTOCOL_VERSION
 	}
 
 	/// We need to specify a protocol version for our local database.
@@ -779,11 +797,9 @@ pub trait VerifySortedAndUnique<T> {
 	fn verify_sorted_and_unique(&self) -> Result<(), Error>;
 }
 
-impl<T: Hashed> VerifySortedAndUnique<T> for Vec<T> {
+impl<T: Ord> VerifySortedAndUnique<T> for Vec<T> {
 	fn verify_sorted_and_unique(&self) -> Result<(), Error> {
-		let hashes = self.iter().map(|item| item.hash()).collect::<Vec<_>>();
-		let pairs = hashes.windows(2);
-		for pair in pairs {
+		for pair in self.windows(2) {
 			if pair[0] > pair[1] {
 				return Err(Error::SortError);
 			} else if pair[0] == pair[1] {

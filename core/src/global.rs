@@ -17,11 +17,12 @@
 //! should be used sparingly.
 
 use crate::consensus::{
-	HeaderInfo, BLOCK_TIME_SEC_ORIGIN, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT_ORIGIN,
-	DIFFICULTY_ADJUST_WINDOW_ORIGIN, MAX_BLOCK_WEIGHT, STATE_SYNC_THRESHOLD,
-	TESTING_THIRD_HARD_FORK, YEAR_HEIGHT_ADJUSTED,
+	HeaderInfo, BLOCK_KERNEL_WEIGHT, BLOCK_OUTPUT_WEIGHT, BLOCK_TIME_SEC_ORIGIN, COINBASE_MATURITY,
+	CUT_THROUGH_HORIZON, DAY_HEIGHT_ORIGIN, DIFFICULTY_ADJUST_WINDOW_ORIGIN, MAX_BLOCK_WEIGHT,
+	STATE_SYNC_THRESHOLD, TESTING_THIRD_HARD_FORK, YEAR_HEIGHT_ADJUSTED,
 };
 use crate::pow::{self, new_cuckatoo_ctx, PoWContext};
+use crate::ser::ProtocolVersion;
 use std::cell::Cell;
 use util::OneTime;
 
@@ -42,7 +43,7 @@ use crate::consensus::{
 /// Note: We also use a specific (possible different) protocol version
 /// for both the backend database and MMR data files.
 /// This defines the p2p layer protocol version for this node.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion(4);
 
 /// Automated testing edge_bits
 pub const AUTOMATED_TESTING_MIN_EDGE_BITS: u8 = 9;
@@ -78,7 +79,7 @@ pub const TESTING_INITIAL_GRAPH_WEIGHT: u32 = 1;
 pub const TESTING_INITIAL_DIFFICULTY: u64 = 1;
 
 /// Testing max_block_weight (artifically low, just enough to support a few txs).
-pub const TESTING_MAX_BLOCK_WEIGHT: usize = 250;
+pub const TESTING_MAX_BLOCK_WEIGHT: u64 = 250;
 
 /// If a peer's last updated difficulty is 2 hours ago and its difficulty's lower than ours,
 /// we're sure this peer is a stuck node, and we will kick out such kind of stuck peers.
@@ -352,13 +353,19 @@ pub fn initial_graph_weight() -> u32 {
 }
 
 /// Maximum allowed block weight.
-pub fn max_block_weight() -> usize {
+pub fn max_block_weight() -> u64 {
 	match get_chain_type() {
 		ChainTypes::AutomatedTesting => TESTING_MAX_BLOCK_WEIGHT,
 		ChainTypes::UserTesting => TESTING_MAX_BLOCK_WEIGHT,
 		ChainTypes::Floonet => MAX_BLOCK_WEIGHT,
 		ChainTypes::Mainnet => MAX_BLOCK_WEIGHT,
 	}
+}
+
+/// Maximum allowed transaction weight (1 weight unit ~= 32 bytes)
+pub fn max_tx_weight() -> u64 {
+	let coinbase_weight = BLOCK_OUTPUT_WEIGHT + BLOCK_KERNEL_WEIGHT;
+	max_block_weight().saturating_sub(coinbase_weight) as u64
 }
 
 /// Horizon at which we can cut-through and do full local pruning

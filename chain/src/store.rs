@@ -145,7 +145,7 @@ impl ChainStore {
 	/// Get PMMR pos for the given output commitment.
 	pub fn get_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
 		match self.get_output_pos_height(commit)? {
-			Some((pos, _)) => Ok(pos),
+			Some(pos) => Ok(pos.pos),
 			None => Err(Error::NotFoundErr(format!(
 				"Output position for: {:?}",
 				commit
@@ -156,7 +156,7 @@ impl ChainStore {
 	/// Get PMMR pos for the given token output commitment.
 	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
 		match self.get_token_output_pos_height(commit)? {
-			Some((pos, _)) => Ok(pos),
+			Some(pos) => Ok(pos.pos),
 			None => Err(Error::NotFoundErr(format!(
 				"Token Output position for: {:?}",
 				commit
@@ -165,7 +165,7 @@ impl ChainStore {
 	}
 
 	/// Get PMMR pos and block height for the given output commitment.
-	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<Option<(u64, u64)>, Error> {
+	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<Option<CommitPos>, Error> {
 		self.db.get_ser(&to_key(OUTPUT_POS_PREFIX, commit))
 	}
 
@@ -173,7 +173,7 @@ impl ChainStore {
 	pub fn get_token_output_pos_height(
 		&self,
 		commit: &Commitment,
-	) -> Result<Option<(u64, u64)>, Error> {
+	) -> Result<Option<CommitPos>, Error> {
 		self.db.get_ser(&to_key(TOKEN_COMMIT_POS_PREFIX, commit))
 	}
 
@@ -245,22 +245,30 @@ impl<'a> Batch<'a> {
 	/// Save the block to the db.
 	/// Note: the block header is not saved to the db here, assumes this has already been done.
 	pub fn save_block(&self, b: &Block) -> Result<(), Error> {
+		debug!(
+			"save_block: {} at {} ({} -> v{})",
+			b.header.hash(),
+			b.header.height,
+			b.inputs().version_str(),
+			self.db.protocol_version(),
+		);
 		self.db.put_ser(&to_key(BLOCK_PREFIX, b.hash())[..], b)?;
 		Ok(())
 	}
 
 	/// We maintain a "spent" index for each full block to allow the output_pos
 	/// to be easily reverted during rewind.
-	pub fn save_spent_index(&self, h: &Hash, spent: &Vec<CommitPos>) -> Result<(), Error> {
-		self.db.put_ser(&to_key(BLOCK_SPENT_PREFIX, h)[..], spent)?;
+	pub fn save_spent_index(&self, h: &Hash, spent: &[CommitPos]) -> Result<(), Error> {
+		self.db
+			.put_ser(&to_key(BLOCK_SPENT_PREFIX, h)[..], &spent.to_vec())?;
 		Ok(())
 	}
 
 	/// We maintain a "spent" index for each full block to allow the token_output_pos
 	/// to be easily reverted during rewind.
-	pub fn save_spent_token_index(&self, h: &Hash, spent: &Vec<CommitPos>) -> Result<(), Error> {
+	pub fn save_spent_token_index(&self, h: &Hash, spent: &[CommitPos]) -> Result<(), Error> {
 		self.db
-			.put_ser(&to_key(TOKEN_BLOCK_SPENT_PREFIX, h)[..], spent)?;
+			.put_ser(&to_key(TOKEN_BLOCK_SPENT_PREFIX, h)[..], &spent.to_vec())?;
 		Ok(())
 	}
 
@@ -268,7 +276,7 @@ impl<'a> Batch<'a> {
 	/// Block may have been read using a previous protocol version but we do not actually care.
 	pub fn migrate_block(&self, b: &Block, version: ProtocolVersion) -> Result<(), Error> {
 		self.db
-			.put_ser_with_version(&to_key(BLOCK_PREFIX, &mut b.hash())[..], b, version)?;
+			.put_ser_with_version(&to_key(BLOCK_PREFIX, b.hash())[..], b, version)?;
 		Ok(())
 	}
 
@@ -306,25 +314,19 @@ impl<'a> Batch<'a> {
 	}
 
 	/// Save output_pos and block height to index.
-	pub fn save_output_pos_height(
-		&self,
-		commit: &Commitment,
-		pos: u64,
-		height: u64,
-	) -> Result<(), Error> {
+	pub fn save_output_pos_height(&self, commit: &Commitment, pos: CommitPos) -> Result<(), Error> {
 		self.db
-			.put_ser(&to_key(OUTPUT_POS_PREFIX, commit)[..], &(pos, height))
+			.put_ser(&to_key(OUTPUT_POS_PREFIX, commit)[..], &pos)
 	}
 
 	/// Save token_output_pos and block height to index.
 	pub fn save_token_output_pos_height(
 		&self,
 		commit: &Commitment,
-		pos: u64,
-		height: u64,
+		pos: CommitPos,
 	) -> Result<(), Error> {
 		self.db
-			.put_ser(&to_key(TOKEN_COMMIT_POS_PREFIX, commit)[..], &(pos, height))
+			.put_ser(&to_key(TOKEN_COMMIT_POS_PREFIX, commit)[..], &pos)
 	}
 
 	/// Delete the output_pos index entry for a spent output.
@@ -368,7 +370,7 @@ impl<'a> Batch<'a> {
 	/// Get output_pos from index.
 	pub fn get_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
 		match self.get_output_pos_height(commit)? {
-			Some((pos, _)) => Ok(pos),
+			Some(pos) => Ok(pos.pos),
 			None => Err(Error::NotFoundErr(format!(
 				"Output position for: {:?}",
 				commit
@@ -379,7 +381,7 @@ impl<'a> Batch<'a> {
 	/// Get token_output_pos from index.
 	pub fn get_token_output_pos(&self, commit: &Commitment) -> Result<u64, Error> {
 		match self.get_token_output_pos_height(commit)? {
-			Some((pos, _)) => Ok(pos),
+			Some(pos) => Ok(pos.pos),
 			None => Err(Error::NotFoundErr(format!(
 				"Token Output position for: {:?}",
 				commit
@@ -388,7 +390,7 @@ impl<'a> Batch<'a> {
 	}
 
 	/// Get output_pos and block height from index.
-	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<Option<(u64, u64)>, Error> {
+	pub fn get_output_pos_height(&self, commit: &Commitment) -> Result<Option<CommitPos>, Error> {
 		self.db.get_ser(&to_key(OUTPUT_POS_PREFIX, commit))
 	}
 
@@ -396,7 +398,7 @@ impl<'a> Batch<'a> {
 	pub fn get_token_output_pos_height(
 		&self,
 		commit: &Commitment,
-	) -> Result<Option<(u64, u64)>, Error> {
+	) -> Result<Option<CommitPos>, Error> {
 		self.db.get_ser(&to_key(TOKEN_COMMIT_POS_PREFIX, commit))
 	}
 

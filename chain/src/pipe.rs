@@ -18,16 +18,18 @@ use crate::core::consensus;
 use crate::core::core::hash::Hashed;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::Committed;
-use crate::core::core::{get_grin_magic_data_str, Block, BlockHeader, BlockSums};
+use crate::core::core::{
+	block, get_grin_magic_data_str, Block, BlockHeader, BlockSums, OutputIdentifier,
+	TransactionBody,
+};
 use crate::core::global;
 use crate::core::pow::{self, compact_to_biguint, hash_to_biguint, pow_hash_after_mask};
 use crate::error::{Error, ErrorKind};
 use crate::store;
 use crate::txhashset;
-use crate::types::{Options, Tip};
+use crate::types::{CommitPos, Options, Tip};
 use crate::util;
 use crate::util::RwLock;
-use grin_store;
 use std::sync::Arc;
 use util::ToHex;
 
@@ -154,10 +156,13 @@ fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result
 
 /// Runs the block processing pipeline, including validation and finding a
 /// place for the new block in the chain.
-/// Returns new head if chain head updated.
-pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip>, Error> {
+/// Returns new head if chain head updated and the "fork point" rewound to when processing the new block.
+pub fn process_block(
+	b: &Block,
+	ctx: &mut BlockContext<'_>,
+) -> Result<(Option<Tip>, BlockHeader), Error> {
 	debug!(
-		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}] token [in/out/kern: {}/{}/{}]",
+		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}] token [in/out/kern: {}/{}/{}] ({})",
 		b.hash(),
 		b.header.height,
 		b.inputs().len(),
@@ -166,6 +171,7 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 		b.token_inputs().len(),
 		b.token_outputs().len(),
 		b.token_kernels().len(),
+		b.inputs().version_str(),
 	);
 
 	// Read current chain head from db via the batch.
@@ -180,17 +186,8 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	// want to do this now and not later during header validation.
 	validate_pow_only(&b.header, ctx)?;
 
+	// Get previous header from the db.
 	let prev = prev_header_store(&b.header, &mut ctx.batch)?;
-
-	// Block is an orphan if we do not know about the previous full block.
-	// Skip this check if we have just processed the previous block
-	// or the full txhashset state (fast sync) at the previous block height.
-	{
-		let is_next = b.header.prev_hash == head.last_block_h;
-		if !is_next && !ctx.batch.block_exists(&prev.hash())? {
-			return Err(ErrorKind::Orphan.into());
-		}
-	}
 
 	//Validate bitcoin header's diff is enough first
 	if b.header.height < global::refactor_header_height() {
@@ -213,8 +210,8 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	let header_pmmr = &mut ctx.header_pmmr;
 	let txhashset = &mut ctx.txhashset;
 	let batch = &mut ctx.batch;
-	txhashset::extending(header_pmmr, txhashset, batch, |ext, batch| {
-		rewind_and_apply_fork(&prev, ext, batch)?;
+	let fork_point = txhashset::extending(header_pmmr, txhashset, batch, |ext, batch| {
+		let fork_point = rewind_and_apply_fork(&prev, ext, batch)?;
 
 		// Check any coinbase being spent have matured sufficiently.
 		// This needs to be done within the context of a potentially
@@ -246,7 +243,7 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 			ext.extension.force_rollback();
 		}
 
-		Ok(())
+		Ok(fork_point)
 	})?;
 
 	// Add the validated block to the db.
@@ -263,9 +260,9 @@ pub fn process_block(b: &Block, ctx: &mut BlockContext<'_>) -> Result<Option<Tip
 	if has_more_work(&b.header, &head) {
 		let head = Tip::from_header(&b.header);
 		update_head(&head, &mut ctx.batch)?;
-		Ok(Some(head))
+		Ok((Some(head), fork_point))
 	} else {
-		Ok(None)
+		Ok((None, fork_point))
 	}
 }
 
@@ -403,10 +400,7 @@ fn prev_header_store(
 	header: &BlockHeader,
 	batch: &mut store::Batch<'_>,
 ) -> Result<BlockHeader, Error> {
-	let prev = batch.get_previous_header(&header).map_err(|e| match e {
-		grin_store::Error::NotFoundErr(_) => ErrorKind::Orphan,
-		_ => ErrorKind::StoreErr(e, "check prev header".into()),
-	})?;
+	let prev = batch.get_previous_header(&header)?;
 	Ok(prev)
 }
 
@@ -435,6 +429,39 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 
 	if global::is_production_mode() && header.total_difficulty().to_num() != header.height + 1 {
 		return Err(ErrorKind::WrongTotalDifficulty.into());
+	}
+
+	// We can determine output and kernel counts for this block based on mmr sizes from previous header.
+	// Assume 0 inputs and estimate a lower bound on the full block weight.
+	let num_outputs = header
+		.output_mmr_count()
+		.saturating_sub(prev.output_mmr_count());
+	let num_kernels = header
+		.kernel_mmr_count()
+		.saturating_sub(prev.kernel_mmr_count());
+	let num_token_outputs = header
+		.token_output_mmr_count()
+		.saturating_sub(prev.token_output_mmr_count());
+	let num_token_kernels = header
+		.token_kernel_mmr_count()
+		.saturating_sub(prev.token_kernel_mmr_count());
+
+	// Each block must contain at least 1 kernel and 1 output for the block reward.
+	if num_outputs == 0 || num_kernels == 0 {
+		return Err(ErrorKind::InvalidMMRSize.into());
+	}
+
+	// Block header is invalid (and block is invalid) if this lower bound is too heavy for a full block.
+	let weight = TransactionBody::weight_as_block(
+		0,
+		num_outputs,
+		num_kernels,
+		0,
+		num_token_outputs,
+		num_token_kernels,
+	);
+	if weight > global::max_block_weight() {
+		return Err(ErrorKind::Block(block::Error::TooHeavy).into());
 	}
 
 	// verify the proof of work and related parameters
@@ -558,7 +585,8 @@ fn apply_block_to_txhashset(
 	ext: &mut txhashset::ExtensionPair<'_>,
 	batch: &store::Batch<'_>,
 ) -> Result<(), Error> {
-	ext.extension.apply_block(block, batch)?;
+	ext.extension
+		.apply_block(block, ext.header_extension, batch)?;
 	ext.extension.validate_roots(&block.header)?;
 	ext.extension.validate_sizes(&block.header)?;
 	Ok(())
@@ -652,11 +680,12 @@ pub fn rewind_and_apply_header_fork(
 /// to find to fork point. Rewind the txhashset to the fork point and apply all
 /// necessary blocks prior to the one being processed to set the txhashset in
 /// the expected state.
+/// Returns the "fork point" that we rewound to.
 pub fn rewind_and_apply_fork(
 	header: &BlockHeader,
 	ext: &mut txhashset::ExtensionPair<'_>,
 	batch: &store::Batch<'_>,
-) -> Result<(), Error> {
+) -> Result<BlockHeader, Error> {
 	let extension = &mut ext.extension;
 	let header_extension = &mut ext.header_extension;
 
@@ -702,14 +731,17 @@ pub fn rewind_and_apply_fork(
 		apply_block_to_txhashset(&fb, ext, batch)?;
 	}
 
-	Ok(())
+	Ok(fork_point)
 }
 
+/// Validate block inputs and outputs against utxo.
+/// Every input must spend an unspent output.
+/// No duplicate outputs created.
 fn validate_utxo(
 	block: &Block,
 	ext: &mut txhashset::ExtensionPair<'_>,
 	batch: &store::Batch<'_>,
-) -> Result<(), Error> {
+) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
 	let extension = &ext.extension;
 	let header_extension = &ext.header_extension;
 	extension

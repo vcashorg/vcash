@@ -19,7 +19,9 @@ use self::chain::Chain;
 use self::core::consensus;
 use self::core::core::hash::Hash;
 use self::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
-use self::core::core::{Block, BlockHeader, BlockSums, KernelFeatures, Transaction, TxKernel};
+use self::core::core::{
+	Block, BlockHeader, BlockSums, Inputs, KernelFeatures, OutputIdentifier, Transaction, TxKernel,
+};
 use self::core::core::{BlockTokenSums, TokenKernelFeatures, TokenKey};
 use self::core::genesis;
 use self::core::global;
@@ -69,11 +71,11 @@ where
 	K: Keychain,
 {
 	for _ in 0..count {
-		add_block(chain, vec![], keychain);
+		add_block(chain, &[], keychain);
 	}
 }
 
-pub fn add_block<K>(chain: &Chain, txs: Vec<Transaction>, keychain: &K)
+pub fn add_block<K>(chain: &Chain, txs: &[Transaction], keychain: &K)
 where
 	K: Keychain,
 {
@@ -159,9 +161,16 @@ impl BlockChain for ChainAdapter {
 		})
 	}
 
-	fn verify_coinbase_maturity(&self, tx: &Transaction) -> Result<(), PoolError> {
+	fn validate_inputs(&self, inputs: &Inputs) -> Result<Vec<OutputIdentifier>, PoolError> {
 		self.chain
-			.verify_coinbase_maturity(tx)
+			.validate_inputs(inputs)
+			.map(|outputs| outputs.into_iter().map(|(out, _)| out).collect::<Vec<_>>())
+			.map_err(|_| PoolError::Other("failed to validate inputs".into()))
+	}
+
+	fn verify_coinbase_maturity(&self, inputs: &Inputs) -> Result<(), PoolError> {
+		self.chain
+			.verify_coinbase_maturity(inputs)
 			.map_err(|_| PoolError::ImmatureCoinbase)
 	}
 
@@ -224,7 +233,7 @@ where
 	build::transaction(
 		KernelFeatures::Plain { fee: fees as u64 },
 		None,
-		tx_elements,
+		&tx_elements,
 		keychain,
 		&ProofBuilder::new(keychain),
 	)
@@ -362,7 +371,7 @@ where
 	build::transaction(
 		kernel_features,
 		None,
-		tx_elements,
+		&tx_elements,
 		keychain,
 		&ProofBuilder::new(keychain),
 	)
@@ -392,7 +401,7 @@ where
 	}
 
 	build::transaction_with_kernel(
-		tx_elements,
+		&tx_elements,
 		kernel,
 		None,
 		excess,

@@ -17,8 +17,8 @@ use self::chain::Chain;
 use self::core::core::hash::Hashed;
 use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{
-	Block, BlockHeader, KernelFeatures, OutputIdentifier, TokenKernelFeatures, TokenKey,
-	TokenOutputIdentifier, Transaction,
+	Block, BlockHeader, KernelFeatures, TokenKernelFeatures, TokenKey, TokenOutputIdentifier,
+	Transaction,
 };
 use self::core::global::ChainTypes;
 use self::core::libtx::{self, build, ProofBuilder};
@@ -376,12 +376,12 @@ fn mine_reorg() {
 			chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 		}
 
-		let head = chain.head_header().unwrap();
+		let head = chain.head().unwrap();
 		assert_eq!(head.height, NUM_BLOCKS_MAIN);
 		assert_eq!(head.hash(), prev.hash());
 
 		// Reorg chain should exceed main chain's total difficulty to be considered
-		let reorg_difficulty = head.total_difficulty().to_num();
+		let reorg_difficulty = head.total_difficulty.to_num();
 
 		// Create one block for reorg chain forking off NUM_BLOCKS_MAIN - REORG_DEPTH height
 		let fork_head = chain
@@ -393,17 +393,20 @@ fn mine_reorg() {
 		chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 
 		// Check that reorg is correctly reported in block status
-		//		assert_eq!(
-		//			*adapter.last_status.read(),
-		//			Some(BlockStatus::Reorg(REORG_DEPTH))
-		//		);
-		assert_eq!(*adapter.last_status.read(), Some(BlockStatus::Fork));
+		let fork_point = chain.get_header_by_height(1).unwrap();
+		assert_eq!(
+			*adapter.last_status.read(),
+			Some(BlockStatus::Reorg {
+				prev: Tip::from_header(&fork_head),
+				prev_head: head,
+				fork_point: Tip::from_header(&fork_point)
+			})
+		);
 
 		// Chain should be switched to the reorganized chain
-		let head = chain.head_header().unwrap();
-		//assert_eq!(head.height, NUM_BLOCKS_MAIN - REORG_DEPTH + 1);
-		assert_eq!(head.height, NUM_BLOCKS_MAIN);
-		assert_eq!(head.hash(), prev.hash());
+		let head = chain.head().unwrap();
+		assert_eq!(head.height, NUM_BLOCKS_MAIN - REORG_DEPTH + 1);
+		assert_eq!(head.hash(), reorg_head.hash());
 	}
 
 	// Cleanup chain directory
@@ -558,8 +561,7 @@ fn spend_rewind_spend() {
 		// mine the first block and keep track of the block_hash
 		// so we can spend the coinbase later
 		let b = prepare_block_key_idx(&kc, &head, &chain, 2, 1);
-		let out_id = OutputIdentifier::from(&b.outputs()[0]);
-		assert!(out_id.features.is_coinbase());
+		assert!(b.outputs()[0].is_coinbase());
 		head = b.header.clone();
 		chain
 			.process_block(b.clone(), chain::Options::SKIP_POW)
@@ -581,7 +583,7 @@ fn spend_rewind_spend() {
 		let tx1 = build::transaction(
 			KernelFeatures::Plain { fee: 20000 },
 			None,
-			vec![
+			&[
 				build::coinbase_input(consensus::REWARD_ORIGIN, key_id_coinbase.clone()),
 				build::output(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
 			],
@@ -590,7 +592,7 @@ fn spend_rewind_spend() {
 		)
 		.unwrap();
 
-		let b = prepare_block_tx(&kc, &head, &chain, 6, vec![&tx1]);
+		let b = prepare_block_tx(&kc, &head, &chain, 6, &[tx1.clone()]);
 		head = b.header.clone();
 		chain
 			.process_block(b.clone(), chain::Options::SKIP_POW)
@@ -606,7 +608,7 @@ fn spend_rewind_spend() {
 		// Now mine a competing block also spending the same coinbase output from earlier.
 		// Rewind back prior to the tx that spends it to "unspend" it.
 		{
-			let b = prepare_block_tx(&kc, &rewind_to, &chain, 6, vec![&tx1]);
+			let b = prepare_block_tx(&kc, &rewind_to, &chain, 6, &[tx1]);
 			chain
 				.process_block(b.clone(), chain::Options::SKIP_POW)
 				.unwrap();
@@ -633,8 +635,7 @@ fn spend_in_fork_and_compact() {
 		// mine the first block and keep track of the block_hash
 		// so we can spend the coinbase later
 		let b = prepare_block(&kc, &fork_head, &chain, 2);
-		let out_id = OutputIdentifier::from(&b.outputs()[0]);
-		assert!(out_id.features.is_coinbase());
+		assert!(b.outputs()[0].is_coinbase());
 		fork_head = b.header.clone();
 		chain
 			.process_block(b.clone(), chain::Options::SKIP_POW)
@@ -680,7 +681,7 @@ fn spend_in_fork_and_compact() {
 		let tx1 = build::transaction(
 			KernelFeatures::Plain { fee: 20000 },
 			Some(TokenKernelFeatures::PlainToken),
-			vec![
+			&[
 				build::coinbase_input(consensus::REWARD_ORIGIN, key_id2.clone()),
 				build::output(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
 				build::token_input(token_amount, token_key, true, key_id_token.clone()),
@@ -691,7 +692,7 @@ fn spend_in_fork_and_compact() {
 		)
 		.unwrap();
 
-		let next = prepare_block_tx(&kc, &fork_head, &chain, 8, vec![&tx1]);
+		let next = prepare_block_tx(&kc, &fork_head, &chain, 8, &[tx1.clone()]);
 		let prev_main = next.header.clone();
 		chain
 			.process_block(next.clone(), chain::Options::SKIP_POW)
@@ -701,7 +702,7 @@ fn spend_in_fork_and_compact() {
 		let tx2 = build::transaction(
 			KernelFeatures::Plain { fee: 20000 },
 			Some(TokenKernelFeatures::PlainToken),
-			vec![
+			&[
 				build::input(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
 				build::output(consensus::REWARD_ORIGIN - 40000, key_id31.clone()),
 				build::token_input(token_amount, token_key, false, key_id_token1.clone()),
@@ -712,7 +713,7 @@ fn spend_in_fork_and_compact() {
 		)
 		.unwrap();
 
-		let next = prepare_block_tx(&kc, &prev_main, &chain, 10, vec![&tx2]);
+		let next = prepare_block_tx(&kc, &prev_main, &chain, 10, &[tx2.clone()]);
 		let prev_main = next.header.clone();
 		chain.process_block(next, chain::Options::SKIP_POW).unwrap();
 
@@ -720,11 +721,11 @@ fn spend_in_fork_and_compact() {
 		chain.validate(false).unwrap();
 
 		// mine 2 forked blocks from the first
-		let fork = prepare_block_tx(&kc, &fork_head, &chain, 7, vec![&tx1]);
+		let fork = prepare_block_tx(&kc, &fork_head, &chain, 7, &[tx1.clone()]);
 		let prev_fork = fork.header.clone();
 		chain.process_block(fork, chain::Options::SKIP_POW).unwrap();
 
-		let fork_next = prepare_block_tx(&kc, &prev_fork, &chain, 9, vec![&tx2]);
+		let fork_next = prepare_block_tx(&kc, &prev_fork, &chain, 9, &[tx2.clone()]);
 		let prev_fork = fork_next.header.clone();
 		chain
 			.process_block(fork_next, chain::Options::SKIP_POW)
@@ -737,11 +738,11 @@ fn spend_in_fork_and_compact() {
 		assert_eq!(head.height, 7);
 		assert_eq!(head.hash(), prev_main.hash());
 		assert!(chain
-			.get_unspent(&OutputIdentifier::from(&tx2.outputs()[0]))
+			.get_unspent(tx2.outputs()[0].commitment())
 			.unwrap()
 			.is_some());
 		assert!(chain
-			.get_unspent(&OutputIdentifier::from(&tx1.outputs()[0]))
+			.get_unspent(tx1.outputs()[0].commitment())
 			.unwrap()
 			.is_none());
 		assert!(chain
@@ -766,11 +767,11 @@ fn spend_in_fork_and_compact() {
 		assert_eq!(head.height, 8);
 		assert_eq!(head.hash(), prev_fork.hash());
 		assert!(chain
-			.get_unspent(&OutputIdentifier::from(&tx2.outputs()[0]))
+			.get_unspent(tx2.outputs()[0].commitment())
 			.unwrap()
 			.is_some());
 		assert!(chain
-			.get_unspent(&OutputIdentifier::from(&tx1.outputs()[0]))
+			.get_unspent(tx1.outputs()[0].commitment())
 			.unwrap()
 			.is_none());
 		assert!(chain
@@ -851,7 +852,7 @@ fn output_header_mappings() {
 			.unwrap();
 			reward_outputs.push(reward.0.clone());
 			let mut b =
-				core::core::Block::new(&prev, vec![], next_header_info.clone().difficulty, reward)
+				core::core::Block::new(&prev, &[], next_header_info.clone().difficulty, reward)
 					.unwrap();
 			b.header.timestamp = prev.timestamp + Duration::seconds(60);
 			b.header.pow.secondary_scaling = next_header_info.secondary_scaling;
@@ -877,7 +878,7 @@ fn output_header_mappings() {
 			chain.process_block(b, chain::Options::MINE).unwrap();
 
 			let header_for_output = chain
-				.get_header_for_output(&OutputIdentifier::from(&reward_outputs[n - 1]))
+				.get_header_for_output(reward_outputs[n - 1].commitment())
 				.unwrap();
 			assert_eq!(header_for_output.height, n as u64);
 
@@ -887,7 +888,7 @@ fn output_header_mappings() {
 		// Check all output positions are as expected
 		for n in 1..15 {
 			let header_for_output = chain
-				.get_header_for_output(&OutputIdentifier::from(&reward_outputs[n - 1]))
+				.get_header_for_output(reward_outputs[n - 1].commitment())
 				.unwrap();
 			assert_eq!(header_for_output.height, n as u64);
 		}
@@ -915,7 +916,7 @@ fn prepare_block_key_idx<K>(
 where
 	K: Keychain,
 {
-	let mut b = prepare_block_nosum(kc, prev, diff, key_idx, vec![]);
+	let mut b = prepare_block_nosum(kc, prev, diff, key_idx, &[]);
 	chain.set_txhashset_roots(&mut b).unwrap();
 	get_block_bit_diff(&mut b);
 	b
@@ -927,7 +928,7 @@ fn prepare_block_tx<K>(
 	prev: &BlockHeader,
 	chain: &Chain,
 	diff: u64,
-	txs: Vec<&Transaction>,
+	txs: &[Transaction],
 ) -> Block
 where
 	K: Keychain,
@@ -942,7 +943,7 @@ fn prepare_block_tx_key_idx<K>(
 	chain: &Chain,
 	diff: u64,
 	key_idx: u32,
-	txs: Vec<&Transaction>,
+	txs: &[Transaction],
 ) -> Block
 where
 	K: Keychain,
@@ -958,7 +959,7 @@ fn prepare_block_nosum<K>(
 	prev: &BlockHeader,
 	diff: u64,
 	key_idx: u32,
-	txs: Vec<&Transaction>,
+	txs: &[Transaction],
 ) -> Block
 where
 	K: Keychain,

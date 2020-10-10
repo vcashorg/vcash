@@ -34,26 +34,12 @@ pub fn w<T>(weak: &Weak<T>) -> Result<Arc<T>, Error> {
 fn get_unspent(
 	chain: &Arc<chain::Chain>,
 	id: &str,
-) -> Result<Option<(CommitPos, OutputIdentifier)>, Error> {
+) -> Result<Option<(OutputIdentifier, CommitPos)>, Error> {
 	let c = util::from_hex(id)
 		.map_err(|_| ErrorKind::Argument(format!("Not a valid commitment: {}", id)))?;
 	let commit = Commitment::from_vec(c);
-
-	// We need the features here to be able to generate the necessary hash
-	// to compare against the hash in the output MMR.
-	// For now we can just try both (but this probably needs to be part of the api
-	// params)
-	let outputs = [
-		OutputIdentifier::new(OutputFeatures::Plain, &commit),
-		OutputIdentifier::new(OutputFeatures::Coinbase, &commit),
-	];
-
-	for x in outputs.iter() {
-		if let Some(output_pos) = chain.get_unspent(x)? {
-			return Ok(Some((output_pos, x.clone())));
-		}
-	}
-	Ok(None)
+	let res = chain.get_unspent(commit)?;
+	Ok(res)
 }
 
 /// Internal function to retrieves an output by a given commitment
@@ -83,24 +69,24 @@ fn get_unspent_token(
 	Ok(None)
 }
 
-/// Retrieves an output from the chain given a commit id (a tiny bit iteratively)
+/// Retrieves an output from the chain given a commitment.
 pub fn get_output(
 	chain: &Weak<chain::Chain>,
 	id: &str,
 ) -> Result<Option<(Output, OutputIdentifier)>, Error> {
 	let chain = w(chain)?;
-	let (output_pos, identifier) = match get_unspent(&chain, id)? {
+	let (out, pos) = match get_unspent(&chain, id)? {
 		Some(x) => x,
 		None => return Ok(None),
 	};
 
 	Ok(Some((
-		Output::new(&identifier.commit, output_pos.height, output_pos.pos),
-		identifier,
+		Output::new(&out.commitment(), pos.height, pos.pos),
+		out,
 	)))
 }
 
-/// Retrieves an token output from the chain given a commit id (a tiny bit iteratively)
+/// Retrieves an token output from the chain given a commitment and token type.
 pub fn get_token_output(
 	chain: &Weak<chain::Chain>,
 	id: &str,
@@ -131,27 +117,27 @@ pub fn get_output_v2(
 	include_merkle_proof: bool,
 ) -> Result<Option<(OutputPrintable, OutputIdentifier)>, Error> {
 	let chain = w(chain)?;
-	let (output_pos, identifier) = match get_unspent(&chain, id)? {
+	let (out, pos) = match get_unspent(&chain, id)? {
 		Some(x) => x,
 		None => return Ok(None),
 	};
 
-	let output = chain.get_unspent_output_at(output_pos.pos)?;
+	let output = chain.get_unspent_output_at(pos.pos)?;
 	let header = if include_merkle_proof && output.is_coinbase() {
-		chain.get_header_by_height(output_pos.height).ok()
+		chain.get_header_by_height(pos.height).ok()
 	} else {
 		None
 	};
 
 	let output_printable = OutputPrintable::from_output(
 		&output,
-		chain,
+		&chain,
 		header.as_ref(),
 		include_proof,
 		include_merkle_proof,
 	)?;
 
-	Ok(Some((output_printable, identifier)))
+	Ok(Some((output_printable, out)))
 }
 
 /// Retrieves an output from the chain given a commit id (a tiny bit iteratively)
@@ -177,7 +163,7 @@ pub fn get_token_output_v2(
 
 	let output_printable = OutputPrintable::from_token_output(
 		&output,
-		chain.clone(),
+		&chain,
 		header.as_ref(),
 		include_proof,
 		include_merkle_proof,

@@ -19,7 +19,7 @@ use crate::core::core::hash::{Hash, Hashed, ZERO_HASH};
 use crate::core::core::merkle_proof::MerkleProof;
 use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::{
-	Block, BlockHeader, BlockSums, Committed, KernelFeatures, Output, OutputIdentifier,
+	Block, BlockHeader, BlockSums, Committed, Inputs, KernelFeatures, Output, OutputIdentifier,
 	Transaction, TxKernel,
 };
 use crate::core::core::{
@@ -37,7 +37,7 @@ use crate::types::{
 	BlockStatus, ChainAdapter, CommitPos, NoStatus, Options, Tip, TxHashsetWriteStatus,
 };
 use crate::util::secp::pedersen::{Commitment, RangeProof};
-use crate::util::RwLock;
+use crate::{util::RwLock, ChainStore};
 use grin_store::Error::NotFoundErr;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -174,6 +174,10 @@ impl Chain {
 	) -> Result<Chain, Error> {
 		let store = Arc::new(store::ChainStore::new(&db_root)?);
 
+		// DB migrations to be run prior to the chain being used.
+		// Migrate full blocks to protocol version v3.
+		Chain::migrate_db_v2_v3(&store)?;
+
 		// open the txhashset, creating a new one if necessary
 		let mut txhashset = txhashset::TxHashSet::open(db_root.clone(), store.clone(), None)?;
 
@@ -223,12 +227,6 @@ impl Chain {
 			genesis: genesis.header,
 		};
 
-		// DB migrations to be run prior to the chain being used.
-		{
-			// Migrate full blocks to protocol version v2.
-			chain.migrate_db_v1_v2()?;
-		}
-
 		chain.log_heads()?;
 
 		Ok(chain)
@@ -276,43 +274,147 @@ impl Chain {
 		res
 	}
 
-	fn determine_status(&self, head: Option<Tip>, prev_head: Tip) -> BlockStatus {
-		// We have more work if the chain head is updated.
-		let is_more_work = head.is_some();
+	/// We plan to support receiving blocks with CommitOnly inputs.
+	/// We also need to support relaying blocks with FeaturesAndCommit inputs to peers.
+	/// So we need a way to convert blocks from CommitOnly to FeaturesAndCommit.
+	/// Validating the inputs against the utxo_view allows us to look the outputs up.
+	pub fn convert_block_v2(&self, block: Block) -> Result<Block, Error> {
+		debug!(
+			"convert_block_v2: {} at {} ({} -> v2)",
+			block.header.hash(),
+			block.header.height,
+			block.inputs().version_str(),
+		);
 
-		let mut is_next_block = false;
-		let mut reorg_depth = None;
+		if block.inputs().is_empty() {
+			return Ok(Block {
+				header: block.header,
+				aux_data: block.aux_data,
+				body: block.body.replace_inputs(Inputs::FeaturesAndCommit(vec![])),
+			});
+		}
+
+		let mut header_pmmr = self.header_pmmr.write();
+		let mut txhashset = self.txhashset.write();
+		let inputs: Vec<_> =
+			txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
+				let previous_header = batch.get_previous_header(&block.header)?;
+				pipe::rewind_and_apply_fork(&previous_header, ext, batch)?;
+				ext.extension
+					.utxo_view(ext.header_extension)
+					.validate_inputs(&block.inputs(), batch)
+					.map(|outputs| outputs.into_iter().map(|(out, _)| out).collect())
+			})?;
+		let inputs = inputs.as_slice().into();
+		Ok(Block {
+			header: block.header,
+			aux_data: block.aux_data,
+			body: block.body.replace_inputs(inputs),
+		})
+	}
+
+	fn determine_status(
+		&self,
+		head: Option<Tip>,
+		prev: Tip,
+		prev_head: Tip,
+		fork_point: Tip,
+	) -> BlockStatus {
+		// If head is updated then we are either "next" block or we just experienced a "reorg" to new head.
+		// Otherwise this is a "fork" off the main chain.
 		if let Some(head) = head {
 			if head.prev_block_h == prev_head.last_block_h {
-				is_next_block = true;
+				BlockStatus::Next { prev }
 			} else {
-				reorg_depth = Some(prev_head.height.saturating_sub(head.height) + 1);
+				BlockStatus::Reorg {
+					prev,
+					prev_head,
+					fork_point,
+				}
+			}
+		} else {
+			BlockStatus::Fork {
+				prev,
+				head: prev_head,
+				fork_point,
 			}
 		}
+	}
 
-		match (is_more_work, is_next_block) {
-			(true, true) => BlockStatus::Next,
-			(true, false) => BlockStatus::Reorg(reorg_depth.unwrap_or(0)),
-			(false, _) => BlockStatus::Fork,
+	/// Quick check for "known" duplicate block up to and including current chain head.
+	fn is_known(&self, header: &BlockHeader) -> Result<(), Error> {
+		let head = self.head()?;
+		if head.hash() == header.hash() {
+			return Err(ErrorKind::Unfit("duplicate block".into()).into());
 		}
+		if header.total_difficulty() <= head.total_difficulty {
+			if self.block_exists(header.hash())? {
+				return Err(ErrorKind::Unfit("duplicate block".into()).into());
+			}
+		}
+		Ok(())
+	}
+
+	// Check if the provided block is an orphan.
+	// If block is an orphan add it to our orphan block pool for deferred processing.
+	// If this is the "next" block immediately following current head then not an orphan.
+	// Or if we have the previous full block then not an orphan.
+	fn check_orphan(&self, block: &Block, opts: Options) -> Result<(), Error> {
+		let head = self.head()?;
+		let is_next = block.header.prev_hash == head.last_block_h;
+		if is_next || self.block_exists(block.header.prev_hash)? {
+			return Ok(());
+		}
+
+		let block_hash = block.hash();
+		let orphan = Orphan {
+			block: block.clone(),
+			opts,
+			added: Instant::now(),
+		};
+		self.orphans.add(orphan);
+
+		debug!(
+			"is_orphan: {:?}, # orphans {}{}",
+			block_hash,
+			self.orphans.len(),
+			if self.orphans.len_evicted() > 0 {
+				format!(", # evicted {}", self.orphans.len_evicted())
+			} else {
+				String::new()
+			},
+		);
+
+		Err(ErrorKind::Orphan.into())
 	}
 
 	/// Attempt to add a new block to the chain.
 	/// Returns true if it has been added to the longest chain
 	/// or false if it has added to a fork (or orphan?).
 	fn process_block_single(&self, b: Block, opts: Options) -> Result<Option<Tip>, Error> {
+		// Check if we already know about this block.
+		self.is_known(&b.header)?;
+
 		// Process the header first.
 		// If invalid then fail early.
 		// If valid then continue with block processing with header_head committed to db etc.
 		self.process_block_header(&b.header, opts)?;
 
+		// Check if this block is an orphan.
+		// Only do this once we know the header PoW is valid.
+		self.check_orphan(&b, opts)?;
+
+		// We can only reliably convert to "v2" if not an orphan (may spend output from previous block).
+		// We convert from "v3" to "v2" by looking up outputs to be spent.
+		// This conversion also ensures a block received in "v2" has valid input features (prevents malleability).
+		let b = self.convert_block_v2(b)?;
+
 		let (maybe_new_head, prev_head) = {
 			let mut header_pmmr = self.header_pmmr.write();
 			let mut txhashset = self.txhashset.write();
 			let batch = self.store.batch()?;
+			let prev_head = batch.head()?;
 			let mut ctx = self.new_ctx(opts, batch, &mut header_pmmr, &mut txhashset)?;
-
-			let prev_head = ctx.batch.head()?;
 
 			let maybe_new_head = pipe::process_block(&b, &mut ctx);
 
@@ -329,8 +431,14 @@ impl Chain {
 		};
 
 		match maybe_new_head {
-			Ok(head) => {
-				let status = self.determine_status(head.clone(), prev_head);
+			Ok((head, fork_point)) => {
+				let prev = self.get_previous_header(&b.header)?;
+				let status = self.determine_status(
+					head,
+					Tip::from_header(&prev),
+					prev_head,
+					Tip::from_header(&fork_point),
+				);
 
 				// notifying other parts of the system of the update
 				self.adapter.block_accepted(&b, status, opts);
@@ -338,28 +446,6 @@ impl Chain {
 				Ok(head)
 			}
 			Err(e) => match e.kind() {
-				ErrorKind::Orphan => {
-					let block_hash = b.hash();
-					let orphan = Orphan {
-						block: b,
-						opts: opts,
-						added: Instant::now(),
-					};
-
-					self.orphans.add(orphan);
-
-					debug!(
-						"process_block: orphan: {:?}, # orphans {}{}",
-						block_hash,
-						self.orphans.len(),
-						if self.orphans.len_evicted() > 0 {
-							format!(", # evicted {}", self.orphans.len_evicted())
-						} else {
-							String::new()
-						},
-					);
-					Err(ErrorKind::Orphan.into())
-				}
 				ErrorKind::Unfit(ref msg) => {
 					debug!(
 						"Block {} at {} is unfit at this time: {}",
@@ -434,7 +520,8 @@ impl Chain {
 		Ok(())
 	}
 
-	fn new_ctx<'a>(
+	/// Build a new block processing context.
+	pub fn new_ctx<'a>(
 		&self,
 		opts: Options,
 		batch: store::Batch<'a>,
@@ -516,14 +603,14 @@ impl Chain {
 		}
 	}
 
-	/// TODO - where do we call this from? And do we need a rewind first?
-	/// For the given commitment find the unspent output and return the
-	/// associated Return an error if the output does not exist or has been
-	/// spent. This querying is done in a way that is consistent with the
-	/// current chain state, specifically the current winning (valid, most
-	/// work) fork.
-	pub fn get_unspent(&self, output_ref: &OutputIdentifier) -> Result<Option<CommitPos>, Error> {
-		self.txhashset.read().get_unspent(output_ref)
+	/// Returns Ok(Some((out, pos))) if output is unspent.
+	/// Returns Ok(None) if output is spent.
+	/// Returns Err if something went wrong beyond not finding the output.
+	pub fn get_unspent(
+		&self,
+		commit: Commitment,
+	) -> Result<Option<(OutputIdentifier, CommitPos)>, Error> {
+		self.txhashset.read().get_unspent(commit)
 	}
 
 	/// TODO - where do we call this from? And do we need a rewind first?
@@ -584,11 +671,29 @@ impl Chain {
 		})
 	}
 
-	fn validate_tx_against_utxo(&self, tx: &Transaction) -> Result<(), Error> {
+	fn validate_tx_against_utxo(
+		&self,
+		tx: &Transaction,
+	) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
 		let header_pmmr = self.header_pmmr.read();
 		let txhashset = self.txhashset.read();
 		txhashset::utxo_view(&header_pmmr, &txhashset, |utxo, batch| {
 			utxo.validate_tx(tx, batch)
+		})
+	}
+
+	/// Validates inputs against the current utxo.
+	/// Each input must spend an unspent output.
+	/// Returns the vec of output identifiers and their pos of the outputs
+	/// that would be spent by the inputs.
+	pub fn validate_inputs(
+		&self,
+		inputs: &Inputs,
+	) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
+		let header_pmmr = self.header_pmmr.read();
+		let txhashset = self.txhashset.read();
+		txhashset::utxo_view(&header_pmmr, &txhashset, |utxo, batch| {
+			utxo.validate_inputs(inputs, batch)
 		})
 	}
 
@@ -599,12 +704,12 @@ impl Chain {
 
 	/// Verify we are not attempting to spend a coinbase output
 	/// that has not yet sufficiently matured.
-	pub fn verify_coinbase_maturity(&self, tx: &Transaction) -> Result<(), Error> {
+	pub fn verify_coinbase_maturity(&self, inputs: &Inputs) -> Result<(), Error> {
 		let height = self.next_block_height()?;
 		let header_pmmr = self.header_pmmr.read();
 		let txhashset = self.txhashset.read();
 		txhashset::utxo_view(&header_pmmr, &txhashset, |utxo, batch| {
-			utxo.verify_coinbase_maturity(&tx.inputs(), height, batch)?;
+			utxo.verify_coinbase_maturity(inputs, height, batch)?;
 			Ok(())
 		})
 	}
@@ -643,6 +748,22 @@ impl Chain {
 		})
 	}
 
+	/// Sets prev_root on a brand new block header by applying the previous header to the header MMR.
+	pub fn set_prev_root_only(&self, header: &mut BlockHeader) -> Result<(), Error> {
+		let mut header_pmmr = self.header_pmmr.write();
+		let prev_root =
+			txhashset::header_extending_readonly(&mut header_pmmr, &self.store(), |ext, batch| {
+				let prev_header = batch.get_previous_header(header)?;
+				pipe::rewind_and_apply_header_fork(&prev_header, ext, batch)?;
+				ext.root()
+			})?;
+
+		// Set the prev_root on the header.
+		header.prev_root = prev_root;
+
+		Ok(())
+	}
+
 	/// Sets the txhashset roots on a brand new block by applying the block on
 	/// the current txhashset state.
 	pub fn set_txhashset_roots(&self, b: &mut Block) -> Result<(), Error> {
@@ -661,7 +782,7 @@ impl Chain {
 				let prev_root = header_extension.root()?;
 
 				// Apply the latest block to the chain state via the extension.
-				extension.apply_block(b, batch)?;
+				extension.apply_block(b, header_extension, batch)?;
 
 				Ok((prev_root, extension.roots()?, extension.sizes()))
 			})?;
@@ -703,9 +824,9 @@ impl Chain {
 	}
 
 	/// Return a Merkle proof for the given commitment from the store.
-	pub fn get_merkle_proof(
+	pub fn get_merkle_proof<T: AsRef<OutputIdentifier>>(
 		&self,
-		output: &OutputIdentifier,
+		out_id: T,
 		header: &BlockHeader,
 	) -> Result<MerkleProof, Error> {
 		let mut header_pmmr = self.header_pmmr.write();
@@ -713,7 +834,7 @@ impl Chain {
 		let merkle_proof =
 			txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
 				pipe::rewind_and_apply_fork(&header, ext, batch)?;
-				ext.extension.merkle_proof(output, batch)
+				ext.extension.merkle_proof(out_id, batch)
 			})?;
 
 		Ok(merkle_proof)
@@ -1276,11 +1397,7 @@ impl Chain {
 		}
 		let mut output_vec: Vec<Output> = vec![];
 		for (ref x, &y) in outputs.1.iter().zip(rangeproofs.1.iter()) {
-			output_vec.push(Output {
-				commit: x.commit,
-				features: x.features,
-				proof: y,
-			});
+			output_vec.push(Output::new(x.features, x.commitment(), y));
 		}
 		Ok((outputs.0, last_index, output_vec))
 	}
@@ -1308,12 +1425,12 @@ impl Chain {
 		}
 		let mut output_vec: Vec<TokenOutput> = vec![];
 		for (ref x, &y) in outputs.1.iter().zip(rangeproofs.1.iter()) {
-			output_vec.push(TokenOutput {
-				commit: x.commit,
-				features: x.features,
-				proof: y,
-				token_type: x.token_type,
-			});
+			output_vec.push(TokenOutput::new(
+				x.features,
+				x.token_type,
+				x.commitment(),
+				y,
+			));
 		}
 		Ok((outputs.0, last_index, output_vec))
 	}
@@ -1439,31 +1556,27 @@ impl Chain {
 		self.header_pmmr.read().get_header_hash_by_height(height)
 	}
 
-	/// Migrate our local db from v1 to v2.
-	/// This covers blocks which themselves contain transactions.
-	/// Transaction kernels changed in v2 due to "variable size kernels".
-	fn migrate_db_v1_v2(&self) -> Result<(), Error> {
-		let store_v1 = self.store.with_version(ProtocolVersion(1));
-		let batch = store_v1.batch()?;
+	/// Migrate our local db from v2 to v3.
+	/// "commit only" inputs.
+	fn migrate_db_v2_v3(store: &ChainStore) -> Result<(), Error> {
+		let store_v2 = store.with_version(ProtocolVersion(2));
+		let batch = store_v2.batch()?;
 		for (_, block) in batch.blocks_iter()? {
-			batch.migrate_block(&block, ProtocolVersion(2))?;
+			batch.migrate_block(&block, ProtocolVersion(3))?;
 		}
 		batch.commit()?;
 		Ok(())
 	}
 
 	/// Gets the block header in which a given output appears in the txhashset.
-	pub fn get_header_for_output(
-		&self,
-		output_ref: &OutputIdentifier,
-	) -> Result<BlockHeader, Error> {
+	pub fn get_header_for_output(&self, commit: Commitment) -> Result<BlockHeader, Error> {
 		let header_pmmr = self.header_pmmr.read();
 		let txhashset = self.txhashset.read();
-		let output_pos = match txhashset.get_unspent(output_ref)? {
+		let (_, pos) = match txhashset.get_unspent(commit)? {
 			Some(o) => o,
 			None => return Err(ErrorKind::OutputNotFound.into()),
 		};
-		let hash = header_pmmr.get_header_hash_by_height(output_pos.height)?;
+		let hash = header_pmmr.get_header_hash_by_height(pos.height)?;
 		Ok(self.get_block_header(&hash)?)
 	}
 
@@ -1489,13 +1602,36 @@ impl Chain {
 		min_height: Option<u64>,
 		max_height: Option<u64>,
 	) -> Result<Option<(TxKernel, u64, u64)>, Error> {
+		let head = self.head()?;
+
+		if let (Some(min), Some(max)) = (min_height, max_height) {
+			if min > max {
+				return Ok(None);
+			}
+		}
+
 		let min_index = match min_height {
-			Some(h) => Some(self.get_header_by_height(h - 1)?.kernel_mmr_size + 1),
+			Some(0) => None,
+			Some(h) => {
+				if h > head.height {
+					return Ok(None);
+				}
+				let header = self.get_header_by_height(h)?;
+				let prev_header = self.get_previous_header(&header)?;
+				Some(prev_header.kernel_mmr_size + 1)
+			}
 			None => None,
 		};
 
 		let max_index = match max_height {
-			Some(h) => Some(self.get_header_by_height(h)?.kernel_mmr_size),
+			Some(h) => {
+				if h > head.height {
+					None
+				} else {
+					let header = self.get_header_by_height(h)?;
+					Some(header.kernel_mmr_size)
+				}
+			}
 			None => None,
 		};
 
@@ -1636,6 +1772,16 @@ impl Chain {
 		let hash = self.sync_pmmr.read().head_hash()?;
 		let header = self.store.get_block_header(&hash)?;
 		Ok(Tip::from_header(&header))
+	}
+
+	/// Gets multiple headers at the provided heights.
+	/// Note: Uses the sync pmmr, not the header pmmr.
+	pub fn get_locator_hashes(&self, heights: &[u64]) -> Result<Vec<Hash>, Error> {
+		let pmmr = self.sync_pmmr.read();
+		heights
+			.iter()
+			.map(|h| pmmr.get_header_hash_by_height(*h))
+			.collect()
 	}
 
 	/// Builds an iterator on blocks starting from the current chain head and
@@ -1807,7 +1953,8 @@ fn setup_head(
 				};
 			}
 			txhashset::extending(header_pmmr, txhashset, &mut batch, |ext, batch| {
-				ext.extension.apply_block(&genesis, batch)
+				ext.extension
+					.apply_block(&genesis, ext.header_extension, batch)
 			})?;
 
 			// Save the block_sums to the db for use later.

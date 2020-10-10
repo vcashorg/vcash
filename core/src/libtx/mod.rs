@@ -52,13 +52,12 @@ pub fn tx_fee(
 		None => DEFAULT_BASE_FEE,
 	};
 
-	(Transaction::weight(
-		input_len,
-		output_len,
-		kernel_len,
-		token_input_len,
-		token_output_len,
-		token_kernel_len,
-	) as u64)
-		* use_base_fee
+	Transaction::weight(
+		input_len as u64,
+		output_len as u64,
+		kernel_len as u64,
+		token_input_len as u64,
+		token_output_len as u64,
+		token_kernel_len as u64,
+	) * use_base_fee
 }

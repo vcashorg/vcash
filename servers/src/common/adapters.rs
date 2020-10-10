@@ -30,8 +30,11 @@ use crate::common::types::{ChainValidationMode, DandelionEpoch, ServerConfig};
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::transaction::Transaction;
 use crate::core::core::verifier_cache::VerifierCache;
-use crate::core::core::{BlockHeader, BlockSums, BlockTokenSums, CompactBlock};
+use crate::core::core::{
+	BlockHeader, BlockSums, BlockTokenSums, CompactBlock, Inputs, OutputIdentifier,
+};
 use crate::core::pow::Difficulty;
+use crate::core::ser::ProtocolVersion;
 use crate::core::{core, global};
 use crate::p2p;
 use crate::p2p::types::PeerInfo;
@@ -172,8 +175,14 @@ where
 		let cb_hash = cb.hash();
 		if cb.kern_ids().is_empty() {
 			// push the freshly hydrated block through the chain pipeline
-			match core::Block::hydrate_from(cb, vec![]) {
+			match core::Block::hydrate_from(cb, &[]) {
 				Ok(block) => {
+					debug!(
+						"successfully hydrated (empty) block: {} at {} ({})",
+						block.header.hash(),
+						block.header.height,
+						block.inputs().version_str(),
+					);
 					if !self.sync_state.is_syncing() {
 						for hook in &self.hooks {
 							hook.on_block_received(&block, &peer_info.addr);
@@ -214,7 +223,7 @@ where
 				return Ok(true);
 			}
 
-			let block = match core::Block::hydrate_from(cb.clone(), txs) {
+			let block = match core::Block::hydrate_from(cb.clone(), &txs) {
 				Ok(block) => {
 					if !self.sync_state.is_syncing() {
 						for hook in &self.hooks {
@@ -234,7 +243,12 @@ where
 					.validate(&prev.total_kernel_offset, self.verifier_cache.clone())
 					.is_ok()
 				{
-					debug!("successfully hydrated block from tx pool!");
+					debug!(
+						"successfully hydrated block: {} at {} ({})",
+						block.header.hash(),
+						block.header.height,
+						block.inputs().version_str(),
+					);
 					self.process_block(block, peer_info, chain::Options::NONE)
 				} else if self.sync_state.status() == SyncStatus::NoSync {
 					debug!("adapter: block invalid after hydration, requesting full block");
@@ -358,12 +372,15 @@ where
 	}
 
 	/// Gets a full block by its hash.
-	fn get_block(&self, h: Hash) -> Option<core::Block> {
-		let b = self.chain().get_block(&h);
-		match b {
-			Ok(b) => Some(b),
-			_ => None,
-		}
+	/// Will convert to v2 compatibility based on peer protocol version.
+	fn get_block(&self, h: Hash, peer_info: &PeerInfo) -> Option<core::Block> {
+		self.chain()
+			.get_block(&h)
+			.map(|b| match peer_info.version.value() {
+				0..=3 => Some(b),
+				4..=ProtocolVersion::MAX => self.chain().convert_block_v2(b).ok(),
+			})
+			.unwrap_or(None)
 	}
 
 	/// Provides a reading view into the current txhashset state as well as
@@ -732,7 +749,7 @@ where
 		// not broadcasting blocks received through sync
 		if !opts.contains(chain::Options::SYNC) {
 			for hook in &self.hooks {
-				hook.on_block_accepted(b, &status);
+				hook.on_block_accepted(b, status);
 			}
 			// If we mined the block then we want to broadcast the compact block.
 			// If we received the block from another node then broadcast "header first"
@@ -750,12 +767,8 @@ where
 		// Reconcile the txpool against the new block *after* we have broadcast it too our peers.
 		// This may be slow and we do not want to delay block propagation.
 		// We only want to reconcile the txpool against the new block *if* total work has increased.
-		let is_reorg = if let BlockStatus::Reorg(_) = status {
-			true
-		} else {
-			false
-		};
-		if status == BlockStatus::Next || is_reorg {
+
+		if status.is_next() || status.is_reorg() {
 			let mut tx_pool = self.tx_pool.write();
 
 			let _ = tx_pool.reconcile_block(b);
@@ -765,7 +778,7 @@ where
 			tx_pool.truncate_reorg_cache(cutoff);
 		}
 
-		if is_reorg {
+		if status.is_reorg() {
 			let _ = self.tx_pool.write().reconcile_reorg_cache(&b.header);
 		}
 	}
@@ -955,9 +968,16 @@ impl pool::BlockChain for PoolToChainAdapter {
 			.map_err(|_| pool::PoolError::Other("failed to validate tx".to_string()))
 	}
 
-	fn verify_coinbase_maturity(&self, tx: &Transaction) -> Result<(), pool::PoolError> {
+	fn validate_inputs(&self, inputs: &Inputs) -> Result<Vec<OutputIdentifier>, pool::PoolError> {
 		self.chain()
-			.verify_coinbase_maturity(tx)
+			.validate_inputs(inputs)
+			.map(|outputs| outputs.into_iter().map(|(out, _)| out).collect::<Vec<_>>())
+			.map_err(|_| pool::PoolError::Other("failed to validate tx".to_string()))
+	}
+
+	fn verify_coinbase_maturity(&self, inputs: &Inputs) -> Result<(), pool::PoolError> {
+		self.chain()
+			.verify_coinbase_maturity(inputs)
 			.map_err(|_| pool::PoolError::ImmatureCoinbase)
 	}
 

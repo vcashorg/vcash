@@ -45,7 +45,7 @@ where
 	)
 	.unwrap();
 
-	let mut block = Block::new(&prev, txs, next_header_info.clone().difficulty, reward).unwrap();
+	let mut block = Block::new(&prev, &txs, next_header_info.clone().difficulty, reward).unwrap();
 
 	block.header.timestamp = prev.timestamp + Duration::seconds(60);
 	block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
@@ -75,7 +75,6 @@ fn get_block_bit_diff(block: &mut Block) {
 }
 
 #[test]
-#[ignore]
 fn mine_block_with_nrd_kernel_and_nrd_feature_enabled() {
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
 	global::set_local_nrd_enabled(true);
@@ -106,7 +105,7 @@ fn mine_block_with_nrd_kernel_and_nrd_feature_enabled() {
 			relative_height: NRDRelativeHeight::new(144).unwrap(),
 		},
 		None,
-		vec![
+		&[
 			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
 			build::output(consensus::REWARD_ORIGIN - 20000, key_id2.clone()),
 		],
@@ -124,7 +123,6 @@ fn mine_block_with_nrd_kernel_and_nrd_feature_enabled() {
 }
 
 #[test]
-#[ignore]
 fn mine_invalid_block_with_nrd_kernel_and_nrd_feature_enabled_before_hf() {
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
 	global::set_local_nrd_enabled(true);
@@ -155,7 +153,7 @@ fn mine_invalid_block_with_nrd_kernel_and_nrd_feature_enabled_before_hf() {
 			relative_height: NRDRelativeHeight::new(144).unwrap(),
 		},
 		None,
-		vec![
+		&[
 			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
 			build::output(consensus::REWARD_ORIGIN - 20000, key_id2.clone()),
 		],

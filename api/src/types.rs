@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-
 use crate::chain;
 use crate::core::core::hash::Hashed;
 use crate::core::core::merkle_proof::MerkleProof;
@@ -126,7 +124,7 @@ impl TxHashSet {
 	/// A TxHashSet in the context of the api is simply the collection of PMMR roots.
 	/// We can obtain these in a lightweight way by reading them from the head of the chain.
 	/// We will have validated the roots on this header against the roots of the txhashset.
-	pub fn from_head(chain: Arc<chain::Chain>) -> Result<TxHashSet, chain::Error> {
+	pub fn from_head(chain: &chain::Chain) -> Result<TxHashSet, chain::Error> {
 		let header = chain.head_header()?;
 		Ok(TxHashSet {
 			output_root_hash: header.output_root.to_hex(),
@@ -148,7 +146,7 @@ pub struct TxHashSetNode {
 }
 
 impl TxHashSetNode {
-	pub fn get_last_n_output(chain: Arc<chain::Chain>, distance: u64) -> Vec<TxHashSetNode> {
+	pub fn get_last_n_output(chain: &chain::Chain, distance: u64) -> Vec<TxHashSetNode> {
 		let mut return_vec = Vec::new();
 		let last_n = chain.get_last_n_output(distance);
 		for x in last_n {
@@ -157,9 +155,9 @@ impl TxHashSetNode {
 		return_vec
 	}
 
-	pub fn get_last_n_rangeproof(head: Arc<chain::Chain>, distance: u64) -> Vec<TxHashSetNode> {
+	pub fn get_last_n_rangeproof(chain: &chain::Chain, distance: u64) -> Vec<TxHashSetNode> {
 		let mut return_vec = Vec::new();
-		let last_n = head.get_last_n_rangeproof(distance);
+		let last_n = chain.get_last_n_rangeproof(distance);
 		for elem in last_n {
 			return_vec.push(TxHashSetNode {
 				hash: elem.0.to_hex(),
@@ -168,9 +166,9 @@ impl TxHashSetNode {
 		return_vec
 	}
 
-	pub fn get_last_n_kernel(head: Arc<chain::Chain>, distance: u64) -> Vec<TxHashSetNode> {
+	pub fn get_last_n_kernel(chain: &chain::Chain, distance: u64) -> Vec<TxHashSetNode> {
 		let mut return_vec = Vec::new();
-		let last_n = head.get_last_n_kernel(distance);
+		let last_n = chain.get_last_n_kernel(distance);
 		for elem in last_n {
 			return_vec.push(TxHashSetNode {
 				hash: elem.0.to_hex(),
@@ -179,7 +177,7 @@ impl TxHashSetNode {
 		return_vec
 	}
 
-	pub fn get_last_n_token_output(chain: Arc<chain::Chain>, distance: u64) -> Vec<TxHashSetNode> {
+	pub fn get_last_n_token_output(chain: &chain::Chain, distance: u64) -> Vec<TxHashSetNode> {
 		let mut return_vec = Vec::new();
 		let last_n = chain.get_last_n_token_output(distance);
 		for x in last_n {
@@ -188,12 +186,9 @@ impl TxHashSetNode {
 		return_vec
 	}
 
-	pub fn get_last_n_token_rangeproof(
-		head: Arc<chain::Chain>,
-		distance: u64,
-	) -> Vec<TxHashSetNode> {
+	pub fn get_last_n_token_rangeproof(chain: &chain::Chain, distance: u64) -> Vec<TxHashSetNode> {
 		let mut return_vec = Vec::new();
-		let last_n = head.get_last_n_token_rangeproof(distance);
+		let last_n = chain.get_last_n_token_rangeproof(distance);
 		for elem in last_n {
 			return_vec.push(TxHashSetNode {
 				hash: elem.0.to_hex(),
@@ -202,12 +197,9 @@ impl TxHashSetNode {
 		return_vec
 	}
 
-	pub fn get_last_n_token_issue_proof(
-		head: Arc<chain::Chain>,
-		distance: u64,
-	) -> Vec<TxHashSetNode> {
+	pub fn get_last_n_token_issue_proof(chain: &chain::Chain, distance: u64) -> Vec<TxHashSetNode> {
 		let mut return_vec = Vec::new();
-		let last_n = head.get_last_n_token_issue_proof(distance);
+		let last_n = chain.get_last_n_token_issue_proof(distance);
 		for elem in last_n {
 			return_vec.push(TxHashSetNode {
 				hash: elem.0.to_hex(),
@@ -361,7 +353,7 @@ pub struct OutputPrintable {
 impl OutputPrintable {
 	pub fn from_output(
 		output: &core::Output,
-		chain: Arc<chain::Chain>,
+		chain: &chain::Chain,
 		block_header: Option<&core::BlockHeader>,
 		include_proof: bool,
 		include_merkle_proof: bool,
@@ -372,13 +364,20 @@ impl OutputPrintable {
 			OutputType::Transaction
 		};
 
-		let out_id = core::OutputIdentifier::from(output);
-		let res = chain.get_unspent(&out_id)?;
-		let (spent, block_height) = if let Some(output_pos) = res {
-			(false, Some(output_pos.height))
-		} else {
-			(true, None)
-		};
+		let pos = chain.get_unspent(output.commitment())?;
+
+		let spent = pos.is_none();
+
+		// If output is unspent then we know its pos and height from the output_pos index.
+		// We use the header height directly for spent pos.
+		// Note: There is an interesting edge case here and we need to consider if the
+		// api is currently doing the right thing here:
+		// An output can be spent and then subsequently reused and the new instance unspent.
+		// This would result in a height that differs from the provided block height.
+		let output_pos = pos.map(|(_, x)| x.pos).unwrap_or(0);
+		let block_height = pos
+			.map(|(_, x)| x.height)
+			.or(block_header.map(|x| x.height));
 
 		let proof = if include_proof {
 			Some(output.proof_bytes().to_hex())
@@ -393,16 +392,14 @@ impl OutputPrintable {
 		let mut merkle_proof = None;
 		if include_merkle_proof && output.is_coinbase() && !spent {
 			if let Some(block_header) = block_header {
-				merkle_proof = chain.get_merkle_proof(&out_id, &block_header).ok();
+				merkle_proof = chain.get_merkle_proof(output, &block_header).ok();
 			}
 		};
-
-		let output_pos = chain.get_output_pos(&output.commit).unwrap_or(0);
 
 		Ok(OutputPrintable {
 			output_type,
 			token_type: None,
-			commit: output.commit,
+			commit: output.commitment(),
 			spent,
 			proof,
 			proof_hash: output.proof.hash().to_hex(),
@@ -415,8 +412,8 @@ impl OutputPrintable {
 	/// not
 	pub fn from_token_output(
 		token_output: &core::TokenOutput,
-		chain: Arc<chain::Chain>,
-		_block_header: Option<&core::BlockHeader>,
+		chain: &chain::Chain,
+		block_header: Option<&core::BlockHeader>,
 		include_proof: bool,
 		_include_merkle_proof: bool,
 	) -> Result<OutputPrintable, chain::Error> {
@@ -426,13 +423,10 @@ impl OutputPrintable {
 			OutputType::TokenTransaction
 		};
 
-		let out_id = core::TokenOutputIdentifier::from(token_output);
-		let res = chain.get_token_unspent(&out_id)?;
-		let (spent, block_height) = if let Some(output_pos) = res {
-			(false, Some(output_pos.height))
-		} else {
-			(true, None)
-		};
+		let pos = chain.get_token_unspent(&token_output.identifier)?;
+		let spent = pos.is_none();
+		let output_pos = pos.map(|x| x.pos).unwrap_or(0);
+		let block_height = pos.map(|x| x.height).or(block_header.map(|x| x.height));
 
 		let proof = if include_proof {
 			Some(token_output.proof_bytes().to_hex())
@@ -440,14 +434,10 @@ impl OutputPrintable {
 			None
 		};
 
-		let output_pos = chain
-			.get_token_output_pos(&token_output.commit)
-			.unwrap_or(0);
-
 		Ok(OutputPrintable {
 			output_type,
-			token_type: Some(token_output.token_type.to_hex()),
-			commit: token_output.commit,
+			token_type: Some(token_output.token_type().to_hex()),
+			commit: token_output.commitment(),
 			spent,
 			proof,
 			proof_hash: token_output.proof.hash().to_hex(),
@@ -841,15 +831,12 @@ pub struct BlockPrintable {
 impl BlockPrintable {
 	pub fn from_block(
 		block: &core::Block,
-		chain: Arc<chain::Chain>,
+		chain: &chain::Chain,
 		include_proof: bool,
 		include_merkle_proof: bool,
 	) -> Result<BlockPrintable, chain::Error> {
-		let inputs = block
-			.inputs()
-			.iter()
-			.map(|x| x.commitment().to_hex())
-			.collect();
+		let inputs: Vec<_> = block.inputs().into();
+		let inputs = inputs.iter().map(|x| x.commitment().to_hex()).collect();
 		let outputs = block
 			.outputs()
 			.iter()
@@ -925,15 +912,13 @@ impl CompactBlockPrintable {
 	/// api response
 	pub fn from_compact_block(
 		cb: &core::CompactBlock,
-		chain: Arc<chain::Chain>,
+		chain: &chain::Chain,
 	) -> Result<CompactBlockPrintable, chain::Error> {
 		let block = chain.get_block(&cb.hash())?;
 		let out_full = cb
 			.out_full()
 			.iter()
-			.map(|x| {
-				OutputPrintable::from_output(x, chain.clone(), Some(&block.header), false, true)
-			})
+			.map(|x| OutputPrintable::from_output(x, chain, Some(&block.header), false, true))
 			.collect::<Result<Vec<_>, _>>()?;
 		let kern_full = cb
 			.kern_full()

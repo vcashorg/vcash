@@ -20,7 +20,8 @@ use self::core::core::id::{ShortId, ShortIdentifiable};
 use self::core::core::transaction;
 use self::core::core::verifier_cache::VerifierCache;
 use self::core::core::{
-	Block, BlockHeader, BlockSums, Committed, Transaction, TxKernel, Weighting,
+	Block, BlockHeader, BlockSums, Committed, OutputIdentifier, TokenOutputIdentifier, Transaction,
+	TxKernel, Weighting,
 };
 use self::util::RwLock;
 use crate::types::{BlockChain, PoolEntry, PoolError};
@@ -29,7 +30,6 @@ use grin_util as util;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use util::secp::pedersen::Commitment;
 use util::static_secp_instance;
 
 pub struct Pool<B, V>
@@ -60,28 +60,11 @@ where
 	}
 
 	/// Does the transaction pool contain an entry for the given transaction?
-	pub fn contains_tx(&self, hash: Hash) -> bool {
-		self.entries.iter().any(|x| x.tx.hash() == hash)
-	}
-
-	pub fn get_tx(&self, hash: Hash) -> Option<Transaction> {
+	/// Transactions are compared by their kernels.
+	pub fn contains_tx(&self, tx: &Transaction) -> bool {
 		self.entries
 			.iter()
-			.find(|x| x.tx.hash() == hash)
-			.map(|x| x.tx.clone())
-	}
-
-	/// Query the tx pool for an individual tx matching the given public excess.
-	/// Used for checking for duplicate NRD kernels in the txpool.
-	pub fn retrieve_tx_by_kernel_excess(&self, excess: Commitment) -> Option<Transaction> {
-		for x in &self.entries {
-			for k in x.tx.kernels() {
-				if k.excess() == excess {
-					return Some(x.tx.clone());
-				}
-			}
-		}
-		None
+			.any(|x| x.tx.kernels() == tx.kernels() || x.tx.token_kernels() == tx.token_kernels())
 	}
 
 	/// Query the tx pool for an individual tx matching the given kernel hash.
@@ -140,7 +123,7 @@ where
 	/// does not exceed the provided max_weight (miner defined block weight).
 	pub fn prepare_mineable_transactions(
 		&self,
-		max_weight: usize,
+		max_weight: u64,
 	) -> Result<Vec<Transaction>, PoolError> {
 		let weighting = Weighting::AsLimitedTransaction(max_weight);
 
@@ -163,15 +146,22 @@ where
 		self.entries.iter().map(|x| x.tx.clone()).collect()
 	}
 
-	/// Return a single aggregate tx representing all txs in the txpool.
-	/// Returns None if the txpool is empty.
-	pub fn all_transactions_aggregate(&self) -> Result<Option<Transaction>, PoolError> {
-		let txs = self.all_transactions();
+	/// Return a single aggregate tx representing all txs in the pool.
+	/// Takes an optional "extra tx" to include in the aggregation.
+	/// Returns None if there is nothing to aggregate.
+	/// Returns the extra tx if provided and pool is empty.
+	pub fn all_transactions_aggregate(
+		&self,
+		extra_tx: Option<Transaction>,
+	) -> Result<Option<Transaction>, PoolError> {
+		let mut txs = self.all_transactions();
 		if txs.is_empty() {
-			return Ok(None);
+			return Ok(extra_tx);
 		}
 
-		let tx = transaction::aggregate(txs)?;
+		txs.extend(extra_tx);
+
+		let tx = transaction::aggregate(&txs)?;
 
 		// Validate the single aggregate transaction "as pool", not subject to tx weight limits.
 		tx.validate(Weighting::NoLimit, self.verifier_cache.clone())?;
@@ -185,7 +175,7 @@ where
 	pub fn add_to_pool(
 		&mut self,
 		entry: PoolEntry,
-		extra_txs: Vec<Transaction>,
+		extra_tx: Option<Transaction>,
 		header: &BlockHeader,
 	) -> Result<(), PoolError> {
 		// Combine all the txs from the pool with any extra txs provided.
@@ -196,7 +186,9 @@ where
 			return Err(PoolError::DuplicateTx);
 		}
 
-		txs.extend(extra_txs);
+		// Make sure we take extra_tx into consideration here.
+		// When adding to stempool we need to account for current txpool.
+		txs.extend(extra_tx);
 
 		let agg_tx = if txs.is_empty() {
 			// If we have nothing to aggregate then simply return the tx itself.
@@ -205,7 +197,7 @@ where
 			// Create a single aggregated tx from the existing pool txs and the
 			// new entry
 			txs.push(entry.tx.clone());
-			transaction::aggregate(txs)?
+			transaction::aggregate(&txs)?
 		};
 
 		// Validate aggregated tx (existing pool + new tx), ignoring tx weight limits.
@@ -274,7 +266,7 @@ where
 			candidate_txs.push(tx.clone());
 
 			// Build a single aggregate tx from candidate txs.
-			let agg_tx = transaction::aggregate(candidate_txs)?;
+			let agg_tx = transaction::aggregate(&candidate_txs)?;
 
 			// We know the tx is valid if the entire aggregate tx is valid.
 			if self.validate_raw_tx(&agg_tx, header, weighting).is_ok() {
@@ -283,6 +275,42 @@ where
 		}
 
 		Ok(valid_txs)
+	}
+
+	/// Lookup unspent outputs to be spent by the provided transaction.
+	/// We look for unspent outputs in the current txpool and then in the current utxo.
+	pub fn locate_spends(
+		&self,
+		tx: &Transaction,
+		extra_tx: Option<Transaction>,
+	) -> Result<(Vec<OutputIdentifier>, Vec<OutputIdentifier>), PoolError> {
+		let mut inputs: Vec<_> = tx.inputs().into();
+
+		let agg_tx = self
+			.all_transactions_aggregate(extra_tx)?
+			.unwrap_or(Transaction::empty());
+		let mut outputs: Vec<OutputIdentifier> = agg_tx
+			.outputs()
+			.iter()
+			.map(|out| out.identifier())
+			.collect();
+
+		// By applying cut_through to tx inputs and agg_tx outputs we can
+		// determine the outputs being spent from the pool and those still unspent
+		// that need to be looked up via the current utxo.
+		let mut empty_token_inputs: Vec<TokenOutputIdentifier> = Vec::new();
+		let mut empty_token_outputs: Vec<TokenOutputIdentifier> = Vec::new();
+		let (spent_utxo, _, _, _, _, spent_pool, _, _) = transaction::cut_through(
+			&mut inputs[..],
+			&mut outputs[..],
+			&mut empty_token_inputs,
+			&mut empty_token_outputs,
+		)?;
+
+		// Lookup remaining outputs to be spent from the current utxo.
+		let spent_utxo = self.blockchain.validate_inputs(&spent_utxo.into())?;
+
+		Ok((spent_pool.to_vec(), spent_utxo))
 	}
 
 	fn apply_tx_to_block_sums(
@@ -332,16 +360,9 @@ where
 	) -> Result<(), PoolError> {
 		let existing_entries = self.entries.clone();
 		self.entries.clear();
-
-		let mut extra_txs = vec![];
-		if let Some(extra_tx) = extra_tx {
-			extra_txs.push(extra_tx);
-		}
-
 		for x in existing_entries {
-			let _ = self.add_to_pool(x, extra_txs.clone(), header);
+			let _ = self.add_to_pool(x, extra_tx.clone(), header);
 		}
-
 		Ok(())
 	}
 
@@ -373,7 +394,8 @@ where
 			let mut insert_pos = None;
 			let mut is_rejected = false;
 
-			for input in entry.tx.inputs() {
+			let tx_inputs: Vec<_> = entry.tx.inputs().into();
+			for input in tx_inputs {
 				if rejected.contains(&input.commitment()) {
 					// Depends on a rejected tx, so reject this one.
 					is_rejected = true;
@@ -483,9 +505,11 @@ where
 		// Reject any txs where we see a matching tx kernel in the block.
 		// Also reject any txs where we see a conflicting tx,
 		// where an input is spent in a different tx.
+		let block_inputs: Vec<_> = block.inputs().into();
 		self.entries.retain(|x| {
+			let tx_inputs: Vec<_> = x.tx.inputs().into();
 			!x.tx.kernels().iter().any(|y| block.kernels().contains(y))
-				&& !x.tx.inputs().iter().any(|y| block.inputs().contains(y))
+				&& !tx_inputs.iter().any(|y| block_inputs.contains(y))
 		});
 		self.entries.retain(|x| {
 			!x.tx
@@ -544,7 +568,7 @@ impl Bucket {
 	) -> Result<Bucket, PoolError> {
 		let mut raw_txs = self.raw_txs.clone();
 		raw_txs.push(new_tx);
-		let agg_tx = transaction::aggregate(raw_txs.clone())?;
+		let agg_tx = transaction::aggregate(&raw_txs)?;
 		agg_tx.validate(weighting, verifier_cache)?;
 		Ok(Bucket {
 			fee_to_weight: agg_tx.fee_to_weight(),

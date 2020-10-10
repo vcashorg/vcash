@@ -164,13 +164,13 @@ pub const CUT_THROUGH_HORIZON: u32 = WEEK_HEIGHT_ADJUSTED as u32;
 pub const STATE_SYNC_THRESHOLD: u32 = 2 * DAY_HEIGHT_ADJUSTED as u32;
 
 /// Weight of an input when counted against the max block weight capacity
-pub const BLOCK_INPUT_WEIGHT: usize = 1;
+pub const BLOCK_INPUT_WEIGHT: u64 = 1;
 
 /// Weight of an output when counted against the max block weight capacity
-pub const BLOCK_OUTPUT_WEIGHT: usize = 21;
+pub const BLOCK_OUTPUT_WEIGHT: u64 = 21;
 
 /// Weight of a kernel when counted against the max block weight capacity
-pub const BLOCK_KERNEL_WEIGHT: usize = 3;
+pub const BLOCK_KERNEL_WEIGHT: u64 = 3;
 
 /// Total maximum block weight. At current sizes, this means a maximum
 /// theoretical size of:
@@ -184,7 +184,7 @@ pub const BLOCK_KERNEL_WEIGHT: usize = 3;
 /// `(1 * 2) + (21 * 2) + (3 * 1) = 47` (weight per tx)
 /// `40_000 / 47 = 851` (txs per block)
 ///
-pub const MAX_BLOCK_WEIGHT: usize = 100_000;
+pub const MAX_BLOCK_WEIGHT: u64 = 100_000;
 
 /// Support issue token tx height
 pub const SUPPORT_TOKEN_HEIGHT: u64 = 45_120;

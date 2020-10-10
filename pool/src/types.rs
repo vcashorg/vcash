@@ -15,14 +15,13 @@
 //! The primary module containing the implementations of the transaction pool
 //! and its top-level members.
 
-use chrono::prelude::{DateTime, Utc};
-
 use self::core::consensus;
 use self::core::core::block;
 use self::core::core::committed;
 use self::core::core::hash::Hash;
 use self::core::core::transaction::{self, Transaction};
-use self::core::core::{BlockHeader, BlockSums, BlockTokenSums};
+use self::core::core::{BlockHeader, BlockSums, BlockTokenSums, Inputs, OutputIdentifier};
+use chrono::prelude::*;
 use failure::Fail;
 use grin_core as core;
 use grin_keychain as keychain;
@@ -120,7 +119,7 @@ pub struct PoolConfig {
 	/// block from. Allows miners to restrict the maximum weight of their
 	/// blocks.
 	#[serde(default = "default_mineable_max_weight")]
-	pub mineable_max_weight: usize,
+	pub mineable_max_weight: u64,
 }
 
 impl Default for PoolConfig {
@@ -143,7 +142,7 @@ fn default_max_pool_size() -> usize {
 fn default_max_stempool_size() -> usize {
 	50_000
 }
-fn default_mineable_max_weight() -> usize {
+fn default_mineable_max_weight() -> u64 {
 	consensus::MAX_BLOCK_WEIGHT
 }
 
@@ -159,13 +158,23 @@ pub struct PoolEntry {
 	pub tx: Transaction,
 }
 
+impl PoolEntry {
+	pub fn new(tx: Transaction, src: TxSource) -> PoolEntry {
+		PoolEntry {
+			src,
+			tx_at: Utc::now(),
+			tx,
+		}
+	}
+}
+
 /// Used to make decisions based on transaction acceptance priority from
 /// various sources. For example, a node may want to bypass pool size
 /// restrictions when accepting a transaction from a local wallet.
 ///
 /// Most likely this will evolve to contain some sort of network identifier,
 /// once we get a better sense of what transaction building might look like.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum TxSource {
 	PushApi,
 	Broadcast,
@@ -266,13 +275,19 @@ impl From<committed::Error> for PoolError {
 pub trait BlockChain: Sync + Send {
 	/// Verify any coinbase outputs being spent
 	/// have matured sufficiently.
-	fn verify_coinbase_maturity(&self, tx: &transaction::Transaction) -> Result<(), PoolError>;
+	fn verify_coinbase_maturity(&self, inputs: &Inputs) -> Result<(), PoolError>;
 
 	/// Verify any coinbase outputs being spent
 	/// have matured sufficiently.
 	fn verify_tx_lock_height(&self, tx: &transaction::Transaction) -> Result<(), PoolError>;
 
+	/// Validate a transaction against the current utxo.
 	fn validate_tx(&self, tx: &Transaction) -> Result<(), PoolError>;
+
+	/// Validate inputs against the current utxo.
+	/// Returns the vec of output identifiers that would be spent
+	/// by these inputs if they can all be successfully spent.
+	fn validate_inputs(&self, inputs: &Inputs) -> Result<Vec<OutputIdentifier>, PoolError>;
 
 	fn chain_head(&self) -> Result<BlockHeader, PoolError>;
 

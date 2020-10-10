@@ -183,9 +183,9 @@ impl<'de> Visitor<'de> for PeerAddrs {
 				Ok(ip) => peers.push(PeerAddr(ip)),
 				// If that fails it's probably a DNS record
 				Err(_) => {
-					let socket_addrs = entry
-						.to_socket_addrs()
-						.unwrap_or_else(|_| panic!("Unable to resolve DNS: {}", entry));
+					let socket_addrs = entry.to_socket_addrs().map_err(|_| {
+						serde::de::Error::custom(format!("Unable to resolve DNS: {}", entry))
+					})?;
 					peers.append(&mut socket_addrs.map(PeerAddr).collect());
 				}
 			}
@@ -603,7 +603,8 @@ pub trait ChainAdapter: Sync + Send {
 	fn locate_headers(&self, locator: &[Hash]) -> Result<Vec<core::BlockHeader>, chain::Error>;
 
 	/// Gets a full block by its hash.
-	fn get_block(&self, h: Hash) -> Option<core::Block>;
+	/// Converts block to v2 compatibility if necessary (based on peer protocol version).
+	fn get_block(&self, h: Hash, peer_info: &PeerInfo) -> Option<core::Block>;
 
 	/// Provides a reading view into the current txhashset state as well as
 	/// the required indexes for a consumer to rewind to a consistant state

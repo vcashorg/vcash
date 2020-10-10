@@ -428,7 +428,7 @@ impl Writeable for KernelFeatures {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		// Care must be exercised when writing for hashing purposes.
 		// All kernels are hashed using original v1 serialization strategy.
-		if writer.serialization_mode() == ser::SerializationMode::Hash {
+		if writer.serialization_mode().is_hash_mode() {
 			return self.write_v1(writer);
 		}
 
@@ -557,9 +557,6 @@ pub enum Error {
 	InvalidProofMessage,
 	/// Error when verifying kernel sums via committed trait.
 	Committed(committed::Error),
-	/// Error when sums do not verify correctly during tx aggregation.
-	/// Likely a "double spend" across two unconfirmed txs.
-	AggregationError,
 	/// Validation error relating to cut-through (tx is spending its own
 	/// output).
 	CutThrough,
@@ -633,7 +630,7 @@ impl From<committed::Error> for Error {
 /// amount to zero.
 /// The signature signs the fee and the lock_height, which are retained for
 /// signature validation.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct TxKernel {
 	/// Options for a kernel's structure or use
 	pub features: KernelFeatures,
@@ -654,6 +651,8 @@ pub struct TxKernel {
 impl DefaultHashable for TxKernel {}
 hashable_ord!(TxKernel);
 
+/// We want to be able to put kernels in a hashset in the pool.
+/// So we need to be able to hash them.
 impl ::std::hash::Hash for TxKernel {
 	fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
 		let mut vec = Vec::new();
@@ -828,7 +827,7 @@ impl TxKernel {
 /// amount to zero.
 /// The signature signs the fee and the lock_height, which are retained for
 /// signature validation.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct TokenTxKernel {
 	/// Options for a kernel's structure or use
 	pub features: TokenKernelFeatures,
@@ -1039,7 +1038,7 @@ pub enum Weighting {
 	AsTransaction,
 	/// Tx representing a tx with artificially limited max_weight.
 	/// This is used when selecting mineable txs from the pool.
-	AsLimitedTransaction(usize),
+	AsLimitedTransaction(u64),
 	/// Tx represents a block (max block weight).
 	AsBlock,
 	/// No max weight limit (skip the weight check).
@@ -1047,10 +1046,10 @@ pub enum Weighting {
 }
 
 /// TransactionBody is a common abstraction for transaction and block
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TransactionBody {
 	/// List of inputs spent by the transaction.
-	pub inputs: Vec<Input>,
+	pub inputs: Inputs,
 	/// List of token inputs spent by the transaction.
 	pub token_inputs: Vec<TokenInput>,
 	/// List of outputs the transaction produces.
@@ -1063,26 +1062,28 @@ pub struct TransactionBody {
 	pub token_kernels: Vec<TokenTxKernel>,
 }
 
-/// PartialEq
-impl PartialEq for TransactionBody {
-	fn eq(&self, l: &TransactionBody) -> bool {
-		self.inputs == l.inputs
-			&& self.token_inputs == l.token_inputs
-			&& self.outputs == l.outputs
-			&& self.token_outputs == l.token_outputs
-			&& self.kernels == l.kernels
-			&& self.token_kernels == l.token_kernels
-	}
-}
-
 /// Implementation of Writeable for a body, defines how to
 /// write the body as binary.
 impl Writeable for TransactionBody {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		match writer.protocol_version().value() {
-			0..=1 => self.write_v1(writer),
-			2..=ProtocolVersion::MAX => self.write_v2(writer),
-		}
+		ser_multiwrite!(
+			writer,
+			[write_u64, self.inputs.len() as u64],
+			[write_u64, self.token_inputs.len() as u64],
+			[write_u64, self.outputs.len() as u64],
+			[write_u64, self.token_outputs.len() as u64],
+			[write_u64, self.kernels.len() as u64],
+			[write_u64, self.token_kernels.len() as u64]
+		);
+
+		self.inputs.write(writer)?;
+		self.token_inputs.write(writer)?;
+		self.outputs.write(writer)?;
+		self.token_outputs.write(writer)?;
+		self.kernels.write(writer)?;
+		self.token_kernels.write(writer)?;
+
+		Ok(())
 	}
 }
 
@@ -1091,15 +1092,71 @@ impl Writeable for TransactionBody {
 impl Readable for TransactionBody {
 	fn read<R: Reader>(reader: &mut R) -> Result<TransactionBody, ser::Error> {
 		match reader.protocol_version().value() {
-			0..=1 => TransactionBody::read_v1(reader),
-			2..=ProtocolVersion::MAX => TransactionBody::read_v2(reader),
+			0..=2 => return Err(ser::Error::UnexpectedProtocolVersion),
+			3..=ProtocolVersion::MAX => {
+				let (
+					input_len,
+					token_input_len,
+					output_len,
+					token_output_len,
+					kernel_len,
+					token_kernel_len,
+				) = ser_multiread!(reader, read_u64, read_u64, read_u64, read_u64, read_u64, read_u64);
+
+				// Quick block weight check before proceeding.
+				// Note: We use weight_as_block here (inputs have weight).
+				let tx_block_weight = TransactionBody::weight_as_block(
+					input_len,
+					output_len,
+					kernel_len,
+					token_input_len,
+					token_output_len,
+					token_kernel_len,
+				);
+
+				if tx_block_weight > global::max_block_weight() {
+					return Err(ser::Error::TooLargeReadErr);
+				}
+
+				// Read protocol version specific inputs.
+				let inputs = match reader.protocol_version().value() {
+					0..=3 => {
+						let inputs: Vec<Input> = read_multi(reader, input_len)?;
+						Inputs::from(inputs.as_slice())
+					}
+					4..=ser::ProtocolVersion::MAX => {
+						let inputs: Vec<CommitWrapper> = read_multi(reader, input_len)?;
+						Inputs::from(inputs.as_slice())
+					}
+				};
+				let token_inputs = read_multi(reader, token_input_len)?;
+				let outputs = read_multi(reader, output_len)?;
+				let token_outputs = read_multi(reader, token_output_len)?;
+				let kernels = read_multi(reader, kernel_len)?;
+				let token_kernels = read_multi(reader, token_kernel_len)?;
+
+				// Initialize tx body and verify everything is sorted.
+				let body = TransactionBody::init(
+					inputs,
+					&outputs,
+					&kernels,
+					&token_inputs,
+					&token_outputs,
+					&token_kernels,
+					true,
+				)
+				.map_err(|_| ser::Error::CorruptedData)?;
+
+				Ok(body)
+			}
 		}
 	}
 }
 
 impl Committed for TransactionBody {
 	fn inputs_committed(&self) -> Vec<Commitment> {
-		self.inputs.iter().map(|x| x.commitment()).collect()
+		let inputs: Vec<_> = self.inputs().into();
+		inputs.iter().map(|x| x.commitment()).collect()
 	}
 
 	fn outputs_committed(&self) -> Vec<Commitment> {
@@ -1127,9 +1184,9 @@ impl Committed for TransactionBody {
 		for token_output in self.token_outputs.iter() {
 			if token_output.is_token() {
 				let commit_vec = token_outputs_map
-					.entry(token_output.token_type)
+					.entry(token_output.token_type())
 					.or_insert(vec![]);
-				commit_vec.push(token_output.commit);
+				commit_vec.push(token_output.commitment());
 			}
 		}
 
@@ -1157,130 +1214,23 @@ impl Default for TransactionBody {
 	}
 }
 
+impl From<Transaction> for TransactionBody {
+	fn from(tx: Transaction) -> Self {
+		tx.body
+	}
+}
+
 impl TransactionBody {
 	/// Creates a new empty transaction (no inputs or outputs, zero fee).
 	pub fn empty() -> TransactionBody {
 		TransactionBody {
-			inputs: vec![],
+			inputs: Inputs::default(),
 			token_inputs: vec![],
 			outputs: vec![],
 			token_outputs: vec![],
 			kernels: vec![],
 			token_kernels: vec![],
 		}
-	}
-
-	fn write_v1<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		ser_multiwrite!(
-			writer,
-			[write_u64, self.inputs.len() as u64],
-			[write_u64, self.outputs.len() as u64],
-			[write_u64, self.kernels.len() as u64]
-		);
-
-		self.inputs.write(writer)?;
-		self.outputs.write(writer)?;
-		self.kernels.write(writer)?;
-
-		Ok(())
-	}
-
-	fn write_v2<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		ser_multiwrite!(
-			writer,
-			[write_u64, self.inputs.len() as u64],
-			[write_u64, self.token_inputs.len() as u64],
-			[write_u64, self.outputs.len() as u64],
-			[write_u64, self.token_outputs.len() as u64],
-			[write_u64, self.kernels.len() as u64],
-			[write_u64, self.token_kernels.len() as u64]
-		);
-
-		self.inputs.write(writer)?;
-		self.token_inputs.write(writer)?;
-		self.outputs.write(writer)?;
-		self.token_outputs.write(writer)?;
-		self.kernels.write(writer)?;
-		self.token_kernels.write(writer)?;
-
-		Ok(())
-	}
-
-	fn read_v1<R: Reader>(reader: &mut R) -> Result<TransactionBody, ser::Error> {
-		let (input_len, output_len, kernel_len) =
-			ser_multiread!(reader, read_u64, read_u64, read_u64);
-
-		// Quick block weight check before proceeding.
-		// Note: We use weight_as_block here (inputs have weight).
-		let tx_block_weight = TransactionBody::weight_as_block(
-			input_len as usize,
-			output_len as usize,
-			kernel_len as usize,
-			0,
-			0,
-			0,
-		);
-
-		if tx_block_weight > global::max_block_weight() {
-			return Err(ser::Error::TooLargeReadErr);
-		}
-
-		let inputs = read_multi(reader, input_len)?;
-		let outputs = read_multi(reader, output_len)?;
-		let kernels = read_multi(reader, kernel_len)?;
-
-		// Initialize tx body and verify everything is sorted.
-		let body = TransactionBody::init(inputs, outputs, kernels, vec![], vec![], vec![], true)
-			.map_err(|_| ser::Error::CorruptedData)?;
-
-		Ok(body)
-	}
-
-	fn read_v2<R: Reader>(reader: &mut R) -> Result<TransactionBody, ser::Error> {
-		let (
-			input_len,
-			token_input_len,
-			output_len,
-			token_output_len,
-			kernel_len,
-			token_kernel_len,
-		) = ser_multiread!(reader, read_u64, read_u64, read_u64, read_u64, read_u64, read_u64);
-
-		// Quick block weight check before proceeding.
-		// Note: We use weight_as_block here (inputs have weight).
-		let tx_block_weight = TransactionBody::weight_as_block(
-			input_len as usize,
-			output_len as usize,
-			kernel_len as usize,
-			token_input_len as usize,
-			token_output_len as usize,
-			token_kernel_len as usize,
-		);
-
-		if tx_block_weight > global::max_block_weight() {
-			return Err(ser::Error::TooLargeReadErr);
-		}
-
-		let inputs = read_multi(reader, input_len)?;
-		let token_inputs = read_multi(reader, token_input_len)?;
-		let outputs = read_multi(reader, output_len)?;
-		let token_outputs = read_multi(reader, token_output_len)?;
-		let kernels = read_multi(reader, kernel_len)?;
-		let token_kernels = read_multi(reader, token_kernel_len)?;
-
-		// Initialize tx body and verify everything is sorted.
-		let body = TransactionBody::init(
-			inputs,
-			outputs,
-			kernels,
-			token_inputs,
-			token_outputs,
-			token_kernels,
-			true,
-		)
-		.map_err(|_| ser::Error::CorruptedData)?;
-
-		Ok(body)
 	}
 
 	/// Sort the inputs|outputs|kernels.
@@ -1297,21 +1247,21 @@ impl TransactionBody {
 	/// the provided inputs, outputs and kernels.
 	/// Guarantees inputs, outputs, kernels are sorted lexicographically.
 	pub fn init(
-		inputs: Vec<Input>,
-		outputs: Vec<Output>,
-		kernels: Vec<TxKernel>,
-		token_inputs: Vec<TokenInput>,
-		token_outputs: Vec<TokenOutput>,
-		token_kernels: Vec<TokenTxKernel>,
+		inputs: Inputs,
+		outputs: &[Output],
+		kernels: &[TxKernel],
+		token_inputs: &[TokenInput],
+		token_outputs: &[TokenOutput],
+		token_kernels: &[TokenTxKernel],
 		verify_sorted: bool,
 	) -> Result<TransactionBody, Error> {
 		let mut body = TransactionBody {
 			inputs,
-			token_inputs,
-			outputs,
-			token_outputs,
-			kernels,
-			token_kernels,
+			token_inputs: token_inputs.to_vec(),
+			outputs: outputs.to_vec(),
+			token_outputs: token_outputs.to_vec(),
+			kernels: kernels.to_vec(),
+			token_kernels: token_kernels.to_vec(),
 		};
 
 		if verify_sorted {
@@ -1325,13 +1275,59 @@ impl TransactionBody {
 		Ok(body)
 	}
 
+	/// Transaction inputs.
+	pub fn inputs(&self) -> Inputs {
+		self.inputs.clone()
+	}
+
+	/// Transaction token_inputs.
+	pub fn token_inputs(&self) -> &[TokenInput] {
+		&self.token_inputs
+	}
+
+	/// Transaction outputs.
+	pub fn outputs(&self) -> &[Output] {
+		&self.outputs
+	}
+
+	/// Transaction token_outputs.
+	pub fn token_outputs(&self) -> &[TokenOutput] {
+		&self.token_outputs
+	}
+
+	/// Transaction kernels.
+	pub fn kernels(&self) -> &[TxKernel] {
+		&self.kernels
+	}
+
+	/// Transaction token_kernels.
+	pub fn token_kernels(&self) -> &[TokenTxKernel] {
+		&self.token_kernels
+	}
+
 	/// Builds a new body with the provided inputs added. Existing
 	/// inputs, if any, are kept intact.
 	/// Sort order is maintained.
 	pub fn with_input(mut self, input: Input) -> TransactionBody {
-		if let Err(e) = self.inputs.binary_search(&input) {
-			self.inputs.insert(e, input)
+		match &mut self.inputs {
+			Inputs::CommitOnly(inputs) => {
+				let commit = input.into();
+				if let Err(e) = inputs.binary_search(&commit) {
+					inputs.insert(e, commit)
+				};
+			}
+			Inputs::FeaturesAndCommit(inputs) => {
+				if let Err(e) = inputs.binary_search(&input) {
+					inputs.insert(e, input)
+				};
+			}
 		};
+		self
+	}
+
+	/// Fully replace inputs.
+	pub fn replace_inputs(mut self, inputs: Inputs) -> TransactionBody {
+		self.inputs = inputs;
 		self
 	}
 
@@ -1345,14 +1341,26 @@ impl TransactionBody {
 		self
 	}
 
+	/// Fully replace outputs.
+	pub fn replace_outputs(mut self, outputs: &[Output]) -> TransactionBody {
+		self.outputs = outputs.to_vec();
+		self
+	}
+
 	/// Builds a new body with the provided token inputs added. Existing
 	/// token inputs, if any, are kept intact.
 	/// Sort order is maintained.
-	pub fn with_token_input(mut self, input: TokenInput) -> TransactionBody {
+	pub fn with_token_input(mut self, token_input: TokenInput) -> TransactionBody {
 		self.token_inputs
-			.binary_search(&input)
+			.binary_search(&token_input)
 			.err()
-			.map(|e| self.token_inputs.insert(e, input));
+			.map(|e| self.token_inputs.insert(e, token_input));
+		self
+	}
+
+	/// Fully replace token inputs.
+	pub fn replace_token_inputs(mut self, token_input: &[TokenInput]) -> TransactionBody {
+		self.token_inputs = token_input.to_vec();
 		self
 	}
 
@@ -1364,6 +1372,12 @@ impl TransactionBody {
 			.binary_search(&output)
 			.err()
 			.map(|e| self.token_outputs.insert(e, output));
+		self
+	}
+
+	/// Fully replace token outputs.
+	pub fn replace_token_outputs(mut self, token_outputs: &[TokenOutput]) -> TransactionBody {
+		self.token_outputs = token_outputs.to_vec();
 		self
 	}
 
@@ -1396,9 +1410,9 @@ impl TransactionBody {
 	}
 
 	/// Builds a new TransactionBody replacing any existing token kernels with the provided token kernel.
-	pub fn replace_token_kernel(mut self, kernel: TokenTxKernel) -> TransactionBody {
+	pub fn replace_token_kernel(mut self, token_kernel: TokenTxKernel) -> TransactionBody {
 		self.token_kernels.clear();
-		self.token_kernels.push(kernel);
+		self.token_kernels.push(token_kernel);
 		self
 	}
 
@@ -1420,26 +1434,26 @@ impl TransactionBody {
 	}
 
 	/// Calculate transaction weight
-	pub fn body_weight(&self) -> usize {
+	pub fn body_weight(&self) -> u64 {
 		TransactionBody::weight(
-			self.inputs.len(),
-			self.outputs.len(),
-			self.kernels.len(),
-			self.token_inputs.len(),
-			self.token_outputs.len(),
-			self.token_kernels.len(),
+			self.inputs.len() as u64,
+			self.outputs.len() as u64,
+			self.kernels.len() as u64,
+			self.token_inputs.len() as u64,
+			self.token_outputs.len() as u64,
+			self.token_kernels.len() as u64,
 		)
 	}
 
 	/// Calculate weight of transaction using block weighing
-	pub fn body_weight_as_block(&self) -> usize {
+	pub fn body_weight_as_block(&self) -> u64 {
 		TransactionBody::weight_as_block(
-			self.inputs.len(),
-			self.outputs.len(),
-			self.kernels.len(),
-			self.token_inputs.len(),
-			self.token_outputs.len(),
-			self.token_kernels.len(),
+			self.inputs.len() as u64,
+			self.outputs.len() as u64,
+			self.kernels.len() as u64,
+			self.token_inputs.len() as u64,
+			self.token_outputs.len() as u64,
+			self.token_kernels.len() as u64,
 		)
 	}
 
@@ -1447,43 +1461,43 @@ impl TransactionBody {
 	/// consensus critical and compared to block weight, incentivizes spending
 	/// more outputs (to lower the fee).
 	pub fn weight(
-		input_len: usize,
-		output_len: usize,
-		kernel_len: usize,
-		token_input_len: usize,
-		token_output_len: usize,
-		token_kernel_len: usize,
-	) -> usize {
-		let body_weight = output_len
+		num_inputs: u64,
+		num_outputs: u64,
+		num_kernels: u64,
+		num_token_inputs: u64,
+		num_token_outputs: u64,
+		num_token_kernels: u64,
+	) -> u64 {
+		let body_weight = num_outputs
 			.saturating_mul(4)
-			.saturating_add(kernel_len)
-			.saturating_sub(input_len);
-		let body_token_weight = token_output_len
+			.saturating_add(num_kernels)
+			.saturating_sub(num_inputs);
+		let body_token_weight = num_token_outputs
 			.saturating_mul(4)
-			.saturating_add(token_kernel_len)
-			.saturating_sub(token_input_len);
+			.saturating_add(num_token_kernels)
+			.saturating_sub(num_token_inputs);
 		max(body_weight + body_token_weight, 1)
 	}
 
 	/// Calculate transaction weight using block weighing from transaction
 	/// details. Consensus critical and uses consensus weight values.
 	pub fn weight_as_block(
-		input_len: usize,
-		output_len: usize,
-		kernel_len: usize,
-		token_input_len: usize,
-		token_output_len: usize,
-		token_kernel_len: usize,
-	) -> usize {
-		let weight = input_len
+		num_inputs: u64,
+		num_outputs: u64,
+		num_kernels: u64,
+		num_token_inputs: u64,
+		num_token_outputs: u64,
+		num_token_kernels: u64,
+	) -> u64 {
+		let weight = num_inputs
 			.saturating_mul(consensus::BLOCK_INPUT_WEIGHT)
-			.saturating_add(output_len.saturating_mul(consensus::BLOCK_OUTPUT_WEIGHT))
-			.saturating_add(kernel_len.saturating_mul(consensus::BLOCK_KERNEL_WEIGHT));
+			.saturating_add(num_outputs.saturating_mul(consensus::BLOCK_OUTPUT_WEIGHT))
+			.saturating_add(num_kernels.saturating_mul(consensus::BLOCK_KERNEL_WEIGHT));
 
-		let token_weight = token_input_len
+		let token_weight = num_token_inputs
 			.saturating_mul(consensus::BLOCK_INPUT_WEIGHT)
-			.saturating_add(token_output_len.saturating_mul(consensus::BLOCK_OUTPUT_WEIGHT))
-			.saturating_add(token_kernel_len.saturating_mul(consensus::BLOCK_KERNEL_WEIGHT));
+			.saturating_add(num_token_outputs.saturating_mul(consensus::BLOCK_OUTPUT_WEIGHT))
+			.saturating_add(num_token_kernels.saturating_mul(consensus::BLOCK_KERNEL_WEIGHT));
 
 		weight + token_weight
 	}
@@ -1592,20 +1606,46 @@ impl TransactionBody {
 		Ok(())
 	}
 
+	// Returns a single sorted vec of all input and output commitments.
+	// This gives us a convenient way of verifying cut_through.
+	fn inputs_outputs_committed(&self) -> Vec<Commitment> {
+		let mut commits = self.inputs_committed();
+		commits.extend_from_slice(self.outputs_committed().as_slice());
+		commits.sort_unstable();
+		commits
+	}
+
+	fn token_inputs_outputs_committed(&self) -> HashMap<TokenKey, Vec<Commitment>> {
+		let mut token_commits_map: HashMap<TokenKey, Vec<Commitment>> = HashMap::new();
+
+		let input_commits_map = self.token_inputs_committed();
+		let output_commits_map = self.token_outputs_committed();
+		for (output_token_key, mut output_commits) in output_commits_map {
+			let input_commits = input_commits_map.get(&output_token_key);
+			output_commits.extend_from_slice(input_commits.unwrap_or(&vec![]).as_slice());
+			output_commits.sort_unstable();
+			token_commits_map.insert(output_token_key, output_commits);
+		}
+
+		token_commits_map
+	}
+
 	// Verify that no input is spending an output from the same block.
-	// Assumes inputs and outputs are sorted
+	// The inputs and outputs are not guaranteed to be sorted consistently once we support "commit only" inputs.
+	// We need to allocate as we need to sort the commitments so we keep this very simple and just look
+	// for duplicates across all input and output commitments.
 	fn verify_cut_through(&self) -> Result<(), Error> {
-		let mut inputs = self.inputs.iter().map(|x| x.hash()).peekable();
-		let mut outputs = self.outputs.iter().map(|x| x.hash()).peekable();
-		while let (Some(ih), Some(oh)) = (inputs.peek(), outputs.peek()) {
-			match ih.cmp(oh) {
-				Ordering::Less => {
-					inputs.next();
-				}
-				Ordering::Greater => {
-					outputs.next();
-				}
-				Ordering::Equal => {
+		let commits = self.inputs_outputs_committed();
+		for pair in commits.windows(2) {
+			if pair[0] == pair[1] {
+				return Err(Error::CutThrough);
+			}
+		}
+
+		let token_commits_map = self.token_inputs_outputs_committed();
+		for (_, output_commits) in token_commits_map {
+			for pair in output_commits.windows(2) {
+				if pair[0] == pair[1] {
 					return Err(Error::CutThrough);
 				}
 			}
@@ -1683,7 +1723,7 @@ impl TransactionBody {
 			.token_outputs
 			.iter()
 			.filter(|x| x.is_tokenissue())
-			.all(|x| output_token_key_set.insert(x.token_type))
+			.all(|x| output_token_key_set.insert(x.token_type()))
 		{
 			return Err(Error::IssueTokenKeyRepeated);
 		}
@@ -1743,7 +1783,7 @@ impl TransactionBody {
 			let mut commits = vec![];
 			let mut proofs = vec![];
 			for x in &outputs {
-				commits.push(x.commit);
+				commits.push(x.commitment());
 				proofs.push(x.proof);
 			}
 			Output::batch_verify_proofs(&commits, &proofs)?;
@@ -1760,7 +1800,7 @@ impl TransactionBody {
 			let mut commits = vec![];
 			let mut proofs = vec![];
 			for x in &token_outputs {
-				commits.push(x.commit);
+				commits.push(x.commitment());
 				proofs.push(x.proof);
 			}
 			Output::batch_verify_proofs(&commits, &proofs)?;
@@ -1816,12 +1856,6 @@ impl DefaultHashable for Transaction {}
 impl PartialEq for Transaction {
 	fn eq(&self, tx: &Transaction) -> bool {
 		self.body == tx.body && self.offset == tx.offset
-	}
-}
-
-impl Into<TransactionBody> for Transaction {
-	fn into(self) -> TransactionBody {
-		self.body
 	}
 }
 
@@ -1897,15 +1931,13 @@ impl Transaction {
 	/// Creates a new transaction initialized with
 	/// the provided inputs, outputs, kernels
 	pub fn new(
-		inputs: Vec<Input>,
-		outputs: Vec<Output>,
-		token_inputs: Vec<TokenInput>,
-		token_outputs: Vec<TokenOutput>,
-		kernels: Vec<TxKernel>,
-		token_kernels: Vec<TokenTxKernel>,
+		inputs: Inputs,
+		outputs: &[Output],
+		token_inputs: &[TokenInput],
+		token_outputs: &[TokenOutput],
+		kernels: &[TxKernel],
+		token_kernels: &[TokenTxKernel],
 	) -> Transaction {
-		let offset = BlindingFactor::zero();
-
 		// Initialize a new tx body and sort everything.
 		let body = TransactionBody::init(
 			inputs,
@@ -1918,7 +1950,10 @@ impl Transaction {
 		)
 		.expect("sorting, not verifying");
 
-		Transaction { offset, body }
+		Transaction {
+			offset: BlindingFactor::zero(),
+			body,
+		}
 	}
 
 	/// Creates a new transaction using this transaction as a template
@@ -2004,63 +2039,33 @@ impl Transaction {
 	}
 
 	/// Get inputs
-	pub fn inputs(&self) -> &Vec<Input> {
-		&self.body.inputs
+	pub fn inputs(&self) -> Inputs {
+		self.body.inputs()
 	}
 
-	/// Get inputs mutable
-	pub fn inputs_mut(&mut self) -> &mut Vec<Input> {
-		&mut self.body.inputs
-	}
-
-	/// Get outputs
-	pub fn outputs(&self) -> &Vec<Output> {
-		&self.body.outputs
-	}
-
-	/// Get outputs mutable
-	pub fn outputs_mut(&mut self) -> &mut Vec<Output> {
-		&mut self.body.outputs
-	}
-
-	/// Get inputs
+	/// Get token inputs
 	pub fn token_inputs(&self) -> &Vec<TokenInput> {
 		&self.body.token_inputs
 	}
 
-	/// Get inputs mutable
-	pub fn token_inputs_mut(&mut self) -> &mut Vec<TokenInput> {
-		&mut self.body.token_inputs
+	/// Get outputs
+	pub fn outputs(&self) -> &[Output] {
+		&self.body.outputs()
 	}
 
-	/// Get outputs
+	/// Get token outputs
 	pub fn token_outputs(&self) -> &Vec<TokenOutput> {
 		&self.body.token_outputs
 	}
 
-	/// Get outputs mutable
-	pub fn token_outputs_mut(&mut self) -> &mut Vec<TokenOutput> {
-		&mut self.body.token_outputs
-	}
-
 	/// Get kernels
-	pub fn kernels(&self) -> &Vec<TxKernel> {
-		&self.body.kernels
-	}
-
-	/// Get kernels mut
-	pub fn kernels_mut(&mut self) -> &mut Vec<TxKernel> {
-		&mut self.body.kernels
+	pub fn kernels(&self) -> &[TxKernel] {
+		&self.body.kernels()
 	}
 
 	/// Get token kernels
 	pub fn token_kernels(&self) -> &Vec<TokenTxKernel> {
 		&self.body.token_kernels
-	}
-
-	/// Get token kernels mut
-	pub fn token_kernels_mut(&mut self) -> &mut Vec<TokenTxKernel> {
-		&mut self.body.token_kernels
 	}
 
 	/// Total fee for a transaction is the sum of fees of all kernels.
@@ -2116,24 +2121,24 @@ impl Transaction {
 	}
 
 	/// Calculate transaction weight
-	pub fn tx_weight(&self) -> usize {
+	pub fn tx_weight(&self) -> u64 {
 		self.body.body_weight()
 	}
 
 	/// Calculate transaction weight as a block
-	pub fn tx_weight_as_block(&self) -> usize {
+	pub fn tx_weight_as_block(&self) -> u64 {
 		self.body.body_weight_as_block()
 	}
 
 	/// Calculate transaction weight from transaction details
 	pub fn weight(
-		input_len: usize,
-		output_len: usize,
-		kernel_len: usize,
-		token_input_len: usize,
-		token_output_len: usize,
-		token_kernel_len: usize,
-	) -> usize {
+		input_len: u64,
+		output_len: u64,
+		kernel_len: u64,
+		token_input_len: u64,
+		token_output_len: u64,
+		token_kernel_len: u64,
+	) -> u64 {
 		TransactionBody::weight(
 			input_len,
 			output_len,
@@ -2145,33 +2150,62 @@ impl Transaction {
 	}
 }
 
-/// Matches any output with a potential spending input, eliminating them
-/// from the Vec. Provides a simple way to cut-through a block or aggregated
-/// transaction. The elimination is stable with respect to the order of inputs
-/// and outputs.
-pub fn cut_through(
-	inputs: &mut Vec<Input>,
-	outputs: &mut Vec<Output>,
-	token_inputs: &mut Vec<TokenInput>,
-	token_outputs: &mut Vec<TokenOutput>,
-) -> Result<(), Error> {
-	// assemble output commitments set, checking they're all unique
-	outputs.sort_unstable();
-	if outputs.windows(2).any(|pair| pair[0] == pair[1]) {
-		return Err(Error::AggregationError);
-	}
-	inputs.sort_unstable();
+/// Takes a slice of inputs and a slice of outputs and applies "cut-through"
+/// eliminating any input/output pairs with input spending output.
+/// Returns new slices with cut-through elements removed.
+/// Also returns slices of the cut-through elements themselves.
+/// Note: Takes slices of _anything_ that is AsRef<Commitment> for greater flexibility.
+/// So we can cut_through inputs and outputs but we can also cut_through inputs and output identifiers.
+/// Or we can get crazy and cut_through inputs with other inputs to identify intersection and difference etc.
+///
+/// Example:
+/// Inputs: [A, B, C]
+/// Outputs: [C, D, E]
+/// Returns: ([A, B], [D, E], [C], [C]) # element C is cut-through
+pub fn cut_through<'a, 'b, 'c, 'd, T, U, V, W>(
+	inputs: &'a mut [T],
+	outputs: &'b mut [U],
+	token_inputs: &'c mut [V],
+	token_outputs: &'d mut [W],
+) -> Result<
+	(
+		&'a [T],
+		&'b [U],
+		&'c [V],
+		&'d [W],
+		&'a [T],
+		&'b [U],
+		&'c [V],
+		&'d [W],
+	),
+	Error,
+>
+where
+	T: AsRef<Commitment> + Ord,
+	U: AsRef<Commitment> + Ord,
+	V: AsRef<Commitment> + Ord,
+	W: AsRef<Commitment> + Ord,
+{
+	// Make sure inputs and outputs are sorted consistently as we will iterate over both.
+	inputs.sort_unstable_by_key(|x| *x.as_ref());
+	outputs.sort_unstable_by_key(|x| *x.as_ref());
+	token_inputs.sort_unstable_by_key(|x| *x.as_ref());
+	token_outputs.sort_unstable_by_key(|x| *x.as_ref());
+
 	let mut inputs_idx = 0;
 	let mut outputs_idx = 0;
 	let mut ncut = 0;
 	while inputs_idx < inputs.len() && outputs_idx < outputs.len() {
-		match inputs[inputs_idx].hash().cmp(&outputs[outputs_idx].hash()) {
+		match inputs[inputs_idx]
+			.as_ref()
+			.cmp(&outputs[outputs_idx].as_ref())
+		{
 			Ordering::Less => {
-				inputs[inputs_idx - ncut] = inputs[inputs_idx];
+				inputs.swap(inputs_idx - ncut, inputs_idx);
 				inputs_idx += 1;
 			}
 			Ordering::Greater => {
-				outputs[outputs_idx - ncut] = outputs[outputs_idx];
+				outputs.swap(outputs_idx - ncut, outputs_idx);
 				outputs_idx += 1;
 			}
 			Ordering::Equal => {
@@ -2181,71 +2215,131 @@ pub fn cut_through(
 			}
 		}
 	}
-	// Cut elements that have already been copied
-	outputs.drain(outputs_idx - ncut..outputs_idx);
-	inputs.drain(inputs_idx - ncut..inputs_idx);
 
-	token_outputs.sort_unstable();
-	if token_outputs.windows(2).any(|pair| pair[0] == pair[1]) {
-		return Err(Error::AggregationError);
+	let mut token_inputs_idx = 0;
+	let mut token_outputs_idx = 0;
+	let mut token_ncut = 0;
+	while token_inputs_idx < token_inputs.len() && token_outputs_idx < token_outputs.len() {
+		match token_inputs[token_inputs_idx]
+			.as_ref()
+			.cmp(&token_outputs[token_outputs_idx].as_ref())
+		{
+			Ordering::Less => {
+				token_inputs.swap(token_inputs_idx - token_ncut, token_inputs_idx);
+				token_inputs_idx += 1;
+			}
+			Ordering::Greater => {
+				token_outputs.swap(token_outputs_idx - token_ncut, token_outputs_idx);
+				token_outputs_idx += 1;
+			}
+			Ordering::Equal => {
+				token_inputs_idx += 1;
+				token_outputs_idx += 1;
+				token_ncut += 1;
+			}
+		}
 	}
+
+	// Make sure we move any the remaining inputs into the slice to be returned.
+	while inputs_idx < inputs.len() {
+		inputs.swap(inputs_idx - ncut, inputs_idx);
+		inputs_idx += 1;
+	}
+
+	// Make sure we move any the remaining outputs into the slice to be returned.
+	while outputs_idx < outputs.len() {
+		outputs.swap(outputs_idx - ncut, outputs_idx);
+		outputs_idx += 1;
+	}
+
+	// Make sure we move any the remaining token inputs into the slice to be returned.
+	while token_inputs_idx < token_inputs.len() {
+		token_inputs.swap(token_inputs_idx - token_ncut, token_inputs_idx);
+		token_inputs_idx += 1;
+	}
+
+	// Make sure we move any the remaining token outputs into the slice to be returned.
+	while token_outputs_idx < token_outputs.len() {
+		token_outputs.swap(token_outputs_idx - token_ncut, token_outputs_idx);
+		token_outputs_idx += 1;
+	}
+
+	// Split inputs and outputs slices into non-cut-through and cut-through slices.
+	let (inputs, inputs_cut) = inputs.split_at_mut(inputs.len() - ncut);
+	let (outputs, outputs_cut) = outputs.split_at_mut(outputs.len() - ncut);
+
+	// Split token inputs and token outputs slices into non-cut-through and cut-through slices.
+	let (token_inputs, token_inputs_cut) =
+		token_inputs.split_at_mut(token_inputs.len() - token_ncut);
+	let (token_outputs, token_outputs_cut) =
+		token_outputs.split_at_mut(token_outputs.len() - token_ncut);
+
+	// Resort all the new slices.
+	inputs.sort_unstable();
+	outputs.sort_unstable();
+	inputs_cut.sort_unstable();
+	outputs_cut.sort_unstable();
 	token_inputs.sort_unstable();
-	let mut inputs_idx = 0;
-	let mut outputs_idx = 0;
-	let mut ncut = 0;
-	while inputs_idx < token_inputs.len() && outputs_idx < token_outputs.len() {
-		let token_input = token_inputs[inputs_idx];
-		let token_output = token_outputs[outputs_idx];
-		match token_input.hash().cmp(&token_output.hash()) {
-			Ordering::Less => {
-				token_inputs[inputs_idx - ncut] = token_input;
-				inputs_idx += 1;
-			}
-			Ordering::Greater => {
-				token_outputs[outputs_idx - ncut] = token_output;
-				outputs_idx += 1;
-			}
-			Ordering::Equal => {
-				inputs_idx += 1;
-				outputs_idx += 1;
-				ncut += 1;
-				if token_input.token_type != token_output.token_type {
-					return Err(Error::TokenTypeMismatch);
-				}
-			}
-		}
-	}
-	// Cut elements that have already been copied
-	token_outputs.drain(outputs_idx - ncut..outputs_idx);
-	token_inputs.drain(inputs_idx - ncut..inputs_idx);
+	token_outputs.sort_unstable();
+	token_inputs_cut.sort_unstable();
+	token_outputs_cut.sort_unstable();
 
-	Ok(())
+	// Check we have no duplicate inputs after cut-through.
+	if inputs.windows(2).any(|pair| pair[0] == pair[1]) {
+		return Err(Error::CutThrough);
+	}
+
+	// Check we have no duplicate outputs after cut-through.
+	if outputs.windows(2).any(|pair| pair[0] == pair[1]) {
+		return Err(Error::CutThrough);
+	}
+
+	// Check we have no duplicate token inputs after cut-through.
+	if token_inputs.windows(2).any(|pair| pair[0] == pair[1]) {
+		return Err(Error::CutThrough);
+	}
+
+	// Check we have no duplicate token outputs after cut-through.
+	if token_outputs.windows(2).any(|pair| pair[0] == pair[1]) {
+		return Err(Error::CutThrough);
+	}
+
+	Ok((
+		inputs,
+		outputs,
+		token_inputs,
+		token_outputs,
+		inputs_cut,
+		outputs_cut,
+		token_inputs_cut,
+		token_outputs_cut,
+	))
 }
 
 /// Aggregate a vec of txs into a multi-kernel tx with cut_through.
-pub fn aggregate(mut txs: Vec<Transaction>) -> Result<Transaction, Error> {
+pub fn aggregate(txs: &[Transaction]) -> Result<Transaction, Error> {
 	// convenience short-circuiting
 	if txs.is_empty() {
 		return Ok(Transaction::empty());
 	} else if txs.len() == 1 {
-		return Ok(txs.pop().unwrap());
-	}
-	let mut n_inputs = 0;
-	let mut n_outputs = 0;
-	let mut n_kernels = 0;
-	let mut n_token_inputs = 0;
-	let mut n_token_outputs = 0;
-	let mut n_token_kernels = 0;
-	for tx in txs.iter() {
-		n_inputs += tx.body.inputs.len();
-		n_outputs += tx.body.outputs.len();
-		n_kernels += tx.body.kernels.len();
-		n_token_inputs += tx.body.token_inputs.len();
-		n_token_outputs += tx.body.token_outputs.len();
-		n_token_kernels += tx.body.token_kernels.len();
+		return Ok(txs[0].clone());
 	}
 
-	let mut inputs: Vec<Input> = Vec::with_capacity(n_inputs);
+	let (n_inputs, n_outputs, n_kernels, n_token_inputs, n_token_outputs, n_token_kernels) =
+		txs.iter().fold(
+			(0, 0, 0, 0, 0, 0),
+			|(inputs, outputs, kernels, token_inputs, token_outputs, token_kernels), tx| {
+				(
+					inputs + tx.inputs().len(),
+					outputs + tx.outputs().len(),
+					kernels + tx.kernels().len(),
+					token_inputs + tx.token_inputs().len(),
+					token_outputs + tx.token_outputs().len(),
+					token_kernels + tx.token_kernels().len(),
+				)
+			},
+		);
+	let mut inputs: Vec<CommitWrapper> = Vec::with_capacity(n_inputs);
 	let mut outputs: Vec<Output> = Vec::with_capacity(n_outputs);
 	let mut kernels: Vec<TxKernel> = Vec::with_capacity(n_kernels);
 	let mut token_inputs: Vec<TokenInput> = Vec::with_capacity(n_token_inputs);
@@ -2255,29 +2349,25 @@ pub fn aggregate(mut txs: Vec<Transaction>) -> Result<Transaction, Error> {
 	// we will sum these together at the end to give us the overall offset for the
 	// transaction
 	let mut kernel_offsets: Vec<BlindingFactor> = Vec::with_capacity(txs.len());
-	for mut tx in txs {
+	for tx in txs {
 		// we will sum these later to give a single aggregate offset
-		kernel_offsets.push(tx.offset);
+		kernel_offsets.push(tx.offset.clone());
 
-		inputs.append(&mut tx.body.inputs);
-		outputs.append(&mut tx.body.outputs);
-		kernels.append(&mut tx.body.kernels);
-		token_inputs.append(&mut tx.body.token_inputs);
-		token_outputs.append(&mut tx.body.token_outputs);
-		token_kernels.append(&mut tx.body.token_kernels);
+		let tx_inputs: Vec<_> = tx.inputs().into();
+		inputs.extend_from_slice(&tx_inputs);
+		outputs.extend_from_slice(tx.outputs());
+		kernels.extend_from_slice(tx.kernels());
+		token_inputs.extend_from_slice(&tx.body.token_inputs());
+		token_outputs.extend_from_slice(&tx.body.token_outputs());
+		token_kernels.extend_from_slice(&tx.body.token_kernels());
 	}
 
-	// Sort inputs and outputs during cut_through.
-	cut_through(
+	let (inputs, outputs, token_inputs, token_outputs, _, _, _, _) = cut_through(
 		&mut inputs,
 		&mut outputs,
 		&mut token_inputs,
 		&mut token_outputs,
 	)?;
-
-	// Now sort kernels.
-	kernels.sort_unstable();
-	token_kernels.sort_unstable();
 
 	// now sum the kernel_offsets up to give us an aggregate offset for the
 	// transaction
@@ -2288,13 +2378,14 @@ pub fn aggregate(mut txs: Vec<Transaction>) -> Result<Transaction, Error> {
 	//   * cut-through outputs
 	//   * full set of tx kernels
 	//   * sum of all kernel offsets
+	// Note: We sort input/outputs/kernels when building the transaction body internally.
 	let tx = Transaction::new(
-		inputs,
+		Inputs::from(inputs),
 		outputs,
 		token_inputs,
 		token_outputs,
-		kernels,
-		token_kernels,
+		&kernels,
+		&token_kernels,
 	)
 	.with_offset(total_kernel_offset);
 
@@ -2303,8 +2394,8 @@ pub fn aggregate(mut txs: Vec<Transaction>) -> Result<Transaction, Error> {
 
 /// Attempt to deaggregate a multi-kernel transaction based on multiple
 /// transactions
-pub fn deaggregate(mk_tx: Transaction, txs: Vec<Transaction>) -> Result<Transaction, Error> {
-	let mut inputs: Vec<Input> = vec![];
+pub fn deaggregate(mk_tx: Transaction, txs: &[Transaction]) -> Result<Transaction, Error> {
+	let mut inputs: Vec<CommitWrapper> = vec![];
 	let mut outputs: Vec<Output> = vec![];
 	let mut kernels: Vec<TxKernel> = vec![];
 	let mut token_inputs: Vec<TokenInput> = vec![];
@@ -2317,40 +2408,40 @@ pub fn deaggregate(mk_tx: Transaction, txs: Vec<Transaction>) -> Result<Transact
 
 	let tx = aggregate(txs)?;
 
-	for mk_input in mk_tx.body.inputs {
-		if !tx.body.inputs.contains(&mk_input) && !inputs.contains(&mk_input) {
+	let mk_inputs: Vec<_> = mk_tx.inputs().into();
+	for mk_input in mk_inputs {
+		let tx_inputs: Vec<_> = tx.inputs().into();
+		if !tx_inputs.contains(&mk_input) && !inputs.contains(&mk_input) {
 			inputs.push(mk_input);
 		}
 	}
-	for mk_output in mk_tx.body.outputs {
-		if !tx.body.outputs.contains(&mk_output) && !outputs.contains(&mk_output) {
-			outputs.push(mk_output);
+	for mk_output in mk_tx.outputs() {
+		if !tx.outputs().contains(&mk_output) && !outputs.contains(mk_output) {
+			outputs.push(*mk_output);
 		}
 	}
-	for mk_kernel in mk_tx.body.kernels {
-		if !tx.body.kernels.contains(&mk_kernel) && !kernels.contains(&mk_kernel) {
-			kernels.push(mk_kernel);
+	for mk_kernel in mk_tx.kernels() {
+		if !tx.kernels().contains(&mk_kernel) && !kernels.contains(mk_kernel) {
+			kernels.push(*mk_kernel);
 		}
 	}
-	for mk_token_input in mk_tx.body.token_inputs {
-		if !tx.body.token_inputs.contains(&mk_token_input)
-			&& !token_inputs.contains(&mk_token_input)
-		{
-			token_inputs.push(mk_token_input);
+	for mk_token_input in mk_tx.token_inputs() {
+		if !tx.token_inputs().contains(&mk_token_input) && !token_inputs.contains(&mk_token_input) {
+			token_inputs.push(*mk_token_input);
 		}
 	}
-	for mk_token_output in mk_tx.body.token_outputs {
-		if !tx.body.token_outputs.contains(&mk_token_output)
+	for mk_token_output in mk_tx.token_outputs() {
+		if !tx.token_outputs().contains(&mk_token_output)
 			&& !token_outputs.contains(&mk_token_output)
 		{
-			token_outputs.push(mk_token_output);
+			token_outputs.push(*mk_token_output);
 		}
 	}
-	for mk_token_kernel in mk_tx.body.token_kernels {
-		if !tx.body.token_kernels.contains(&mk_token_kernel)
+	for mk_token_kernel in mk_tx.token_kernels() {
+		if !tx.token_kernels().contains(&mk_token_kernel)
 			&& !token_kernels.contains(&mk_token_kernel)
 		{
-			token_kernels.push(mk_token_kernel);
+			token_kernels.push(*mk_token_kernel);
 		}
 	}
 
@@ -2388,16 +2479,15 @@ pub fn deaggregate(mk_tx: Transaction, txs: Vec<Transaction>) -> Result<Transact
 	token_kernels.sort_unstable();
 
 	// Build a new tx from the above data.
-	let tx = Transaction::new(
-		inputs,
-		outputs,
-		token_inputs,
-		token_outputs,
-		kernels,
-		token_kernels,
+	Ok(Transaction::new(
+		Inputs::from(inputs.as_slice()),
+		&outputs,
+		&token_inputs,
+		&token_outputs,
+		&kernels,
+		&token_kernels,
 	)
-	.with_offset(total_kernel_offset);
-	Ok(tx)
+	.with_offset(total_kernel_offset))
 }
 
 /// A transaction input.
@@ -2419,11 +2509,18 @@ pub struct Input {
 impl DefaultHashable for Input {}
 hashable_ord!(Input);
 
-impl ::std::hash::Hash for Input {
-	fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
-		let mut vec = Vec::new();
-		ser::serialize_default(&mut vec, &self).expect("serialization failed");
-		::std::hash::Hash::hash(&vec, state);
+impl AsRef<Commitment> for Input {
+	fn as_ref(&self) -> &Commitment {
+		&self.commit
+	}
+}
+
+impl From<&OutputIdentifier> for Input {
+	fn from(out: &OutputIdentifier) -> Self {
+		Input {
+			features: out.features,
+			commit: out.commit,
+		}
 	}
 }
 
@@ -2477,6 +2574,209 @@ impl Input {
 	}
 }
 
+/// We need to wrap commitments so they can be sorted with hashable_ord.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(transparent)]
+pub struct CommitWrapper {
+	#[serde(
+		serialize_with = "secp_ser::as_hex",
+		deserialize_with = "secp_ser::commitment_from_hex"
+	)]
+	commit: Commitment,
+}
+
+impl DefaultHashable for CommitWrapper {}
+hashable_ord!(CommitWrapper);
+
+impl From<Commitment> for CommitWrapper {
+	fn from(commit: Commitment) -> Self {
+		CommitWrapper { commit }
+	}
+}
+
+impl From<Input> for CommitWrapper {
+	fn from(input: Input) -> Self {
+		CommitWrapper {
+			commit: input.commitment(),
+		}
+	}
+}
+
+impl From<&Input> for CommitWrapper {
+	fn from(input: &Input) -> Self {
+		CommitWrapper {
+			commit: input.commitment(),
+		}
+	}
+}
+
+impl AsRef<Commitment> for CommitWrapper {
+	fn as_ref(&self) -> &Commitment {
+		&self.commit
+	}
+}
+
+impl Readable for CommitWrapper {
+	fn read<R: Reader>(reader: &mut R) -> Result<CommitWrapper, ser::Error> {
+		let commit = Commitment::read(reader)?;
+		Ok(CommitWrapper { commit })
+	}
+}
+
+impl Writeable for CommitWrapper {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		self.commit.write(writer)
+	}
+}
+
+impl From<Inputs> for Vec<CommitWrapper> {
+	fn from(inputs: Inputs) -> Self {
+		match inputs {
+			Inputs::CommitOnly(inputs) => inputs,
+			Inputs::FeaturesAndCommit(inputs) => {
+				let mut commits: Vec<_> = inputs.iter().map(|input| input.into()).collect();
+				commits.sort_unstable();
+				commits
+			}
+		}
+	}
+}
+
+impl From<&Inputs> for Vec<CommitWrapper> {
+	fn from(inputs: &Inputs) -> Self {
+		match inputs {
+			Inputs::CommitOnly(inputs) => inputs.clone(),
+			Inputs::FeaturesAndCommit(inputs) => {
+				let mut commits: Vec<_> = inputs.iter().map(|input| input.into()).collect();
+				commits.sort_unstable();
+				commits
+			}
+		}
+	}
+}
+
+impl CommitWrapper {
+	/// Wrapped commitment.
+	pub fn commitment(&self) -> Commitment {
+		self.commit
+	}
+}
+/// Wrapper around a vec of inputs.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum Inputs {
+	/// Vec of commitments.
+	CommitOnly(Vec<CommitWrapper>),
+	/// Vec of inputs.
+	FeaturesAndCommit(Vec<Input>),
+}
+
+impl From<&[Input]> for Inputs {
+	fn from(inputs: &[Input]) -> Self {
+		Inputs::FeaturesAndCommit(inputs.to_vec())
+	}
+}
+
+impl From<&[CommitWrapper]> for Inputs {
+	fn from(commits: &[CommitWrapper]) -> Self {
+		Inputs::CommitOnly(commits.to_vec())
+	}
+}
+
+/// Used when converting to v2 compatibility.
+/// We want to preserve output features here.
+impl From<&[OutputIdentifier]> for Inputs {
+	fn from(outputs: &[OutputIdentifier]) -> Self {
+		let mut inputs: Vec<_> = outputs
+			.iter()
+			.map(|out| Input {
+				features: out.features,
+				commit: out.commit,
+			})
+			.collect();
+		inputs.sort_unstable();
+		Inputs::FeaturesAndCommit(inputs)
+	}
+}
+
+impl Default for Inputs {
+	fn default() -> Self {
+		Inputs::CommitOnly(vec![])
+	}
+}
+
+impl Writeable for Inputs {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		// Nothing to write so we are done.
+		if self.is_empty() {
+			return Ok(());
+		}
+
+		// If writing for a hash then simply write all our inputs.
+		if writer.serialization_mode().is_hash_mode() {
+			match self {
+				Inputs::CommitOnly(inputs) => inputs.write(writer)?,
+				Inputs::FeaturesAndCommit(inputs) => inputs.write(writer)?,
+			}
+		} else {
+			// Otherwise we are writing full data and need to consider our inputs variant and protocol version.
+			match self {
+				Inputs::CommitOnly(inputs) => match writer.protocol_version().value() {
+					0..=3 => return Err(ser::Error::UnsupportedProtocolVersion),
+					4..=ProtocolVersion::MAX => inputs.write(writer)?,
+				},
+				Inputs::FeaturesAndCommit(inputs) => match writer.protocol_version().value() {
+					0..=3 => inputs.write(writer)?,
+					4..=ProtocolVersion::MAX => {
+						let inputs: Vec<CommitWrapper> = self.into();
+						inputs.write(writer)?;
+					}
+				},
+			}
+		}
+		Ok(())
+	}
+}
+
+impl Inputs {
+	/// Number of inputs.
+	pub fn len(&self) -> usize {
+		match self {
+			Inputs::CommitOnly(inputs) => inputs.len(),
+			Inputs::FeaturesAndCommit(inputs) => inputs.len(),
+		}
+	}
+
+	/// Empty inputs?
+	pub fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
+
+	/// Verify inputs are sorted and unique.
+	fn verify_sorted_and_unique(&self) -> Result<(), ser::Error> {
+		match self {
+			Inputs::CommitOnly(inputs) => inputs.verify_sorted_and_unique(),
+			Inputs::FeaturesAndCommit(inputs) => inputs.verify_sorted_and_unique(),
+		}
+	}
+
+	/// Sort the inputs.
+	fn sort_unstable(&mut self) {
+		match self {
+			Inputs::CommitOnly(inputs) => inputs.sort_unstable(),
+			Inputs::FeaturesAndCommit(inputs) => inputs.sort_unstable(),
+		}
+	}
+
+	/// For debug purposes only. Do not rely on this for anything.
+	pub fn version_str(&self) -> &str {
+		match self {
+			Inputs::CommitOnly(_) => "v3",
+			Inputs::FeaturesAndCommit(_) => "v2",
+		}
+	}
+}
+
 /// A transaction tokeninput.
 ///
 /// Primarily a reference to an output being spent by the transaction.
@@ -2498,11 +2798,19 @@ pub struct TokenInput {
 impl DefaultHashable for TokenInput {}
 hashable_ord!(TokenInput);
 
-impl ::std::hash::Hash for TokenInput {
-	fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
-		let mut vec = Vec::new();
-		ser::serialize_default(&mut vec, &self).expect("serialization failed");
-		::std::hash::Hash::hash(&vec, state);
+impl AsRef<Commitment> for TokenInput {
+	fn as_ref(&self) -> &Commitment {
+		&self.commit
+	}
+}
+
+impl From<&TokenOutputIdentifier> for TokenInput {
+	fn from(out: &TokenOutputIdentifier) -> Self {
+		TokenInput {
+			features: out.features,
+			token_type: out.token_type,
+			commit: out.commit,
+		}
 	}
 }
 
@@ -2605,15 +2913,10 @@ impl Readable for OutputFeatures {
 /// overflow and the ownership of the private key.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Output {
-	/// Options for an output's structure or use
-	pub features: OutputFeatures,
-	/// The homomorphic commitment representing the output amount
-	#[serde(
-		serialize_with = "secp_ser::as_hex",
-		deserialize_with = "secp_ser::commitment_from_hex"
-	)]
-	pub commit: Commitment,
-	/// A proof that the commitment is in the right range
+	/// Output identifier (features and commitment).
+	#[serde(flatten)]
+	pub identifier: OutputIdentifier,
+	/// Rangeproof associated with the commitment.
 	#[serde(
 		serialize_with = "secp_ser::as_hex",
 		deserialize_with = "secp_ser::rangeproof_from_hex"
@@ -2621,14 +2924,29 @@ pub struct Output {
 	pub proof: RangeProof,
 }
 
-impl DefaultHashable for Output {}
-hashable_ord!(Output);
+impl Ord for Output {
+	fn cmp(&self, other: &Self) -> Ordering {
+		self.identifier.cmp(&other.identifier)
+	}
+}
 
-impl ::std::hash::Hash for Output {
-	fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
-		let mut vec = Vec::new();
-		ser::serialize_default(&mut vec, &self).expect("serialization failed");
-		::std::hash::Hash::hash(&vec, state);
+impl PartialOrd for Output {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl PartialEq for Output {
+	fn eq(&self, other: &Self) -> bool {
+		self.identifier == other.identifier
+	}
+}
+
+impl Eq for Output {}
+
+impl AsRef<Commitment> for Output {
+	fn as_ref(&self) -> &Commitment {
+		&self.identifier.commit
 	}
 }
 
@@ -2636,13 +2954,8 @@ impl ::std::hash::Hash for Output {
 /// an Output as binary.
 impl Writeable for Output {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		self.features.write(writer)?;
-		self.commit.write(writer)?;
-		// The hash of an output doesn't include the range proof, which
-		// is committed to separately
-		if writer.serialization_mode() != ser::SerializationMode::Hash {
-			writer.write_bytes(&self.proof)?
-		}
+		self.identifier.write(writer)?;
+		self.proof.write(writer)?;
 		Ok(())
 	}
 }
@@ -2652,44 +2965,19 @@ impl Writeable for Output {
 impl Readable for Output {
 	fn read<R: Reader>(reader: &mut R) -> Result<Output, ser::Error> {
 		Ok(Output {
-			features: OutputFeatures::read(reader)?,
-			commit: Commitment::read(reader)?,
+			identifier: OutputIdentifier::read(reader)?,
 			proof: RangeProof::read(reader)?,
 		})
-	}
-}
-
-/// We can build an Output MMR but store instances of OutputIdentifier in the MMR data file.
-impl PMMRable for Output {
-	type E = OutputIdentifier;
-
-	fn as_elmt(&self) -> OutputIdentifier {
-		OutputIdentifier::from(self)
-	}
-
-	fn elmt_size() -> Option<u16> {
-		Some(
-			(1 + secp::constants::PEDERSEN_COMMITMENT_SIZE)
-				.try_into()
-				.unwrap(),
-		)
 	}
 }
 
 /// Output for a token transaction
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct TokenOutput {
-	/// Options for an output's structure or use
-	pub features: OutputFeatures,
-	/// Token type
-	pub token_type: TokenKey,
-	/// The homomorphic commitment representing the output amount
-	#[serde(
-		serialize_with = "secp_ser::as_hex",
-		deserialize_with = "secp_ser::commitment_from_hex"
-	)]
-	pub commit: Commitment,
-	/// A proof that the commitment is in the right range
+	/// Output identifier (features and commitment).
+	#[serde(flatten)]
+	pub identifier: TokenOutputIdentifier,
+	/// Rangeproof associated with the commitment.
 	#[serde(
 		serialize_with = "secp_ser::as_hex",
 		deserialize_with = "secp_ser::rangeproof_from_hex"
@@ -2697,14 +2985,29 @@ pub struct TokenOutput {
 	pub proof: RangeProof,
 }
 
-impl DefaultHashable for TokenOutput {}
-hashable_ord!(TokenOutput);
+impl Ord for TokenOutput {
+	fn cmp(&self, other: &Self) -> Ordering {
+		self.identifier.cmp(&other.identifier)
+	}
+}
 
-impl ::std::hash::Hash for TokenOutput {
-	fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
-		let mut vec = Vec::new();
-		ser::serialize_default(&mut vec, &self).expect("serialization failed");
-		::std::hash::Hash::hash(&vec, state);
+impl PartialOrd for TokenOutput {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl PartialEq for TokenOutput {
+	fn eq(&self, other: &Self) -> bool {
+		self.identifier == other.identifier
+	}
+}
+
+impl Eq for TokenOutput {}
+
+impl AsRef<Commitment> for TokenOutput {
+	fn as_ref(&self) -> &Commitment {
+		&self.identifier.commit
 	}
 }
 
@@ -2712,14 +3015,8 @@ impl ::std::hash::Hash for TokenOutput {
 /// an TokenOutput as binary.
 impl Writeable for TokenOutput {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		self.features.write(writer)?;
-		self.token_type.write(writer)?;
-		self.commit.write(writer)?;
-		// The hash of an output doesn't include the range proof, which
-		// is committed to separately
-		if writer.serialization_mode() != ser::SerializationMode::Hash {
-			writer.write_bytes(&self.proof)?
-		}
+		self.identifier.write(writer)?;
+		self.proof.write(writer)?;
 		Ok(())
 	}
 }
@@ -2729,28 +3026,9 @@ impl Writeable for TokenOutput {
 impl Readable for TokenOutput {
 	fn read<R: Reader>(reader: &mut R) -> Result<TokenOutput, ser::Error> {
 		Ok(TokenOutput {
-			features: OutputFeatures::read(reader)?,
-			token_type: TokenKey::read(reader)?,
-			commit: Commitment::read(reader)?,
+			identifier: TokenOutputIdentifier::read(reader)?,
 			proof: RangeProof::read(reader)?,
 		})
-	}
-}
-
-/// We can build an TokenOutput MMR but store instances of TokenOutputIdentifier in the MMR data file.
-impl PMMRable for TokenOutput {
-	type E = TokenOutputIdentifier;
-
-	fn as_elmt(&self) -> TokenOutputIdentifier {
-		TokenOutputIdentifier::from(self)
-	}
-
-	fn elmt_size() -> Option<u16> {
-		Some(
-			(1 + 32 + secp::constants::PEDERSEN_COMMITMENT_SIZE)
-				.try_into()
-				.unwrap(),
-		)
 	}
 }
 
@@ -2777,19 +3055,37 @@ impl OutputFeatures {
 }
 
 impl Output {
+	/// Create a new output with the provided features, commitment and rangeproof.
+	pub fn new(features: OutputFeatures, commit: Commitment, proof: RangeProof) -> Output {
+		Output {
+			identifier: OutputIdentifier { features, commit },
+			proof,
+		}
+	}
+
+	/// Output identifier.
+	pub fn identifier(&self) -> OutputIdentifier {
+		self.identifier
+	}
+
 	/// Commitment for the output
 	pub fn commitment(&self) -> Commitment {
-		self.commit
+		self.identifier.commitment()
 	}
 
-	/// Is this a coinbase kernel?
+	/// Output features.
+	pub fn features(&self) -> OutputFeatures {
+		self.identifier.features
+	}
+
+	/// Is this a coinbase output?
 	pub fn is_coinbase(&self) -> bool {
-		self.features.is_coinbase()
+		self.identifier.is_coinbase()
 	}
 
-	/// Is this a plain kernel?
+	/// Is this a plain output?
 	pub fn is_plain(&self) -> bool {
-		self.features.is_plain()
+		self.identifier.is_plain()
 	}
 
 	/// Range proof for the output
@@ -2806,7 +3102,7 @@ impl Output {
 	pub fn verify_proof(&self) -> Result<(), Error> {
 		let secp = static_secp_instance();
 		secp.lock()
-			.verify_bullet_proof(self.commit, self.proof, None)?;
+			.verify_bullet_proof(self.commitment(), self.proof, None)?;
 		Ok(())
 	}
 
@@ -2819,25 +3115,58 @@ impl Output {
 	}
 }
 
+impl AsRef<OutputIdentifier> for Output {
+	fn as_ref(&self) -> &OutputIdentifier {
+		&self.identifier
+	}
+}
+
 impl TokenOutput {
+	/// Create a new token output with the provided features, commitment and rangeproof.
+	pub fn new(
+		features: OutputFeatures,
+		token_type: TokenKey,
+		commit: Commitment,
+		proof: RangeProof,
+	) -> TokenOutput {
+		TokenOutput {
+			identifier: TokenOutputIdentifier {
+				features,
+				token_type,
+				commit,
+			},
+			proof,
+		}
+	}
+
+	/// TokenOutput identifier.
+	pub fn identifier(&self) -> TokenOutputIdentifier {
+		self.identifier
+	}
+
 	/// Commitment for the output
 	pub fn commitment(&self) -> Commitment {
-		self.commit
+		self.identifier.commitment()
 	}
 
 	/// the output token key
 	pub fn token_type(&self) -> TokenKey {
-		self.token_type
+		self.identifier.token_type
+	}
+
+	/// Token output features.
+	pub fn features(&self) -> OutputFeatures {
+		self.identifier.features
 	}
 
 	/// Is this a coinbase kernel?
 	pub fn is_tokenissue(&self) -> bool {
-		self.features.is_tokenissue()
+		self.identifier.is_tokenissue()
 	}
 
 	/// Is this a plain kernel?
 	pub fn is_token(&self) -> bool {
-		self.features.is_token()
+		self.identifier.is_token()
 	}
 
 	/// Range proof for the output
@@ -2854,7 +3183,7 @@ impl TokenOutput {
 	pub fn verify_proof(&self) -> Result<(), Error> {
 		let secp = static_secp_instance();
 		secp.lock()
-			.verify_bullet_proof(self.commit, self.proof, None)?;
+			.verify_bullet_proof(self.commitment(), self.proof, None)?;
 		Ok(())
 	}
 }
@@ -2862,17 +3191,28 @@ impl TokenOutput {
 /// An output_identifier can be build from either an input _or_ an output and
 /// contains everything we need to uniquely identify an output being spent.
 /// Needed because it is not sufficient to pass a commitment around.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct OutputIdentifier {
 	/// Output features (coinbase vs. regular transaction output)
 	/// We need to include this when hashing to ensure coinbase maturity can be
 	/// enforced.
 	pub features: OutputFeatures,
 	/// Output commitment
+	#[serde(
+		serialize_with = "secp_ser::as_hex",
+		deserialize_with = "secp_ser::commitment_from_hex"
+	)]
 	pub commit: Commitment,
 }
 
 impl DefaultHashable for OutputIdentifier {}
+hashable_ord!(OutputIdentifier);
+
+impl AsRef<Commitment> for OutputIdentifier {
+	fn as_ref(&self) -> &Commitment {
+		&self.commit
+	}
+}
 
 impl OutputIdentifier {
 	/// Build a new output_identifier.
@@ -2888,12 +3228,21 @@ impl OutputIdentifier {
 		self.commit
 	}
 
+	/// Is this a coinbase output?
+	pub fn is_coinbase(&self) -> bool {
+		self.features.is_coinbase()
+	}
+
+	/// Is this a plain output?
+	pub fn is_plain(&self) -> bool {
+		self.features.is_plain()
+	}
+
 	/// Converts this identifier to a full output, provided a RangeProof
 	pub fn into_output(self, proof: RangeProof) -> Output {
 		Output {
+			identifier: self,
 			proof,
-			features: self.features,
-			commit: self.commit,
 		}
 	}
 }
@@ -2921,12 +3270,19 @@ impl Readable for OutputIdentifier {
 	}
 }
 
-impl From<&Output> for OutputIdentifier {
-	fn from(out: &Output) -> Self {
-		OutputIdentifier {
-			features: out.features,
-			commit: out.commit,
-		}
+impl PMMRable for OutputIdentifier {
+	type E = Self;
+
+	fn as_elmt(&self) -> OutputIdentifier {
+		*self
+	}
+
+	fn elmt_size() -> Option<u16> {
+		Some(
+			(1 + secp::constants::PEDERSEN_COMMITMENT_SIZE)
+				.try_into()
+				.unwrap(),
+		)
 	}
 }
 
@@ -2939,19 +3295,36 @@ impl From<&Input> for OutputIdentifier {
 	}
 }
 
+impl AsRef<OutputIdentifier> for OutputIdentifier {
+	fn as_ref(&self) -> &OutputIdentifier {
+		self
+	}
+}
+
 /// An token_output_identifier can be build from either an token_input _or_ an token_output and
 /// contains everything we need to uniquely identify an output being spent.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct TokenOutputIdentifier {
 	/// TokenOutput features
 	pub features: OutputFeatures,
 	/// Token type
 	pub token_type: TokenKey,
 	/// Output commitment
+	#[serde(
+		serialize_with = "secp_ser::as_hex",
+		deserialize_with = "secp_ser::commitment_from_hex"
+	)]
 	pub commit: Commitment,
 }
 
 impl DefaultHashable for TokenOutputIdentifier {}
+hashable_ord!(TokenOutputIdentifier);
+
+impl AsRef<Commitment> for TokenOutputIdentifier {
+	fn as_ref(&self) -> &Commitment {
+		&self.commit
+	}
+}
 
 impl TokenOutputIdentifier {
 	/// Build a new output_identifier.
@@ -2972,13 +3345,21 @@ impl TokenOutputIdentifier {
 		self.commit
 	}
 
+	/// Is this a issue token output?
+	pub fn is_tokenissue(&self) -> bool {
+		self.features.is_tokenissue()
+	}
+
+	/// Is this a token output?
+	pub fn is_token(&self) -> bool {
+		self.features.is_token()
+	}
+
 	/// Converts this identifier to a full output, provided a RangeProof
 	pub fn into_output(self, proof: RangeProof) -> TokenOutput {
 		TokenOutput {
+			identifier: self,
 			proof,
-			features: self.features,
-			commit: self.commit,
-			token_type: self.token_type,
 		}
 	}
 }
@@ -3008,13 +3389,19 @@ impl Readable for TokenOutputIdentifier {
 	}
 }
 
-impl From<&TokenOutput> for TokenOutputIdentifier {
-	fn from(out: &TokenOutput) -> Self {
-		TokenOutputIdentifier {
-			features: out.features,
-			commit: out.commit,
-			token_type: out.token_type,
-		}
+impl PMMRable for TokenOutputIdentifier {
+	type E = Self;
+
+	fn as_elmt(&self) -> TokenOutputIdentifier {
+		*self
+	}
+
+	fn elmt_size() -> Option<u16> {
+		Some(
+			(1 + 32 + secp::constants::PEDERSEN_COMMITMENT_SIZE)
+				.try_into()
+				.unwrap(),
+		)
 	}
 }
 
@@ -3025,6 +3412,12 @@ impl From<&TokenInput> for TokenOutputIdentifier {
 			commit: input.commit,
 			token_type: input.token_type,
 		}
+	}
+}
+
+impl AsRef<TokenOutputIdentifier> for TokenOutputIdentifier {
+	fn as_ref(&self) -> &TokenOutputIdentifier {
+		self
 	}
 }
 
@@ -3056,7 +3449,7 @@ impl Writeable for TokenIssueProof {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		self.token_type.write(writer)?;
 		self.commit.write(writer)?;
-		if writer.serialization_mode() != ser::SerializationMode::Hash {
+		if !writer.serialization_mode().is_hash_mode() {
 			writer.write_bytes(&self.proof)?
 		}
 		Ok(())
@@ -3095,8 +3488,8 @@ impl PMMRable for TokenIssueProof {
 impl From<TokenOutput> for TokenIssueProof {
 	fn from(out: TokenOutput) -> Self {
 		TokenIssueProof {
-			token_type: out.token_type,
-			commit: out.commit,
+			token_type: out.token_type(),
+			commit: out.commitment(),
 			proof: out.proof,
 		}
 	}
@@ -3129,8 +3522,8 @@ impl TokenIssueProof {
 	/// Build an output_identifier from an existing output.
 	pub fn from_token_output(output: &TokenOutput) -> TokenIssueProof {
 		TokenIssueProof {
-			token_type: output.token_type,
-			commit: output.commit,
+			token_type: output.token_type(),
+			commit: output.commitment(),
 			proof: output.proof,
 		}
 	}

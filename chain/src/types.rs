@@ -23,8 +23,6 @@ use crate::core::ser::{self, PMMRIndexHashable, Readable, Reader, Writeable, Wri
 use crate::error::{Error, ErrorKind};
 use crate::util::{RwLock, RwLockWriteGuard};
 
-use crate::core::global;
-
 bitflags! {
 /// Options for block validation
 	pub struct Options: u32 {
@@ -376,7 +374,7 @@ impl Writeable for CommitPos {
 /// blockchain tree. References the max height and the latest and previous
 /// blocks
 /// for convenience and the total difficulty.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct Tip {
 	/// Height of the tip (max height of the fork)
 	pub height: u64,
@@ -418,21 +416,6 @@ impl Default for Tip {
 			last_block_h: ZERO_HASH,
 			prev_block_h: ZERO_HASH,
 			total_difficulty: Difficulty::min(),
-		}
-	}
-}
-
-impl PartialEq for Tip {
-	fn eq(&self, other: &Self) -> bool {
-		if self.height >= global::support_token_height() {
-			self.height == other.height
-				&& self.last_block_h == other.last_block_h
-				&& self.prev_block_h == other.prev_block_h
-		} else {
-			self.height == other.height
-				&& self.last_block_h == other.last_block_h
-				&& self.prev_block_h == other.prev_block_h
-				&& self.total_difficulty == other.total_difficulty
 		}
 	}
 }
@@ -514,13 +497,48 @@ impl ChainAdapter for NoopAdapter {
 }
 
 /// Status of an accepted block.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BlockStatus {
 	/// Block is the "next" block, updating the chain head.
-	Next,
+	Next {
+		/// Previous block (previous chain head).
+		prev: Tip,
+	},
 	/// Block does not update the chain head and is a fork.
-	Fork,
+	Fork {
+		/// Previous block on this fork.
+		prev: Tip,
+		/// Current chain head.
+		head: Tip,
+		/// Fork point for rewind.
+		fork_point: Tip,
+	},
 	/// Block updates the chain head via a (potentially disruptive) "reorg".
 	/// Previous block was not our previous chain head.
-	Reorg(u64),
+	Reorg {
+		/// Previous block on this fork.
+		prev: Tip,
+		/// Previous chain head.
+		prev_head: Tip,
+		/// Fork point for rewind.
+		fork_point: Tip,
+	},
+}
+
+impl BlockStatus {
+	/// Is this the "next" block?
+	pub fn is_next(&self) -> bool {
+		match *self {
+			BlockStatus::Next { .. } => true,
+			_ => false,
+		}
+	}
+
+	/// Is this block a "reorg"?
+	pub fn is_reorg(&self) -> bool {
+		match *self {
+			BlockStatus::Reorg { .. } => true,
+			_ => false,
+		}
+	}
 }

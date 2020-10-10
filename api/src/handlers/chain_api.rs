@@ -190,7 +190,7 @@ impl OutputHandler {
 				.map(|x| {
 					OutputPrintable::from_output(
 						x,
-						chain.clone(),
+						&chain,
 						None,
 						include_proof.unwrap_or(false),
 						false,
@@ -247,15 +247,9 @@ impl OutputHandler {
 		let outputs = block
 			.outputs()
 			.iter()
-			.filter(|output| commitments.is_empty() || commitments.contains(&output.commit))
+			.filter(|output| commitments.is_empty() || commitments.contains(&output.commitment()))
 			.map(|output| {
-				OutputPrintable::from_output(
-					output,
-					chain.clone(),
-					Some(&header),
-					include_proof,
-					true,
-				)
+				OutputPrintable::from_output(output, &chain, Some(&header), include_proof, true)
 			})
 			.collect::<Result<Vec<_>, _>>()
 			.context(ErrorKind::Internal("cain error".to_owned()))?;
@@ -286,11 +280,11 @@ impl OutputHandler {
 		let outputs = block
 			.outputs()
 			.iter()
-			.filter(|output| commitments.is_empty() || commitments.contains(&output.commit))
+			.filter(|output| commitments.is_empty() || commitments.contains(&output.commitment()))
 			.map(|output| {
 				OutputPrintable::from_output(
 					output,
-					chain.clone(),
+					&chain,
 					Some(&header),
 					include_rproof,
 					include_merkle_proof,
@@ -470,7 +464,7 @@ impl TokenOutputHandler {
 				.map(|x| {
 					OutputPrintable::from_token_output(
 						x,
-						chain.clone(),
+						&chain,
 						None,
 						include_proof.unwrap_or(false),
 						false,
@@ -531,13 +525,13 @@ impl TokenOutputHandler {
 			.token_outputs()
 			.iter()
 			.filter(|output| {
-				(commitments.is_empty() || commitments.contains(&output.commit))
-					&& (output.token_type == token_type)
+				(commitments.is_empty() || commitments.contains(&output.commitment()))
+					&& (output.token_type() == token_type)
 			})
 			.map(|output| {
 				OutputPrintable::from_token_output(
 					output,
-					chain.clone(),
+					&chain,
 					Some(&header),
 					include_proof,
 					true,
@@ -573,11 +567,11 @@ impl TokenOutputHandler {
 		let outputs = block
 			.token_outputs()
 			.iter()
-			.filter(|output| commitments.is_empty() || commitments.contains(&output.commit))
+			.filter(|output| commitments.is_empty() || commitments.contains(&output.commitment()))
 			.map(|output| {
 				OutputPrintable::from_token_output(
 					output,
-					chain.clone(),
+					&chain,
 					Some(&header),
 					include_rproof,
 					include_merkle_proof,

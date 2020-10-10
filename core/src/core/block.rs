@@ -16,12 +16,12 @@
 
 use crate::consensus::{self, reward};
 use crate::core::committed::{self, Committed};
-use crate::core::compact_block::{CompactBlock, CompactBlockBody};
+use crate::core::compact_block::CompactBlock;
 use crate::core::hash::{DefaultHashable, Hash, Hashed, ZERO_HASH};
 use crate::core::verifier_cache::VerifierCache;
 use crate::core::{
-	transaction, Commitment, Input, KernelFeatures, Output, Transaction, TransactionBody, TxKernel,
-	Weighting,
+	pmmr, transaction, Commitment, Inputs, KernelFeatures, Output, Transaction, TransactionBody,
+	TxKernel, Weighting,
 };
 use crate::global;
 use crate::pow::{verify_size, Difficulty, Proof, ProofOfWork};
@@ -32,10 +32,8 @@ use chrono::naive::{MAX_DATE, MIN_DATE};
 use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 use chrono::Duration;
 use keychain::{self, BlindingFactor};
-use std::collections::HashSet;
 use std::convert::TryInto;
 use std::fmt;
-use std::iter::FromIterator;
 use std::sync::Arc;
 use util::from_hex;
 use util::RwLock;
@@ -72,8 +70,6 @@ pub enum Error {
 	CoinbaseSumMismatch,
 	/// Restrict block total weight.
 	TooHeavy,
-	/// Block weight (based on inputs|outputs|kernels) exceeded.
-	WeightExceeded,
 	/// Block version is invalid for a given block height
 	InvalidBlockVersion(HeaderVersion),
 	/// Block time is invalid
@@ -341,11 +337,11 @@ impl Writeable for BlockHeader {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		if self.height >= global::refactor_header_height() {
 			self.write_pre_pow(writer)?;
-			if writer.serialization_mode() != ser::SerializationMode::Hash {
+			if !writer.serialization_mode().is_hash_mode() {
 				self.btc_pow.write(writer)?;
 			}
 		} else {
-			if writer.serialization_mode() != ser::SerializationMode::Hash {
+			if !writer.serialization_mode().is_hash_mode() {
 				self.write_pre_pow(writer)?;
 			}
 			self.pow.write(writer)?;
@@ -517,6 +513,38 @@ impl BlockHeader {
 
 		// Deserialize header from constructed bytes
 		Ok(deserialize_default(&mut &header_bytes[..])?)
+	}
+
+	/// Total number of outputs (spent and unspent) based on output MMR size committed to in this block.
+	/// Note: *Not* the number of outputs in this block but total up to and including this block.
+	/// The MMR size is the total number of hashes contained in the full MMR structure.
+	/// We want the corresponding number of leaves in the MMR given the size.
+	pub fn output_mmr_count(&self) -> u64 {
+		pmmr::n_leaves(self.output_mmr_size)
+	}
+
+	/// Total number of kernels based on kernel MMR size committed to in this block.
+	/// Note: *Not* the number of kernels in this block but total up to and including this block.
+	/// The MMR size is the total number of hashes contained in the full MMR structure.
+	/// We want the corresponding number of leaves in the MMR given the size.
+	pub fn kernel_mmr_count(&self) -> u64 {
+		pmmr::n_leaves(self.kernel_mmr_size)
+	}
+
+	/// Total number of token outputs (spent and unspent) based on token output MMR size committed to in this block.
+	/// Note: *Not* the number of outputs in this block but total up to and including this block.
+	/// The MMR size is the total number of hashes contained in the full MMR structure.
+	/// We want the corresponding number of leaves in the MMR given the size.
+	pub fn token_output_mmr_count(&self) -> u64 {
+		pmmr::n_leaves(self.token_output_mmr_size)
+	}
+
+	/// Total number of token kernels based on token kernel MMR size committed to in this block.
+	/// Note: *Not* the number of kernels in this block but total up to and including this block.
+	/// The MMR size is the total number of hashes contained in the full MMR structure.
+	/// We want the corresponding number of leaves in the MMR given the size.
+	pub fn token_kernel_mmr_count(&self) -> u64 {
+		pmmr::n_leaves(self.token_kernel_mmr_size)
 	}
 
 	/// Total difficulty accumulated by the proof of work on this header
@@ -707,6 +735,7 @@ impl From<UntrustedBlockHeader> for BlockHeader {
 
 /// Block header which does lightweight validation as part of deserialization,
 /// it supposed to be used when we can't trust the channel (eg network)
+#[derive(Debug)]
 pub struct UntrustedBlockHeader(BlockHeader);
 
 /// Deserialization of an untrusted block header
@@ -725,15 +754,15 @@ impl Readable for UntrustedBlockHeader {
 			return Err(ser::Error::CorruptedData);
 		}
 
-		if header.height < global::refactor_header_height() {
-			// Check the block version before proceeding any further.
-			// We want to do this here because blocks can be pretty large
-			// and we want to halt processing as early as possible.
-			// If we receive an invalid block version then the peer is not on our hard-fork.
-			if !consensus::valid_header_version(header.height, header.version) {
-				return Err(ser::Error::InvalidBlockVersion);
-			}
+		// Check the block version before proceeding any further.
+		// We want to do this here because blocks can be pretty large
+		// and we want to halt processing as early as possible.
+		// If we receive an invalid block version then the peer is not on our hard-fork.
+		if !consensus::valid_header_version(header.height, header.version) {
+			return Err(ser::Error::InvalidBlockVersion);
+		}
 
+		if header.height < global::refactor_header_height() {
 			if !header.pow.is_primary() && !header.pow.is_secondary() {
 				error!(
 					"block header {} validation error: invalid edge bits",
@@ -751,6 +780,19 @@ impl Readable for UntrustedBlockHeader {
 			}
 		}
 
+		// Validate global output and kernel MMR sizes against upper bounds based on block height.
+		let global_weight = TransactionBody::weight_as_block(
+			0,
+			header.output_mmr_count(),
+			header.kernel_mmr_count(),
+			0,
+			header.token_output_mmr_count(),
+			header.token_kernel_mmr_count(),
+		);
+		if global_weight > global::max_block_weight() * (header.height + 1) {
+			return Err(ser::Error::CorruptedData);
+		}
+
 		Ok(UntrustedBlockHeader(header))
 	}
 }
@@ -766,7 +808,7 @@ pub struct Block {
 	/// Aux data for verify diffcuilty
 	pub aux_data: BlockAuxData,
 	/// The body - inputs/outputs/kernels
-	body: TransactionBody,
+	pub body: TransactionBody,
 }
 
 impl Hashed for Block {
@@ -788,7 +830,7 @@ impl Writeable for Block {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		self.header.write(writer)?;
 
-		if writer.serialization_mode() != ser::SerializationMode::Hash {
+		if !writer.serialization_mode().is_hash_mode() {
 			if self.header.height < global::refactor_header_height() {
 				self.aux_data.write(writer)?;
 			}
@@ -869,7 +911,7 @@ impl Block {
 	#[warn(clippy::new_ret_no_self)]
 	pub fn new(
 		prev: &BlockHeader,
-		txs: Vec<Transaction>,
+		txs: &[Transaction],
 		difficulty: Difficulty,
 		reward_output: (Output, TxKernel),
 	) -> Result<Block, Error> {
@@ -888,65 +930,67 @@ impl Block {
 	/// Hydrate a block from a compact block.
 	/// Note: caller must validate the block themselves, we do not validate it
 	/// here.
-	pub fn hydrate_from(cb: CompactBlock, txs: Vec<Transaction>) -> Result<Block, Error> {
+	pub fn hydrate_from(cb: CompactBlock, txs: &[Transaction]) -> Result<Block, Error> {
 		trace!("block: hydrate_from: {}, {} txs", cb.hash(), txs.len(),);
 
 		let header = cb.header.clone();
 		let aux_data = cb.aux_data.clone();
 
-		let mut all_inputs = HashSet::new();
-		let mut all_outputs = HashSet::new();
-		let mut all_kernels = HashSet::new();
-		let mut all_token_inputs = HashSet::new();
-		let mut all_token_outputs = HashSet::new();
-		let mut all_token_kernels = HashSet::new();
+		let mut inputs = vec![];
+		let mut outputs = vec![];
+		let mut kernels = vec![];
+		let mut token_inputs = vec![];
+		let mut token_outputs = vec![];
+		let mut token_kernels = vec![];
 
 		// collect all the inputs, outputs and kernels from the txs
 		for tx in txs {
-			let tb: TransactionBody = tx.into();
-			all_inputs.extend(tb.inputs);
-			all_outputs.extend(tb.outputs);
-			all_kernels.extend(tb.kernels);
-			all_token_inputs.extend(tb.token_inputs);
-			all_token_outputs.extend(tb.token_outputs);
-			all_token_kernels.extend(tb.token_kernels);
+			let tx_inputs: Vec<_> = tx.inputs().into();
+			inputs.extend_from_slice(tx_inputs.as_slice());
+			outputs.extend_from_slice(tx.outputs());
+			kernels.extend_from_slice(tx.kernels());
+			token_inputs.extend_from_slice(tx.token_inputs());
+			token_outputs.extend_from_slice(tx.token_outputs());
+			token_kernels.extend_from_slice(tx.token_kernels());
 		}
 
-		// include the coinbase output(s) and kernel(s) from the compact_block
-		{
-			let body: CompactBlockBody = cb.into();
-			all_outputs.extend(body.out_full);
-			all_kernels.extend(body.kern_full);
-		}
+		// apply cut-through to our tx inputs and outputs
+		let (inputs, outputs, token_inputs, token_outputs, _, _, _, _) = transaction::cut_through(
+			&mut inputs,
+			&mut outputs,
+			&mut token_inputs,
+			&mut token_outputs,
+		)?;
 
-		// convert the sets to vecs
-		let all_inputs = Vec::from_iter(all_inputs);
-		let all_outputs = Vec::from_iter(all_outputs);
-		let all_kernels = Vec::from_iter(all_kernels);
-		let all_token_inputs = Vec::from_iter(all_token_inputs);
-		let all_token_outputs = Vec::from_iter(all_token_outputs);
-		let all_token_kernels = Vec::from_iter(all_token_kernels);
+		let mut outputs = outputs.to_vec();
+		let mut kernels = kernels.to_vec();
+		let token_inputs = token_inputs.to_vec();
+		let token_outputs = token_outputs.to_vec();
+		let token_kernels = token_kernels.to_vec();
+
+		// include the full outputs and kernels from the compact block
+		outputs.extend_from_slice(cb.out_full());
+		kernels.extend_from_slice(cb.kern_full());
 
 		// Initialize a tx body and sort everything.
 		let body = TransactionBody::init(
-			all_inputs,
-			all_outputs,
-			all_kernels,
-			all_token_inputs,
-			all_token_outputs,
-			all_token_kernels,
+			inputs.into(),
+			&outputs,
+			&kernels,
+			&token_inputs,
+			&token_outputs,
+			&token_kernels,
 			false,
 		)?;
 
 		// Finally return the full block.
 		// Note: we have not actually validated the block here,
 		// caller must validate the block.
-		Block {
+		Ok(Block {
 			header,
 			aux_data,
 			body,
-		}
-		.cut_through()
+		})
 	}
 
 	/// Build a new empty block from a specified header
@@ -962,7 +1006,7 @@ impl Block {
 	/// that all transactions are valid and calculates the Merkle tree.
 	pub fn from_reward(
 		prev: &BlockHeader,
-		txs: Vec<Transaction>,
+		txs: &[Transaction],
 		reward_out: Output,
 		reward_kern: TxKernel,
 		difficulty: Difficulty,
@@ -990,7 +1034,7 @@ impl Block {
 		// Now build the block with all the above information.
 		// Note: We have not validated the block here.
 		// Caller must validate the block as necessary.
-		Block {
+		let block = Block {
 			header: BlockHeader {
 				version,
 				height,
@@ -1005,8 +1049,8 @@ impl Block {
 			},
 			aux_data: Default::default(),
 			body: agg_tx.into(),
-		}
-		.cut_through()
+		};
+		Ok(block)
 	}
 
 	/// Consumes this block and returns a new block with the coinbase output
@@ -1018,105 +1062,38 @@ impl Block {
 	}
 
 	/// Get inputs
-	pub fn inputs(&self) -> &Vec<Input> {
-		&self.body.inputs
-	}
-
-	/// Get inputs mutable
-	pub fn inputs_mut(&mut self) -> &mut Vec<Input> {
-		&mut self.body.inputs
+	pub fn inputs(&self) -> Inputs {
+		self.body.inputs()
 	}
 
 	/// Get outputs
-	pub fn outputs(&self) -> &Vec<Output> {
-		&self.body.outputs
-	}
-
-	/// Get outputs mutable
-	pub fn outputs_mut(&mut self) -> &mut Vec<Output> {
-		&mut self.body.outputs
+	pub fn outputs(&self) -> &[Output] {
+		&self.body.outputs()
 	}
 
 	/// Get token inputs
-	pub fn token_inputs(&self) -> &Vec<TokenInput> {
-		&self.body.token_inputs
-	}
-
-	/// Get inputs mutable
-	pub fn token_inputs_mut(&mut self) -> &mut Vec<TokenInput> {
-		&mut self.body.token_inputs
+	pub fn token_inputs(&self) -> &[TokenInput] {
+		&self.body.token_inputs()
 	}
 
 	/// Get token outputs
-	pub fn token_outputs(&self) -> &Vec<TokenOutput> {
-		&self.body.token_outputs
-	}
-
-	/// Get token outputs mutable
-	pub fn token_outputs_mut(&mut self) -> &mut Vec<TokenOutput> {
-		&mut self.body.token_outputs
+	pub fn token_outputs(&self) -> &[TokenOutput] {
+		&self.body.token_outputs()
 	}
 
 	/// Get kernels
-	pub fn kernels(&self) -> &Vec<TxKernel> {
-		&self.body.kernels
-	}
-
-	/// Get kernels mut
-	pub fn kernels_mut(&mut self) -> &mut Vec<TxKernel> {
-		&mut self.body.kernels
+	pub fn kernels(&self) -> &[TxKernel] {
+		&self.body.kernels()
 	}
 
 	/// Get token kernels
-	pub fn token_kernels(&self) -> &Vec<TokenTxKernel> {
-		&self.body.token_kernels
-	}
-
-	/// Get token kernels mut
-	pub fn token_kernels_mut(&mut self) -> &mut Vec<TokenTxKernel> {
-		&mut self.body.token_kernels
+	pub fn token_kernels(&self) -> &[TokenTxKernel] {
+		&self.body.token_kernels()
 	}
 
 	/// Sum of all fees (inputs less outputs) in the block
 	pub fn total_fees(&self) -> u64 {
 		self.body.fee()
-	}
-
-	/// Matches any output with a potential spending input, eliminating them
-	/// from the block. Provides a simple way to cut-through the block. The
-	/// elimination is stable with respect to the order of inputs and outputs.
-	/// Method consumes the block.
-	pub fn cut_through(self) -> Result<Block, Error> {
-		let mut inputs = self.inputs().clone();
-		let mut outputs = self.outputs().clone();
-		let mut tokeninputs = self.token_inputs().clone();
-		let mut tokenoutputs = self.token_outputs().clone();
-		transaction::cut_through(
-			&mut inputs,
-			&mut outputs,
-			&mut tokeninputs,
-			&mut tokenoutputs,
-		)?;
-
-		let kernels = self.kernels().clone();
-		let token_kernels = self.token_kernels().clone();
-
-		// Initialize tx body and sort everything.
-		let body = TransactionBody::init(
-			inputs,
-			outputs,
-			kernels,
-			tokeninputs,
-			tokenoutputs,
-			token_kernels,
-			false,
-		)?;
-
-		Ok(Block {
-			header: self.header,
-			aux_data: self.aux_data,
-			body,
-		})
 	}
 
 	/// "Lightweight" validation that we can perform quickly during read/deserialization.
@@ -1213,7 +1190,7 @@ impl Block {
 
 	// Verify any absolute kernel lock heights.
 	fn verify_kernel_lock_heights(&self) -> Result<(), Error> {
-		for k in &self.body.kernels {
+		for k in self.kernels() {
 			// check we have no kernels with lock_heights greater than current height
 			// no tx can be included in a block earlier than its lock_height
 			if let KernelFeatures::HeightLocked { lock_height, .. } = k.features {
@@ -1222,7 +1199,7 @@ impl Block {
 				}
 			}
 		}
-		for k in &self.body.token_kernels {
+		for k in self.token_kernels() {
 			// check we have no kernels with lock_heights greater than current height
 			// no tx can be included in a block earlier than its lock_height
 			if let TokenKernelFeatures::HeightLockedToken { lock_height, .. } = k.features {
@@ -1238,7 +1215,7 @@ impl Block {
 	// NRD kernels were introduced in HF3 and are not valid for block version < 4.
 	// Blocks prior to HF3 containing any NRD kernel(s) are invalid.
 	fn verify_nrd_kernels_for_header_version(&self) -> Result<(), Error> {
-		if self.body.kernels.iter().any(|k| k.is_nrd()) {
+		if self.kernels().iter().any(|k| k.is_nrd()) {
 			if !global::is_nrd_enabled() {
 				return Err(Error::NRDKernelNotEnabled);
 			}

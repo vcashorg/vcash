@@ -62,7 +62,7 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	let initial_tx = test_transaction_spending_coinbase(&keychain, &header_1, vec![10, 20, 30, 40]);
 
 	// Mine that initial tx so we can spend it with multiple txs.
-	add_block(&chain, vec![initial_tx], &keychain);
+	add_block(&chain, &[initial_tx], &keychain);
 
 	add_some_blocks(&chain, 5, &keychain);
 
@@ -87,6 +87,12 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 			aggsig::sign_with_blinding(&keychain.secp(), &msg, &excess, Some(&pubkey)).unwrap();
 		kernel.verify().unwrap();
 
+		// Generate a 2nd NRD kernel sharing the same excess commitment but with different signature.
+		let mut kernel2 = kernel.clone();
+		kernel2.excess_sig =
+			aggsig::sign_with_blinding(&keychain.secp(), &msg, &excess, Some(&pubkey)).unwrap();
+		kernel2.verify().unwrap();
+
 		let tx1 = test_transaction_with_kernel(
 			&keychain,
 			vec![10, 20],
@@ -99,7 +105,7 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 			&keychain,
 			vec![24],
 			vec![18],
-			kernel.clone(),
+			kernel2.clone(),
 			excess.clone(),
 		);
 
@@ -168,7 +174,7 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	assert_eq!(txs.len(), 1);
 
 	// Mine block containing tx1 from the txpool.
-	add_block(&chain, txs, &keychain);
+	add_block(&chain, &txs, &keychain);
 	let header = chain.head_header().unwrap();
 	let block = chain.get_block(&header.hash()).unwrap();
 
@@ -191,7 +197,7 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	);
 
 	// Add another block so NRD relative_height rule is now met.
-	add_block(&chain, vec![], &keychain);
+	add_block(&chain, &[], &keychain);
 	let header = chain.head_header().unwrap();
 
 	// Confirm we can now add tx2 to stempool with NRD relative_height rule met.
@@ -229,7 +235,7 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	assert_eq!(txs.len(), 1);
 
 	// Mine block containing tx2 from the txpool.
-	add_block(&chain, txs, &keychain);
+	add_block(&chain, &txs, &keychain);
 	let header = chain.head_header().unwrap();
 	let block = chain.get_block(&header.hash()).unwrap();
 	pool.reconcile_block(&block)?;
