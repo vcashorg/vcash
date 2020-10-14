@@ -121,10 +121,10 @@ pub fn txissuetoken() -> Transaction {
 	let key_id2 = keychain::ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
 	let key_id3 = keychain::ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
 
-	build::transaction(
+	let tx = build::transaction(
 		KernelFeatures::Plain { fee: 4 },
 		Some(TokenKernelFeatures::IssueToken),
-		vec![
+		&[
 			input(10, key_id1),
 			output(6, key_id2),
 			token_output(100, TokenKey::new_token_key(), true, key_id3),
@@ -132,7 +132,9 @@ pub fn txissuetoken() -> Transaction {
 		&keychain,
 		&builder,
 	)
-	.unwrap()
+	.unwrap();
+
+	tx
 }
 
 // utility producing a token transaction
@@ -147,10 +149,10 @@ pub fn tokentx1i2o() -> Transaction {
 	let key_id5 = keychain::ExtKeychain::derive_key_id(1, 5, 0, 0, 0);
 
 	let token_key = TokenKey::new_token_key();
-	build::transaction(
+	let tx = build::transaction(
 		KernelFeatures::Plain { fee: 4 },
 		Some(TokenKernelFeatures::PlainToken),
-		vec![
+		&[
 			input(10, key_id1),
 			output(6, key_id2),
 			token_input(100, token_key, false, key_id3),
@@ -160,7 +162,9 @@ pub fn tokentx1i2o() -> Transaction {
 		&keychain,
 		&builder,
 	)
-	.unwrap()
+	.unwrap();
+
+	tx
 }
 
 // utility to create a block without worrying about the key or previous

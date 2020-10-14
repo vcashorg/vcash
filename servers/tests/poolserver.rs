@@ -38,6 +38,7 @@ pub fn pool_server_config() -> servers::common::types::PoolServerConfig {
 		pool_server_addr: String::from("127.0.0.1:13517"),
 		wallet_listener_url: None,
 		chain_notify_url: vec![String::from("10.0.0.137:13530/test")],
+		chain_notify_url_v2: None,
 	}
 }
 

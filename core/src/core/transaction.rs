@@ -27,7 +27,7 @@ use enum_primitive::FromPrimitive;
 use keychain::{self, BlindingFactor};
 use std::cmp::Ordering;
 use std::cmp::{max, min};
-use std::convert::{TryFrom, TryInto};
+use std::convert::{From, Into, TryFrom, TryInto};
 use std::sync::Arc;
 use std::{error, fmt};
 use util::secp;
@@ -560,6 +560,9 @@ pub enum Error {
 	/// Validation error relating to cut-through (tx is spending its own
 	/// output).
 	CutThrough,
+	/// Validation error relating to cut-through (tx is spending its own
+	/// output).
+	TokenCutThrough,
 	/// Validation error relating to output features.
 	/// It is invalid for a transaction to contain a coinbase output, for example.
 	InvalidOutputFeatures,
@@ -1066,24 +1069,42 @@ pub struct TransactionBody {
 /// write the body as binary.
 impl Writeable for TransactionBody {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		ser_multiwrite!(
-			writer,
-			[write_u64, self.inputs.len() as u64],
-			[write_u64, self.token_inputs.len() as u64],
-			[write_u64, self.outputs.len() as u64],
-			[write_u64, self.token_outputs.len() as u64],
-			[write_u64, self.kernels.len() as u64],
-			[write_u64, self.token_kernels.len() as u64]
-		);
+		match writer.protocol_version().value() {
+			0..=1 => {
+				ser_multiwrite!(
+					writer,
+					[write_u64, self.inputs.len() as u64],
+					[write_u64, self.outputs.len() as u64],
+					[write_u64, self.kernels.len() as u64]
+				);
 
-		self.inputs.write(writer)?;
-		self.token_inputs.write(writer)?;
-		self.outputs.write(writer)?;
-		self.token_outputs.write(writer)?;
-		self.kernels.write(writer)?;
-		self.token_kernels.write(writer)?;
+				self.inputs.write(writer)?;
+				self.outputs.write(writer)?;
+				self.kernels.write(writer)?;
 
-		Ok(())
+				Ok(())
+			}
+			2..=ProtocolVersion::MAX => {
+				ser_multiwrite!(
+					writer,
+					[write_u64, self.inputs.len() as u64],
+					[write_u64, self.token_inputs.len() as u64],
+					[write_u64, self.outputs.len() as u64],
+					[write_u64, self.token_outputs.len() as u64],
+					[write_u64, self.kernels.len() as u64],
+					[write_u64, self.token_kernels.len() as u64]
+				);
+
+				self.inputs.write(writer)?;
+				self.token_inputs.write(writer)?;
+				self.outputs.write(writer)?;
+				self.token_outputs.write(writer)?;
+				self.kernels.write(writer)?;
+				self.token_kernels.write(writer)?;
+
+				Ok(())
+			}
+		}
 	}
 }
 
@@ -1092,8 +1113,8 @@ impl Writeable for TransactionBody {
 impl Readable for TransactionBody {
 	fn read<R: Reader>(reader: &mut R) -> Result<TransactionBody, ser::Error> {
 		match reader.protocol_version().value() {
-			0..=2 => return Err(ser::Error::UnexpectedProtocolVersion),
-			3..=ProtocolVersion::MAX => {
+			0..=1 => return Err(ser::Error::UnexpectedProtocolVersion),
+			2..=ProtocolVersion::MAX => {
 				let (
 					input_len,
 					token_input_len,
@@ -1646,7 +1667,7 @@ impl TransactionBody {
 		for (_, output_commits) in token_commits_map {
 			for pair in output_commits.windows(2) {
 				if pair[0] == pair[1] {
-					return Err(Error::CutThrough);
+					return Err(Error::TokenCutThrough);
 				}
 			}
 		}
@@ -2183,14 +2204,20 @@ pub fn cut_through<'a, 'b, 'c, 'd, T, U, V, W>(
 where
 	T: AsRef<Commitment> + Ord,
 	U: AsRef<Commitment> + Ord,
-	V: AsRef<Commitment> + Ord,
-	W: AsRef<Commitment> + Ord,
+	V: Into<TokenIdentifier> + Ord + Clone,
+	W: Into<TokenIdentifier> + Ord + Clone,
 {
 	// Make sure inputs and outputs are sorted consistently as we will iterate over both.
 	inputs.sort_unstable_by_key(|x| *x.as_ref());
 	outputs.sort_unstable_by_key(|x| *x.as_ref());
-	token_inputs.sort_unstable_by_key(|x| *x.as_ref());
-	token_outputs.sort_unstable_by_key(|x| *x.as_ref());
+	token_inputs.sort_unstable_by_key(|x| {
+		let token_id: TokenIdentifier = x.clone().into();
+		token_id
+	});
+	token_outputs.sort_unstable_by_key(|x| {
+		let token_id: TokenIdentifier = x.clone().into();
+		token_id
+	});
 
 	let mut inputs_idx = 0;
 	let mut outputs_idx = 0;
@@ -2220,10 +2247,9 @@ where
 	let mut token_outputs_idx = 0;
 	let mut token_ncut = 0;
 	while token_inputs_idx < token_inputs.len() && token_outputs_idx < token_outputs.len() {
-		match token_inputs[token_inputs_idx]
-			.as_ref()
-			.cmp(&token_outputs[token_outputs_idx].as_ref())
-		{
+		let token_input_id: TokenIdentifier = token_inputs[token_inputs_idx].clone().into();
+		let token_output_id: TokenIdentifier = token_outputs[token_outputs_idx].clone().into();
+		match token_input_id.cmp(&token_output_id) {
 			Ordering::Less => {
 				token_inputs.swap(token_inputs_idx - token_ncut, token_inputs_idx);
 				token_inputs_idx += 1;
@@ -2296,12 +2322,12 @@ where
 
 	// Check we have no duplicate token inputs after cut-through.
 	if token_inputs.windows(2).any(|pair| pair[0] == pair[1]) {
-		return Err(Error::CutThrough);
+		return Err(Error::TokenCutThrough);
 	}
 
 	// Check we have no duplicate token outputs after cut-through.
 	if token_outputs.windows(2).any(|pair| pair[0] == pair[1]) {
-		return Err(Error::CutThrough);
+		return Err(Error::TokenCutThrough);
 	}
 
 	Ok((
@@ -2771,8 +2797,8 @@ impl Inputs {
 	/// For debug purposes only. Do not rely on this for anything.
 	pub fn version_str(&self) -> &str {
 		match self {
-			Inputs::CommitOnly(_) => "v3",
-			Inputs::FeaturesAndCommit(_) => "v2",
+			Inputs::CommitOnly(_) => "v4",
+			Inputs::FeaturesAndCommit(_) => "v3",
 		}
 	}
 }
@@ -2798,11 +2824,14 @@ pub struct TokenInput {
 impl DefaultHashable for TokenInput {}
 hashable_ord!(TokenInput);
 
-impl AsRef<Commitment> for TokenInput {
-	fn as_ref(&self) -> &Commitment {
-		&self.commit
-	}
-}
+//impl Into<TokenIdentifier> for TokenInput {
+//	fn into(self) -> TokenIdentifier {
+//		TokenIdentifier{
+//			token_type: self.token_type,
+//			commit: self.commit,
+//		}
+//	}
+//}
 
 impl From<&TokenOutputIdentifier> for TokenInput {
 	fn from(out: &TokenOutputIdentifier) -> Self {
@@ -3005,11 +3034,14 @@ impl PartialEq for TokenOutput {
 
 impl Eq for TokenOutput {}
 
-impl AsRef<Commitment> for TokenOutput {
-	fn as_ref(&self) -> &Commitment {
-		&self.identifier.commit
-	}
-}
+//impl Into<TokenIdentifier> for TokenOutput {
+//	fn into(self) -> TokenIdentifier {
+//		TokenIdentifier{
+//			token_type: self.identifier.token_type,
+//			commit: self.identifier.commit,
+//		}
+//	}
+//}
 
 /// Implementation of Writeable for a transaction TokenOutput, defines how to write
 /// an TokenOutput as binary.
@@ -3418,6 +3450,67 @@ impl From<&TokenInput> for TokenOutputIdentifier {
 impl AsRef<TokenOutputIdentifier> for TokenOutputIdentifier {
 	fn as_ref(&self) -> &TokenOutputIdentifier {
 		self
+	}
+}
+
+/// An token_identifier can be build from either an token_input _or_ an token_output and
+/// contains everything we need to uniquely identify an token commitment.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct TokenIdentifier {
+	/// Token type
+	pub token_type: TokenKey,
+	/// Output commitment
+	#[serde(
+		serialize_with = "secp_ser::as_hex",
+		deserialize_with = "secp_ser::commitment_from_hex"
+	)]
+	pub commit: Commitment,
+}
+
+impl DefaultHashable for TokenIdentifier {}
+hashable_ord!(TokenIdentifier);
+
+impl Writeable for TokenIdentifier {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		self.token_type.write(writer)?;
+		self.commit.write(writer)?;
+		Ok(())
+	}
+}
+
+impl Readable for TokenIdentifier {
+	fn read<R: Reader>(reader: &mut R) -> Result<TokenIdentifier, ser::Error> {
+		Ok(TokenIdentifier {
+			token_type: TokenKey::read(reader)?,
+			commit: Commitment::read(reader)?,
+		})
+	}
+}
+
+impl From<TokenInput> for TokenIdentifier {
+	fn from(input: TokenInput) -> Self {
+		TokenIdentifier {
+			token_type: input.token_type(),
+			commit: input.commitment(),
+		}
+	}
+}
+
+impl From<TokenOutput> for TokenIdentifier {
+	fn from(output: TokenOutput) -> Self {
+		TokenIdentifier {
+			token_type: output.token_type(),
+			commit: output.commitment(),
+		}
+	}
+}
+
+impl From<TokenOutputIdentifier> for TokenIdentifier {
+	fn from(output: TokenOutputIdentifier) -> Self {
+		TokenIdentifier {
+			token_type: output.token_type,
+			commit: output.commitment(),
+		}
 	}
 }
 

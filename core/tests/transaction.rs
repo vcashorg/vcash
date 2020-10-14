@@ -18,6 +18,7 @@ pub mod common;
 use crate::common::tx1i10_v2_compatible;
 use crate::core::core::transaction::{self, Error};
 use crate::core::core::verifier_cache::LruVerifierCache;
+use crate::core::core::{aggregate, TokenKernelFeatures, TokenKey};
 use crate::core::core::{KernelFeatures, Output, OutputFeatures, Transaction, Weighting};
 use crate::core::global;
 use crate::core::libtx::build;
@@ -90,17 +91,28 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 	let key_id2 = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
 	let key_id3 = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
+	let key_id4 = ExtKeychain::derive_key_id(1, 4, 0, 0, 0);
+	let key_id5 = ExtKeychain::derive_key_id(1, 5, 0, 0, 0);
+	let key_id6 = ExtKeychain::derive_key_id(1, 6, 0, 0, 0);
+	let key_id7 = ExtKeychain::derive_key_id(1, 7, 0, 0, 0);
 
 	let builder = proof::ProofBuilder::new(&keychain);
 
+	let token_key = TokenKey::new_token_key();
 	let mut tx = build::transaction(
 		KernelFeatures::Plain { fee: 0 },
+		Some(TokenKernelFeatures::PlainToken),
 		&[
 			build::input(10, key_id1.clone()),
 			build::input(10, key_id2.clone()),
 			build::output(10, key_id1.clone()),
 			build::output(6, key_id2.clone()),
 			build::output(4, key_id3.clone()),
+			build::token_input(50, token_key, false, key_id4.clone()),
+			build::token_input(100, token_key, false, key_id5),
+			build::token_output(60, token_key, false, key_id6),
+			build::token_output(40, token_key, false, key_id7),
+			build::token_output(50, token_key, false, key_id4),
 		],
 		&keychain,
 		&builder,
@@ -121,12 +133,31 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 	// Apply cut-through to eliminate the offending input and output.
 	let mut inputs: Vec<_> = tx.inputs().into();
 	let mut outputs = tx.outputs().to_vec();
-	let (inputs, outputs, _, _) = transaction::cut_through(&mut inputs[..], &mut outputs[..])?;
+	let mut token_inputs = tx.token_inputs().to_vec();
+	let mut token_outputs = tx.token_outputs().to_vec();
+	let (inputs, outputs, token_inputs, token_outputs, _, _, _, _) = transaction::cut_through(
+		&mut inputs[..],
+		&mut outputs[..],
+		&mut token_inputs[..],
+		&mut token_outputs[..],
+	)?;
 
 	tx.body = tx
 		.body
 		.replace_inputs(inputs.into())
 		.replace_outputs(outputs);
+
+	assert_eq!(
+		tx.validate(Weighting::AsTransaction, verifier_cache.clone()),
+		Err(Error::TokenCutThrough),
+	);
+
+	assert_eq!(tx.validate_read(), Err(Error::TokenCutThrough));
+
+	tx.body = tx
+		.body
+		.replace_token_inputs(token_inputs)
+		.replace_token_outputs(token_outputs);
 
 	// Transaction validates successfully after applying cut-through.
 	tx.validate(Weighting::AsTransaction, verifier_cache.clone())?;
@@ -154,11 +185,12 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 
 	let mut tx = build::transaction(
 		KernelFeatures::Plain { fee: 0 },
+		None,
 		&[
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
-			build::coinbase_input(consensus::REWARD, key_id2.clone()),
-			build::output(60_000_000_000, key_id1.clone()),
-			build::output(50_000_000_000, key_id2.clone()),
+			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
+			build::coinbase_input(consensus::REWARD_ORIGIN, key_id2.clone()),
+			build::output(50_000_000_000, key_id1.clone()),
+			build::output(40_000_000_000, key_id2.clone()),
 			build::output(10_000_000_000, key_id3.clone()),
 		],
 		&keychain,
@@ -180,7 +212,14 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 	// Apply cut-through to eliminate the offending input and output.
 	let mut inputs: Vec<_> = tx.inputs().into();
 	let mut outputs = tx.outputs().to_vec();
-	let (inputs, outputs, _, _) = transaction::cut_through(&mut inputs[..], &mut outputs[..])?;
+	let mut token_input = tx.token_inputs().to_vec();
+	let mut token_output = tx.token_outputs().to_vec();
+	let (inputs, outputs, _, _, _, _, _, _) = transaction::cut_through(
+		&mut inputs[..],
+		&mut outputs[..],
+		&mut token_input[..],
+		&mut token_output[..],
+	)?;
 
 	tx.body = tx
 		.body
@@ -192,6 +231,84 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 
 	// Transaction validates via lightweight "read" validation as well.
 	tx.validate_read()?;
+
+	Ok(())
+}
+
+#[test]
+fn test_verify_token_cut_through() -> Result<(), Error> {
+	global::set_local_chain_type(global::ChainTypes::UserTesting);
+
+	let keychain = ExtKeychain::from_random_seed(false)?;
+
+	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+	let key_id2 = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
+	let key_id3 = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
+	let key_id4 = ExtKeychain::derive_key_id(1, 4, 0, 0, 0);
+	let key_id5 = ExtKeychain::derive_key_id(1, 5, 0, 0, 0);
+	let key_id6 = ExtKeychain::derive_key_id(1, 6, 0, 0, 0);
+	let key_id7 = ExtKeychain::derive_key_id(1, 7, 0, 0, 0);
+
+	let builder = ProofBuilder::new(&keychain);
+
+	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
+
+	let token_key0 = TokenKey::new_token_key();
+	let tx0 = build::transaction(
+		KernelFeatures::Plain { fee: 4 },
+		Some(TokenKernelFeatures::PlainToken),
+		&[
+			build::input(10, key_id1.clone()),
+			build::output(6, key_id2.clone()),
+			build::token_input(100, token_key0, false, key_id3.clone()),
+			build::token_output(60, token_key0, false, key_id4.clone()),
+			build::token_output(40, token_key0, false, key_id5.clone()),
+		],
+		&keychain,
+		&builder,
+	)
+	.expect("valid tx");
+
+	// Transaction validates successfully after applying cut-through.
+	tx0.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+
+	// Transaction validates via lightweight "read" validation as well.
+	tx0.validate_read()?;
+
+	let token_key1 = TokenKey::new_token_key();
+	let tx1 = build::transaction(
+		KernelFeatures::Plain { fee: 4 },
+		Some(TokenKernelFeatures::PlainToken),
+		&[
+			build::input(20, key_id1.clone()),
+			build::output(16, key_id2.clone()),
+			build::token_input(60, token_key1, false, key_id4.clone()),
+			build::token_output(10, token_key1, false, key_id6.clone()),
+			build::token_output(50, token_key1, false, key_id7.clone()),
+		],
+		&keychain,
+		&builder,
+	)
+	.expect("valid tx");
+
+	// Transaction validates successfully after applying cut-through.
+	tx1.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+
+	// Transaction validates via lightweight "read" validation as well.
+	tx1.validate_read()?;
+
+	let tx01 = aggregate(&[tx0, tx1]).unwrap();
+
+	assert_eq!(tx01.inputs().len(), 2);
+	assert_eq!(tx01.outputs().len(), 2);
+	assert_eq!(tx01.token_inputs().len(), 2);
+	assert_eq!(tx01.token_outputs().len(), 4);
+
+	// Transaction validates successfully after applying cut-through.
+	tx01.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+
+	// Transaction validates via lightweight "read" validation as well.
+	tx01.validate_read()?;
 
 	Ok(())
 }

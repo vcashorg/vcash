@@ -226,7 +226,7 @@ where
 			.verify_coinbase_maturity(&coinbase_inputs.as_slice().into())?;
 
 		// Convert the tx to "v2" compatibility with "features and commit" inputs.
-		let ref entry = self.convert_tx_v2(entry, &spent_pool, &spent_utxo)?;
+		let ref entry = self.convert_tx_v3(entry, &spent_pool, &spent_utxo)?;
 
 		// If this is a stem tx then attempt to add it to stempool.
 		// If the adapter fails to accept the new stem tx then fallback to fluff via txpool.
@@ -254,7 +254,7 @@ where
 	/// We may receive a transaction with "commit only" inputs.
 	/// We convert it to "features and commit" so we can safely relay it to v2 peers.
 	/// Conversion is done using outputs previously looked up in both the pool and the current utxo.
-	fn convert_tx_v2(
+	fn convert_tx_v3(
 		&self,
 		entry: PoolEntry,
 		spent_pool: &[OutputIdentifier],
@@ -262,7 +262,7 @@ where
 	) -> Result<PoolEntry, PoolError> {
 		let tx = entry.tx;
 		debug!(
-			"convert_tx_v2: {} ({} -> v2)",
+			"convert_tx_v3: {} ({} -> v3)",
 			tx.hash(),
 			tx.inputs().version_str(),
 		);

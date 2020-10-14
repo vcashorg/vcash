@@ -176,7 +176,7 @@ impl Chain {
 
 		// DB migrations to be run prior to the chain being used.
 		// Migrate full blocks to protocol version v3.
-		Chain::migrate_db_v2_v3(&store)?;
+		Chain::migrate_db_v3_to_v4(&store)?;
 
 		// open the txhashset, creating a new one if necessary
 		let mut txhashset = txhashset::TxHashSet::open(db_root.clone(), store.clone(), None)?;
@@ -278,9 +278,9 @@ impl Chain {
 	/// We also need to support relaying blocks with FeaturesAndCommit inputs to peers.
 	/// So we need a way to convert blocks from CommitOnly to FeaturesAndCommit.
 	/// Validating the inputs against the utxo_view allows us to look the outputs up.
-	pub fn convert_block_v2(&self, block: Block) -> Result<Block, Error> {
+	pub fn convert_block_v3(&self, block: Block) -> Result<Block, Error> {
 		debug!(
-			"convert_block_v2: {} at {} ({} -> v2)",
+			"convert_block_v3: {} at {} ({} -> v3)",
 			block.header.hash(),
 			block.header.height,
 			block.inputs().version_str(),
@@ -404,10 +404,10 @@ impl Chain {
 		// Only do this once we know the header PoW is valid.
 		self.check_orphan(&b, opts)?;
 
-		// We can only reliably convert to "v2" if not an orphan (may spend output from previous block).
-		// We convert from "v3" to "v2" by looking up outputs to be spent.
-		// This conversion also ensures a block received in "v2" has valid input features (prevents malleability).
-		let b = self.convert_block_v2(b)?;
+		// We can only reliably convert to "v3" if not an orphan (may spend output from previous block).
+		// We convert from "v4" to "v3" by looking up outputs to be spent.
+		// This conversion also ensures a block received in "v3" has valid input features (prevents malleability).
+		let b = self.convert_block_v3(b)?;
 
 		let (maybe_new_head, prev_head) = {
 			let mut header_pmmr = self.header_pmmr.write();
@@ -1556,13 +1556,13 @@ impl Chain {
 		self.header_pmmr.read().get_header_hash_by_height(height)
 	}
 
-	/// Migrate our local db from v2 to v3.
+	/// Migrate our local db from v3 to v4.
 	/// "commit only" inputs.
-	fn migrate_db_v2_v3(store: &ChainStore) -> Result<(), Error> {
-		let store_v2 = store.with_version(ProtocolVersion(2));
-		let batch = store_v2.batch()?;
+	fn migrate_db_v3_to_v4(store: &ChainStore) -> Result<(), Error> {
+		let store_v3 = store.with_version(ProtocolVersion(3));
+		let batch = store_v3.batch()?;
 		for (_, block) in batch.blocks_iter()? {
-			batch.migrate_block(&block, ProtocolVersion(3))?;
+			batch.migrate_block(&block, ProtocolVersion(4))?;
 		}
 		batch.commit()?;
 		Ok(())

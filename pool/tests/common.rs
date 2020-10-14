@@ -288,7 +288,7 @@ where
 	build::transaction(
 		KernelFeatures::Plain { fee: fees as u64 },
 		Some(TokenKernelFeatures::IssueToken),
-		tx_elements,
+		&tx_elements,
 		keychain,
 		&ProofBuilder::new(keychain),
 	)
@@ -340,7 +340,7 @@ where
 	build::transaction(
 		KernelFeatures::Plain { fee: fees as u64 },
 		Some(TokenKernelFeatures::PlainToken),
-		tx_elements,
+		&tx_elements,
 		keychain,
 		&ProofBuilder::new(keychain),
 	)

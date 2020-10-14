@@ -15,10 +15,12 @@
 use grin_chain as chain;
 use grin_core as core;
 use grin_keychain as keychain;
+use grin_util as util;
 
 mod chain_test_helper;
 
 use self::chain_test_helper::{clean_output_dir, mine_chain};
+use self::core::core::hash::Hashed;
 use crate::chain::{Chain, ErrorKind, Options};
 use crate::core::{
 	consensus,
@@ -36,7 +38,8 @@ fn build_block(chain: &Chain) -> Block {
 
 	let prev = chain.head_header().unwrap();
 	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
-	let reward = reward::output(&keychain, &ProofBuilder::new(&keychain), &pk, 0, false).unwrap();
+	let reward =
+		reward::output(&keychain, &ProofBuilder::new(&keychain), &pk, 1, 0, false).unwrap();
 	let mut block = Block::new(&prev, &[], next_header_info.clone().difficulty, reward).unwrap();
 
 	block.header.timestamp = prev.timestamp + Duration::seconds(60);
@@ -53,6 +56,12 @@ fn build_block(chain: &Chain) -> Block {
 		edge_bits,
 	)
 	.unwrap();
+
+	block.header.bits = 0x2100ffff;
+	let coin_base_str = core::core::get_grin_magic_data_str(block.header.hash());
+	block.header.btc_pow.coinbase_tx = util::from_hex(coin_base_str.as_str()).unwrap();
+	block.header.btc_pow.aux_header.merkle_root = block.header.btc_pow.coinbase_tx.dhash();
+	block.header.btc_pow.aux_header.nbits = block.header.bits;
 
 	block
 }

@@ -58,7 +58,7 @@ fn test_transaction_pool_token_tx() {
 	let initial_tx = test_transaction_spending_coinbase(&keychain, &header_1, vec![500]);
 
 	// Mine that initial tx so we can spend it with multiple txs.
-	add_block(&chain, vec![initial_tx], &keychain);
+	add_block(&chain, &[initial_tx], &keychain);
 
 	let header = chain.head_header().unwrap();
 
@@ -78,7 +78,7 @@ fn test_transaction_pool_token_tx() {
 
 	let txs = pool.prepare_mineable_transactions().unwrap();
 
-	add_block(&chain, txs, &keychain);
+	add_block(&chain, &txs, &keychain);
 
 	// Get full block from head of the chain (block we just processed).
 	let block = chain.get_block(&chain.head().unwrap().hash()).unwrap();
@@ -258,7 +258,11 @@ fn test_transaction_pool_token_tx() {
 	// Check we can take some entries from the stempool and "fluff" them into the
 	// txpool. This also exercises multi-kernel txs.
 	{
-		let agg_tx = pool.stempool.all_transactions_aggregate().unwrap().unwrap();
+		let agg_tx = pool
+			.stempool
+			.all_transactions_aggregate(None)
+			.unwrap()
+			.unwrap();
 		assert_eq!(agg_tx.kernels().len(), 2);
 		pool.add_to_pool(test_source(), agg_tx, false, &header)
 			.unwrap();
@@ -305,7 +309,7 @@ fn test_transaction_pool_token_tx() {
 		// tx1 and tx2 are already in the txpool (in aggregated form)
 		// tx4 is the "new" part of this aggregated tx that we care about
 		let agg_tx =
-			transaction::aggregate(vec![token_tx1.clone(), token_tx2.clone(), token_tx4]).unwrap();
+			transaction::aggregate(&[token_tx1.clone(), token_tx2.clone(), token_tx4]).unwrap();
 
 		agg_tx
 			.validate(Weighting::AsTransaction, verifier_cache.clone())

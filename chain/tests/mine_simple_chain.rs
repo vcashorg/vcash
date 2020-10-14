@@ -17,8 +17,7 @@ use self::chain::Chain;
 use self::core::core::hash::Hashed;
 use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{
-	Block, BlockHeader, KernelFeatures, TokenKernelFeatures, TokenKey, TokenOutputIdentifier,
-	Transaction,
+	Block, BlockHeader, KernelFeatures, TokenKernelFeatures, TokenKey, Transaction,
 };
 use self::core::global::ChainTypes;
 use self::core::libtx::{self, build, ProofBuilder};
@@ -396,17 +395,17 @@ fn mine_reorg() {
 		let fork_point = chain.get_header_by_height(1).unwrap();
 		assert_eq!(
 			*adapter.last_status.read(),
-			Some(BlockStatus::Reorg {
+			Some(BlockStatus::Fork {
 				prev: Tip::from_header(&fork_head),
-				prev_head: head,
+				head: head,
 				fork_point: Tip::from_header(&fork_point)
 			})
 		);
 
 		// Chain should be switched to the reorganized chain
-		let head = chain.head().unwrap();
-		assert_eq!(head.height, NUM_BLOCKS_MAIN - REORG_DEPTH + 1);
-		assert_eq!(head.hash(), reorg_head.hash());
+		let cur_head = chain.head().unwrap();
+		assert_eq!(cur_head.height, NUM_BLOCKS_MAIN);
+		assert_eq!(cur_head.hash(), head.hash());
 	}
 
 	// Cleanup chain directory
@@ -660,7 +659,7 @@ fn spend_in_fork_and_compact() {
 				fee: consensus::REWARD_ORIGIN,
 			},
 			Some(TokenKernelFeatures::IssueToken),
-			vec![
+			&[
 				build::coinbase_input(consensus::REWARD_ORIGIN, key_id3),
 				build::token_output(token_amount, token_key, true, key_id_token.clone()),
 			],
@@ -668,7 +667,7 @@ fn spend_in_fork_and_compact() {
 			&pb,
 		)
 		.unwrap();
-		let b = prepare_block_tx(&kc, &fork_head, &chain, 6, vec![&issue_token_tx]);
+		let b = prepare_block_tx(&kc, &fork_head, &chain, 6, &[issue_token_tx]);
 		fork_head = b.header.clone();
 		chain.process_block(b, chain::Options::SKIP_POW).unwrap();
 
@@ -746,11 +745,11 @@ fn spend_in_fork_and_compact() {
 			.unwrap()
 			.is_none());
 		assert!(chain
-			.get_token_unspent(&TokenOutputIdentifier::from(&tx2.token_outputs()[0]))
+			.get_token_unspent(&tx2.token_outputs()[0].identifier())
 			.unwrap()
 			.is_some());
 		assert!(chain
-			.get_token_unspent(&TokenOutputIdentifier::from(&tx1.token_outputs()[0]))
+			.get_token_unspent(&tx1.token_outputs()[0].identifier())
 			.unwrap()
 			.is_none());
 
@@ -775,11 +774,11 @@ fn spend_in_fork_and_compact() {
 			.unwrap()
 			.is_none());
 		assert!(chain
-			.get_token_unspent(&TokenOutputIdentifier::from(&tx2.token_outputs()[0]))
+			.get_token_unspent(&tx2.token_outputs()[0].identifier())
 			.unwrap()
 			.is_some());
 		assert!(chain
-			.get_token_unspent(&TokenOutputIdentifier::from(&tx1.token_outputs()[0]))
+			.get_token_unspent(&tx1.token_outputs()[0].identifier())
 			.unwrap()
 			.is_none());
 
@@ -977,12 +976,7 @@ where
 		false,
 	)
 	.unwrap();
-	let mut b = match core::core::Block::new(
-		prev,
-		txs.into_iter().cloned().collect(),
-		Difficulty::from_num(diff),
-		reward,
-	) {
+	let mut b = match core::core::Block::new(prev, txs, Difficulty::from_num(diff), reward) {
 		Err(e) => panic!("{:?}", e),
 		Ok(b) => b,
 	};

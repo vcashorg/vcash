@@ -27,8 +27,8 @@ use self::core::core::{
 use self::core::libtx::build::{self, initial_tx, input, output, with_excess};
 use self::core::libtx::{aggsig, ProofBuilder};
 use self::core::{global, ser};
-use crate::common::tokentx1i2o;
 use crate::common::{new_block, tx1i1o, tx1i2o, tx2i1o};
+use crate::common::{tokentx1i2o, txissuetoken};
 use grin_core as core;
 use keychain::{BlindingFactor, ExtKeychain, Keychain};
 use std::sync::Arc;
@@ -51,12 +51,12 @@ fn simple_tx_ser() {
 	// Default protocol version (4).
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
-	assert_eq!(vec.len(), 945);
+	assert_eq!(vec.len(), 969);
 
 	// Explicit protocol version 4.
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(4), &tx).expect("serialization failed");
-	assert_eq!(vec.len(), 945);
+	assert_eq!(vec.len(), 969);
 
 	// We need to convert the tx to v2 compatibility with "features and commitment" inputs
 	// to serialize to any previous protocol version.
@@ -82,22 +82,22 @@ fn simple_tx_ser() {
 	// Explicit protocol version 2.
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(2), &tx).expect("serialization failed");
-	assert_eq!(vec.len(), 947);
+	assert_eq!(vec.len(), 971);
 
 	// Check we can still serialize to protocol version 3 without explicitly converting the tx.
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(3), &tx).expect("serialization failed");
-	assert_eq!(vec.len(), 945);
+	assert_eq!(vec.len(), 971);
 
 	// Explicit protocol version 4.
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(4), &tx).expect("serialization failed");
-	assert_eq!(vec.len(), 947);
+	assert_eq!(vec.len(), 969);
 
 	// And default protocol version for completeness.
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
-	assert_eq!(vec.len(), 945);
+	assert_eq!(vec.len(), 969);
 }
 
 #[test]
@@ -110,6 +110,36 @@ fn simple_tx_ser_deser() {
 	assert_eq!(dtx.fee(), 2);
 	assert_eq!(dtx.inputs().len(), 2);
 	assert_eq!(dtx.outputs().len(), 1);
+	assert_eq!(tx.hash(), dtx.hash());
+}
+
+#[test]
+fn token_issue_tx_ser_deser() {
+	test_setup();
+	let tx = txissuetoken();
+	let mut vec = Vec::new();
+	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
+	let dtx: Transaction = ser::deserialize_default(&mut &vec[..]).unwrap();
+	assert_eq!(dtx.fee(), 4);
+	assert_eq!(dtx.inputs().len(), 1);
+	assert_eq!(dtx.outputs().len(), 1);
+	assert_eq!(dtx.token_inputs().len(), 0);
+	assert_eq!(dtx.token_outputs().len(), 1);
+	assert_eq!(tx.hash(), dtx.hash());
+}
+
+#[test]
+fn token_tx_ser_deser() {
+	test_setup();
+	let tx = tokentx1i2o();
+	let mut vec = Vec::new();
+	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
+	let dtx: Transaction = ser::deserialize_default(&mut &vec[..]).unwrap();
+	assert_eq!(dtx.fee(), 4);
+	assert_eq!(dtx.inputs().len(), 1);
+	assert_eq!(dtx.outputs().len(), 1);
+	assert_eq!(dtx.token_inputs().len(), 1);
+	assert_eq!(dtx.token_outputs().len(), 2);
 	assert_eq!(tx.hash(), dtx.hash());
 }
 

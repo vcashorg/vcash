@@ -19,7 +19,8 @@ use crate::core::core::block::{Block, BlockHeader, Error, HeaderVersion, Untrust
 use crate::core::core::hash::Hashed;
 use crate::core::core::id::ShortIdentifiable;
 use crate::core::core::transaction::{
-	self, KernelFeatures, NRDRelativeHeight, Output, OutputFeatures, OutputIdentifier, Transaction,
+	self, KernelFeatures, NRDRelativeHeight, Output, OutputFeatures, OutputIdentifier, TokenOutput,
+	Transaction,
 };
 use crate::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
 use crate::core::core::{Committed, CompactBlock};
@@ -321,10 +322,10 @@ fn block_with_token_cut_through() {
 	let key_id6 = ExtKeychain::derive_key_id(1, 6, 0, 0, 0);
 
 	let token_key = TokenKey::new_token_key();
-	let mut btx1 = build::transaction(
+	let btx1 = build::transaction(
 		KernelFeatures::Plain { fee: 2 },
 		Some(TokenKernelFeatures::PlainToken),
-		vec![
+		&[
 			token_input(10, token_key, false, key_id1),
 			token_output(6, token_key, false, key_id2.clone()),
 			token_output(4, token_key, false, key_id3),
@@ -336,10 +337,10 @@ fn block_with_token_cut_through() {
 	)
 	.unwrap();
 
-	let mut btx2 = build::transaction(
+	let btx2 = build::transaction(
 		KernelFeatures::Plain { fee: 5 },
 		Some(TokenKernelFeatures::PlainToken),
-		vec![
+		&[
 			token_input(6, token_key, false, key_id2),
 			token_output(6, token_key, false, key_id6),
 			input(5, key_id5),
@@ -350,13 +351,7 @@ fn block_with_token_cut_through() {
 	.unwrap();
 	let prev = BlockHeader::default();
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let b = new_block(
-		vec![&mut btx1, &mut btx2],
-		&keychain,
-		&builder,
-		&prev,
-		&key_id,
-	);
+	let b = new_block(&[btx1, btx2], &keychain, &builder, &prev, &key_id);
 
 	// block should have been automatically compacted (including reward
 	// output) and should still be valid
@@ -471,10 +466,17 @@ fn remove_issuetoken_output_flag() {
 	let tx = txissuetoken();
 	let prev = BlockHeader::default();
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let mut b = new_block(vec![&tx], &keychain, &builder, &prev, &key_id);
+	let mut b = new_block(&[tx], &keychain, &builder, &prev, &key_id);
 
 	assert!(b.token_outputs()[0].is_tokenissue());
-	b.token_outputs_mut()[0].features = OutputFeatures::Token;
+	let token_output = b.token_outputs()[0];
+	let token_output = TokenOutput::new(
+		OutputFeatures::Token,
+		token_output.token_type(),
+		token_output.commitment(),
+		token_output.proof(),
+	);
+	b.body = b.body.replace_token_outputs(&[token_output]);
 
 	assert_eq!(
 		b.validate(&BlindingFactor::zero(), verifier_cache()),
@@ -492,10 +494,12 @@ fn remove_issuetoken_kernel_flag() {
 	let tx = txissuetoken();
 	let prev = BlockHeader::default();
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let mut b = new_block(vec![&tx], &keychain, &builder, &prev, &key_id);
+	let mut b = new_block(&[tx], &keychain, &builder, &prev, &key_id);
 
 	assert!(b.token_kernels()[0].is_issue_token());
-	b.token_kernels_mut()[0].features = TokenKernelFeatures::PlainToken;
+	let mut token_kernel = b.token_kernels()[0].clone();
+	token_kernel.features = TokenKernelFeatures::PlainToken;
+	b.body = b.body.replace_token_kernel(token_kernel);
 
 	assert_eq!(
 		b.validate(&BlindingFactor::zero(), verifier_cache()),
@@ -641,17 +645,17 @@ fn block_single_tx_serialized_size() {
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 	let b = new_block(&[tx1], &keychain, &builder, &prev, &key_id);
 
-	// Default protocol version (3)
+	// Default protocol version (4)
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_907);
+	assert_eq!(vec.len(), 2_906);
 
-	// Protocol version 3
+	// Protocol version 4
 	let mut vec = Vec::new();
-	ser::serialize(&mut vec, ser::ProtocolVersion(3), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_669);
+	ser::serialize(&mut vec, ser::ProtocolVersion(4), &b).expect("serialization failed");
+	assert_eq!(vec.len(), 2_906);
 
-	// Protocol version 2.
+	// Protocol version 3.
 	// Note: block must be in "v2" compatibility with "features and commit" inputs for this.
 	// Normally we would convert the block by looking inputs up in utxo but we fake it here for testing.
 	let inputs: Vec<_> = b.inputs().into();
@@ -664,29 +668,35 @@ fn block_single_tx_serialized_size() {
 		.collect();
 	let b = Block {
 		header: b.header,
+		aux_data: Default::default(),
 		body: b.body.replace_inputs(inputs.as_slice().into()),
 	};
+
+	// Protocol version 3blblblbll
+	let mut vec = Vec::new();
+	ser::serialize(&mut vec, ser::ProtocolVersion(3), &b).expect("serialization failed");
+	assert_eq!(vec.len(), 2_907);
 
 	// Protocol version 2
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(2), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_670);
+	assert_eq!(vec.len(), 2_907);
 
 	// Protocol version 1 (fixed size kernels)
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(1), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_694);
+	assert_eq!(vec.len(), 2_907);
 
-	// Check we can also serialize a v2 compatibility block in v3 protocol version
+	// Check we can also serialize a v2 compatibility block in v4 protocol version
 	// without needing to explicitly convert the block.
 	let mut vec = Vec::new();
-	ser::serialize(&mut vec, ser::ProtocolVersion(3), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_669);
+	ser::serialize(&mut vec, ser::ProtocolVersion(4), &b).expect("serialization failed");
+	assert_eq!(vec.len(), 2_906);
 
-	// Default protocol version (3) for completeness
+	// Default protocol version (4) for completeness
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_669);
+	assert_eq!(vec.len(), 2_906);
 }
 
 #[test]
@@ -733,10 +743,11 @@ fn block_10_tx_serialized_size() {
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 	let b = new_block(&txs, &keychain, &builder, &prev, &key_id);
 
+	// Default protocol version.
 	{
 		let mut vec = Vec::new();
 		ser::serialize_default(&mut vec, &b).expect("serialization failed");
-		assert_eq!(vec.len(), 16_826);
+		assert_eq!(vec.len(), 17_063);
 	}
 }
 
@@ -800,7 +811,7 @@ fn compact_block_hash_with_nonce_for_token_tx() {
 	let tx = tokentx1i2o();
 	let prev = BlockHeader::default();
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let b = new_block(vec![&tx], &keychain, &builder, &prev, &key_id);
+	let b = new_block(&[tx.clone()], &keychain, &builder, &prev, &key_id);
 	let cb1: CompactBlock = b.clone().into();
 	let cb2: CompactBlock = b.clone().into();
 
@@ -857,7 +868,7 @@ fn convert_block_to_compact_block_for_token_tx() {
 	let tx1 = tokentx1i2o();
 	let prev = BlockHeader::default();
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let b = new_block(vec![&tx1], &keychain, &builder, &prev, &key_id);
+	let b = new_block(&[tx1], &keychain, &builder, &prev, &key_id);
 	let cb: CompactBlock = b.clone().into();
 
 	assert_eq!(cb.out_full().len(), 1);
@@ -946,11 +957,11 @@ fn same_amount_outputs_copy_range_proof() {
 	let b = new_block(
 		&[Transaction::new(
 			tx.inputs(),
-			outs,
-			vec![],
-			vec![],
+			&outs,
+			&[],
+			&[],
 			tx.kernels(),
-			vec![],
+			&[],
 		)],
 		&keychain,
 		&builder,
@@ -1008,10 +1019,10 @@ fn wrong_amount_range_proof() {
 		&[Transaction::new(
 			tx1.inputs(),
 			&outs,
-			vec![],
-			vec![],
+			&[],
+			&[],
 			tx1.kernels(),
-			vec![],
+			&[],
 		)],
 		&keychain,
 		&builder,
@@ -1043,7 +1054,7 @@ fn reissue_token() {
 	let tx1 = build::transaction(
 		KernelFeatures::Plain { fee: 4 },
 		Some(TokenKernelFeatures::IssueToken),
-		vec![
+		&[
 			input(10, key_id1),
 			output(6, key_id2),
 			token_output(100, token_key, true, key_id3),
@@ -1056,7 +1067,7 @@ fn reissue_token() {
 	let tx2 = build::transaction(
 		KernelFeatures::Plain { fee: 4 },
 		Some(TokenKernelFeatures::IssueToken),
-		vec![
+		&[
 			input(20, key_id4),
 			output(16, key_id5),
 			token_output(1000, token_key, true, key_id6),
@@ -1093,6 +1104,7 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 
 	let tx = build::transaction(
 		KernelFeatures::Plain { fee: 0 },
+		None,
 		&[
 			build::input(10, key_id1.clone()),
 			build::input(10, key_id2.clone()),
@@ -1107,7 +1119,7 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 
 	let prev = BlockHeader::default();
 	let key_id = ExtKeychain::derive_key_id(0, 0, 0, 0, 0);
-	let mut block = new_block(&[tx], &keychain, &builder, &prev, &key_id);
+	let mut block = new_block(&[tx.clone()], &keychain, &builder, &prev, &key_id);
 
 	// The block should fail validation due to cut-through.
 	assert_eq!(
@@ -1124,7 +1136,14 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 	// Apply cut-through to eliminate the offending input and output.
 	let mut inputs: Vec<_> = block.inputs().into();
 	let mut outputs = block.outputs().to_vec();
-	let (inputs, outputs, _, _) = transaction::cut_through(&mut inputs[..], &mut outputs[..])?;
+	let mut token_input = tx.token_inputs().to_vec();
+	let mut token_output = tx.token_outputs().to_vec();
+	let (inputs, outputs, _, _, _, _, _, _) = transaction::cut_through(
+		&mut inputs[..],
+		&mut outputs[..],
+		&mut token_input[..],
+		&mut token_output[..],
+	)?;
 
 	block.body = block
 		.body
@@ -1157,11 +1176,12 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 
 	let tx = build::transaction(
 		KernelFeatures::Plain { fee: 0 },
+		None,
 		&[
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
-			build::coinbase_input(consensus::REWARD, key_id2.clone()),
-			build::output(60_000_000_000, key_id1.clone()),
-			build::output(50_000_000_000, key_id2.clone()),
+			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
+			build::coinbase_input(consensus::REWARD_ORIGIN, key_id2.clone()),
+			build::output(50_000_000_000, key_id1.clone()),
+			build::output(40_000_000_000, key_id2.clone()),
 			build::output(10_000_000_000, key_id3.clone()),
 		],
 		&keychain,
@@ -1171,7 +1191,7 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 
 	let prev = BlockHeader::default();
 	let key_id = ExtKeychain::derive_key_id(0, 0, 0, 0, 0);
-	let mut block = new_block(&[tx], &keychain, &builder, &prev, &key_id);
+	let mut block = new_block(&[tx.clone()], &keychain, &builder, &prev, &key_id);
 
 	// The block should fail validation due to cut-through.
 	assert_eq!(
@@ -1188,7 +1208,14 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 	// Apply cut-through to eliminate the offending input and output.
 	let mut inputs: Vec<_> = block.inputs().into();
 	let mut outputs = block.outputs().to_vec();
-	let (inputs, outputs, _, _) = transaction::cut_through(&mut inputs[..], &mut outputs[..])?;
+	let mut token_input = tx.token_inputs().to_vec();
+	let mut token_output = tx.token_outputs().to_vec();
+	let (inputs, outputs, _, _, _, _, _, _) = transaction::cut_through(
+		&mut inputs[..],
+		&mut outputs[..],
+		&mut token_input[..],
+		&mut token_output[..],
+	)?;
 
 	block.body = block
 		.body

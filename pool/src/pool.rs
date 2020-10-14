@@ -62,9 +62,7 @@ where
 	/// Does the transaction pool contain an entry for the given transaction?
 	/// Transactions are compared by their kernels.
 	pub fn contains_tx(&self, tx: &Transaction) -> bool {
-		self.entries
-			.iter()
-			.any(|x| x.tx.kernels() == tx.kernels() || x.tx.token_kernels() == tx.token_kernels())
+		self.entries.iter().any(|x| x.tx.kernels() == tx.kernels())
 	}
 
 	/// Query the tx pool for an individual tx matching the given kernel hash.
