@@ -19,8 +19,7 @@
 
 use chrono::prelude::{DateTime, Utc};
 use chrono::{Duration, MIN_DATE};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::prelude::*;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::{mpsc, Arc};
@@ -39,7 +38,7 @@ const MAINNET_DNS_SEEDS: &[&str] = &[
 	"mainnet.seed.weaving.rocks",
 	"mainnet.seed.v0x2a.com",
 ];
-const FLOONET_DNS_SEEDS: &[&str] = &[
+const TESTNET_DNS_SEEDS: &[&str] = &[
 	"floonet.seed.v.cash",
 	"floonet.seed.rebelgrin.com",
 	"floonet.seed.weaving.rocks",
@@ -143,14 +142,14 @@ fn monitor_peers(
 	tx: mpsc::Sender<PeerAddr>,
 	preferred_peers: &[PeerAddr],
 ) {
-	// regularly check if we need to acquire more peers  and if so, gets
+	// regularly check if we need to acquire more peers and if so, gets
 	// them from db
-	let total_count = peers.all_peers().len();
+	let mut total_count = 0;
 	let mut healthy_count = 0;
 	let mut banned_count = 0;
 	let mut defuncts = vec![];
 
-	for x in peers.all_peers() {
+	for x in peers.all_peers().into_iter() {
 		match x.flags {
 			p2p::State::Banned => {
 				let interval = Utc::now().timestamp() - x.last_banned;
@@ -170,6 +169,7 @@ fn monitor_peers(
 			p2p::State::Healthy => healthy_count += 1,
 			p2p::State::Defunct => defuncts.push(x),
 		}
+		total_count += 1;
 	}
 
 	debug!(
@@ -221,11 +221,10 @@ fn monitor_peers(
 		}
 	}
 
-	// take a random defunct peer and mark it healthy: over a long period any
+	// take a random defunct peer and mark it healthy: over a long enough period any
 	// peer will see another as defunct eventually, gives us a chance to retry
-	if !defuncts.is_empty() {
-		defuncts.shuffle(&mut thread_rng());
-		let _ = peers.update_state(defuncts[0].addr, p2p::State::Healthy);
+	if let Some(peer) = defuncts.into_iter().choose(&mut thread_rng()) {
+		let _ = peers.update_state(peer.addr, p2p::State::Healthy);
 	}
 
 	// find some peers from our db
@@ -358,8 +357,8 @@ fn listen_for_addrs(
 
 pub fn default_dns_seeds() -> Box<dyn Fn() -> Vec<PeerAddr> + Send> {
 	Box::new(|| {
-		let net_seeds = if global::is_floonet() {
-			FLOONET_DNS_SEEDS
+		let net_seeds = if global::is_testnet() {
+			TESTNET_DNS_SEEDS
 		} else {
 			MAINNET_DNS_SEEDS
 		};
@@ -368,7 +367,7 @@ pub fn default_dns_seeds() -> Box<dyn Fn() -> Vec<PeerAddr> + Send> {
 				.iter()
 				.map(|s| {
 					s.to_string()
-						+ if global::is_floonet() {
+						+ if global::is_testnet() {
 							":13514"
 						} else {
 							":3514"

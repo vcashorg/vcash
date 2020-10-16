@@ -19,7 +19,7 @@ use crate::core::consensus::WEEK_HEIGHT_ADJUSTED;
 use crate::core::core::committed::Committed;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::merkle_proof::MerkleProof;
-use crate::core::core::pmmr::{self, Backend, ReadonlyPMMR, RewindablePMMR, PMMR};
+use crate::core::core::pmmr::{self, Backend, ReadablePMMR, ReadonlyPMMR, RewindablePMMR, PMMR};
 use crate::core::core::{Block, BlockHeader, KernelFeatures, Output, OutputIdentifier, TxKernel};
 use crate::core::core::{
 	BlockTokenSums, TokenInput, TokenIssueProof, TokenKey, TokenOutput, TokenOutputIdentifier,
@@ -559,15 +559,17 @@ impl TxHashSet {
 
 		TxHashSetRoots {
 			output_roots: OutputRoots {
-				pmmr_root: output_pmmr.root(),
+				pmmr_root: output_pmmr.root().expect("no root, invalid tree"),
 				bitmap_root: self.bitmap_accumulator.root(),
 			},
-			rproof_root: rproof_pmmr.root(),
-			kernel_root: kernel_pmmr.root(),
-			token_output_root: token_output_pmmr.root(),
-			token_rproof_root: token_rproof_pmmr.root(),
-			token_issue_proof_root: token_issue_proof_pmmr.root(),
-			token_kernel_root: token_kernel_pmmr.root(),
+			rproof_root: rproof_pmmr.root().expect("no root, invalid tree"),
+			kernel_root: kernel_pmmr.root().expect("no root, invalid tree"),
+			token_output_root: token_output_pmmr.root().expect("no root, invalid tree"),
+			token_rproof_root: token_rproof_pmmr.root().expect("no root, invalid tree"),
+			token_issue_proof_root: token_issue_proof_pmmr
+				.root()
+				.expect("no root, invalid tree"),
+			token_kernel_root: token_kernel_pmmr.root().expect("no root, invalid tree"),
 		}
 	}
 
@@ -735,12 +737,13 @@ impl TxHashSet {
 		// Iterate over the current output_pos index, removing any entries that
 		// do not point to to the expected output.
 		let mut removed_count = 0;
-		for (key, (pos, _)) in batch.output_pos_iter()? {
-			if let Some(out) = output_pmmr.get_data(pos) {
+		for (key, pos) in batch.output_pos_iter()? {
+			if let Some(out) = output_pmmr.get_data(pos.pos) {
 				if let Ok(pos_via_mmr) = batch.get_output_pos(&out.commitment()) {
 					// If the pos matches and the index key matches the commitment
 					// then keep the entry, other we want to clean it up.
-					if pos == pos_via_mmr && batch.is_match_output_pos_key(&key, &out.commitment())
+					if pos.pos == pos_via_mmr
+						&& batch.is_match_output_pos_key(&key, &out.commitment())
 					{
 						continue;
 					}
@@ -828,12 +831,12 @@ impl TxHashSet {
 		// Iterate over the current output_pos index, removing any entries that
 		// do not point to to the expected output.
 		let mut removed_count = 0;
-		for (key, (pos, _)) in batch.token_output_pos_iter()? {
-			if let Some(out) = output_pmmr.get_data(pos) {
+		for (key, pos) in batch.token_output_pos_iter()? {
+			if let Some(out) = output_pmmr.get_data(pos.pos) {
 				if let Ok(pos_via_mmr) = batch.get_token_output_pos(&out.commitment()) {
 					// If the pos matches and the index key matches the commitment
 					// then keep the entry, other we want to clean it up.
-					if pos == pos_via_mmr
+					if pos.pos == pos_via_mmr
 						&& batch.is_match_token_output_pos_key(&key, &out.commitment())
 					{
 						continue;

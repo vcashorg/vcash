@@ -48,8 +48,8 @@ pub fn genesis_dev() -> core::Block {
 	})
 }
 
-/// Floonet genesis block
-pub fn genesis_floo() -> core::Block {
+/// Testnet genesis block
+pub fn genesis_test() -> core::Block {
 	let gen = core::Block::with_header(core::BlockHeader {
 		height: 0,
 		timestamp: Utc.ymd(2019, 3, 27).and_hms(0, 0, 0),
@@ -259,12 +259,12 @@ mod test {
 	use util::ToHex;
 
 	#[test]
-	fn floonet_genesis_hash() {
-		global::set_local_chain_type(global::ChainTypes::Floonet);
-		let gen_hash = genesis_floo().hash();
-		println!("floonet genesis hash: {}", gen_hash.to_hex());
-		let gen_bin = ser::ser_vec(&genesis_floo(), ProtocolVersion(1)).unwrap();
-		println!("floonet genesis full hash: {}\n", gen_bin.hash().to_hex());
+	fn testnet_genesis_hash() {
+		global::set_local_chain_type(global::ChainTypes::Testnet);
+		let gen_hash = genesis_test().hash();
+		println!("testnet genesis hash: {}", gen_hash.to_hex());
+		let gen_bin = ser::ser_vec(&genesis_test(), ProtocolVersion(1)).unwrap();
+		println!("testnet genesis full hash: {}\n", gen_bin.hash().to_hex());
 		assert_eq!(
 			gen_hash.to_hex(),
 			"569ed9e4a5463896190447e6ffe37c394c4d77ce470aa29ad762e0286b896832"

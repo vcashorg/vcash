@@ -27,8 +27,8 @@ use std::cell::Cell;
 use util::OneTime;
 
 use crate::consensus::{
-	FLOONET_REFACTOR_HEADER_HEIGHT, FLOONET_SUPPORT_TOKEN_HEIGHT, FLOONET_THIRD_HARD_FORK_HEIGHT,
-	REFACTOR_HEADER_HEIGHT, SUPPORT_TOKEN_HEIGHT, THIRD_HARD_FORK_HEIGHT,
+	REFACTOR_HEADER_HEIGHT, SUPPORT_TOKEN_HEIGHT, TESTNET_REFACTOR_HEADER_HEIGHT,
+	TESTNET_SUPPORT_TOKEN_HEIGHT, TESTNET_THIRD_HARD_FORK_HEIGHT, THIRD_HARD_FORK_HEIGHT,
 };
 
 /// An enum collecting sets of parameters used throughout the
@@ -102,7 +102,7 @@ pub const COMPACTION_CHECK: u64 = DAY_HEIGHT_ORIGIN;
 const HALVINGINTERVAL: u64 = 1050000;
 
 /// Floonet Subsidy amount half height
-const FLOONET_HALVINGINTERVAL: u64 = YEAR_HEIGHT_ADJUSTED;
+const TESTNET_HALVINGINTERVAL: u64 = YEAR_HEIGHT_ADJUSTED;
 
 /// Testing Subsidy amount half height
 const AUTOTEST_HALVINGINTERVAL: u64 = DAY_HEIGHT_ORIGIN;
@@ -122,18 +122,18 @@ pub enum ChainTypes {
 	/// For User testing
 	UserTesting,
 	/// Protocol testing network
-	Floonet,
+	Testnet,
 	/// Main production network
 	Mainnet,
 }
 
 impl ChainTypes {
-	/// Short name representing the chain type ("floo", "main", etc.)
+	/// Short name representing the chain type ("test", "main", etc.)
 	pub fn shortname(&self) -> String {
 		match *self {
 			ChainTypes::AutomatedTesting => "auto".to_owned(),
 			ChainTypes::UserTesting => "user".to_owned(),
-			ChainTypes::Floonet => "floo".to_owned(),
+			ChainTypes::Testnet => "test".to_owned(),
 			ChainTypes::Mainnet => "main".to_owned(),
 		}
 	}
@@ -158,7 +158,7 @@ lazy_static! {
 }
 
 thread_local! {
-	/// Mainnet|Floonet|UserTesting|AutomatedTesting
+	/// Mainnet|Testnet|UserTesting|AutomatedTesting
 	pub static CHAIN_TYPE: Cell<Option<ChainTypes>> = Cell::new(None);
 
 	/// Local feature flag for NRD kernel support.
@@ -230,18 +230,6 @@ pub fn create_pow_context<T>(
 	proof_size: usize,
 	max_sols: u32,
 ) -> Result<Box<dyn PoWContext>, pow::Error> {
-	//	let chain_type = CHAIN_TYPE.read().clone();
-	//	match chain_type {
-	//		// Mainnet has Cuckaroo29 for AR and Cuckatoo30+ for AF
-	//		ChainTypes::Mainnet if edge_bits == 29 => new_cuckaroo_ctx(edge_bits, proof_size),
-	//		ChainTypes::Mainnet => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
-	//
-	//		// Same for Floonet
-	//		ChainTypes::Floonet if edge_bits == 29 => new_cuckaroo_ctx(edge_bits, proof_size),
-	//		ChainTypes::Floonet => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
-	//
-	//		// Everything else is Cuckatoo only
-	//		_ => new_cuckatoo_ctx(edge_bits, proof_size, max_sols),
 	new_cuckatoo_ctx(edge_bits, proof_size, max_sols)
 }
 
@@ -249,7 +237,7 @@ pub fn create_pow_context<T>(
 pub fn halving_interval() -> u64 {
 	match get_chain_type() {
 		ChainTypes::Mainnet => HALVINGINTERVAL,
-		ChainTypes::Floonet => FLOONET_HALVINGINTERVAL,
+		ChainTypes::Testnet => TESTNET_HALVINGINTERVAL,
 		_ => AUTOTEST_HALVINGINTERVAL,
 	}
 }
@@ -257,7 +245,7 @@ pub fn halving_interval() -> u64 {
 /// First Hard Fork:Support token height
 pub fn support_token_height() -> u64 {
 	match get_chain_type() {
-		ChainTypes::Floonet => FLOONET_SUPPORT_TOKEN_HEIGHT,
+		ChainTypes::Testnet => TESTNET_SUPPORT_TOKEN_HEIGHT,
 		ChainTypes::Mainnet => SUPPORT_TOKEN_HEIGHT,
 		_ => 0,
 	}
@@ -266,7 +254,7 @@ pub fn support_token_height() -> u64 {
 /// Second Hard Fork:Refactor header height
 pub fn refactor_header_height() -> u64 {
 	match get_chain_type() {
-		ChainTypes::Floonet => FLOONET_REFACTOR_HEADER_HEIGHT,
+		ChainTypes::Testnet => TESTNET_REFACTOR_HEADER_HEIGHT,
 		ChainTypes::Mainnet => REFACTOR_HEADER_HEIGHT,
 		_ => 0,
 	}
@@ -275,7 +263,7 @@ pub fn refactor_header_height() -> u64 {
 /// Third Hard Fork:Block withholding attack and NRD Kernel
 pub fn third_hard_fork_height() -> u64 {
 	match get_chain_type() {
-		ChainTypes::Floonet => FLOONET_THIRD_HARD_FORK_HEIGHT,
+		ChainTypes::Testnet => TESTNET_THIRD_HARD_FORK_HEIGHT,
 		ChainTypes::Mainnet => THIRD_HARD_FORK_HEIGHT,
 		_ => TESTING_THIRD_HARD_FORK,
 	}
@@ -316,7 +304,7 @@ pub fn proofsize() -> usize {
 /// Minimum bit difficulty
 pub fn min_bit_diff() -> u32 {
 	match get_chain_type() {
-		ChainTypes::Floonet => 0x1b01cc26,
+		ChainTypes::Testnet => 0x1b01cc26,
 		ChainTypes::Mainnet => 0x18120f14,
 		_ => 0x2100ffff,
 	}
@@ -333,22 +321,10 @@ pub fn coinbase_maturity() -> u64 {
 
 /// Initial mining difficulty
 pub fn initial_block_difficulty() -> u64 {
-	//    match get_chain_type() {
-	//        ChainTypes::AutomatedTesting => TESTING_INITIAL_DIFFICULTY,
-	//        ChainTypes::UserTesting => TESTING_INITIAL_DIFFICULTY,
-	//        ChainTypes::Floonet => INITIAL_DIFFICULTY,
-	//        ChainTypes::Mainnet => INITIAL_DIFFICULTY,
-	//    }
 	TESTING_INITIAL_DIFFICULTY
 }
 /// Initial mining secondary scale
 pub fn initial_graph_weight() -> u32 {
-	//    match get_chain_type() {
-	//        ChainTypes::AutomatedTesting => TESTING_INITIAL_GRAPH_WEIGHT,
-	//        ChainTypes::UserTesting => TESTING_INITIAL_GRAPH_WEIGHT,
-	//        ChainTypes::Floonet => graph_weight(0, SECOND_POW_EDGE_BITS) as u32,
-	//        ChainTypes::Mainnet => graph_weight(0, SECOND_POW_EDGE_BITS) as u32,
-	//    }
 	TESTING_INITIAL_GRAPH_WEIGHT
 }
 
@@ -357,7 +333,7 @@ pub fn max_block_weight() -> u64 {
 	match get_chain_type() {
 		ChainTypes::AutomatedTesting => TESTING_MAX_BLOCK_WEIGHT,
 		ChainTypes::UserTesting => TESTING_MAX_BLOCK_WEIGHT,
-		ChainTypes::Floonet => MAX_BLOCK_WEIGHT,
+		ChainTypes::Testnet => MAX_BLOCK_WEIGHT,
 		ChainTypes::Mainnet => MAX_BLOCK_WEIGHT,
 	}
 }
@@ -373,7 +349,7 @@ pub fn cut_through_horizon() -> u32 {
 	match get_chain_type() {
 		ChainTypes::AutomatedTesting => AUTOMATED_TESTING_CUT_THROUGH_HORIZON,
 		ChainTypes::UserTesting => USER_TESTING_CUT_THROUGH_HORIZON,
-		ChainTypes::Floonet => USER_TESTING_CUT_THROUGH_HORIZON,
+		ChainTypes::Testnet => USER_TESTING_CUT_THROUGH_HORIZON,
 		_ => CUT_THROUGH_HORIZON,
 	}
 }
@@ -383,7 +359,7 @@ pub fn state_sync_threshold() -> u32 {
 	match get_chain_type() {
 		ChainTypes::AutomatedTesting => TESTING_STATE_SYNC_THRESHOLD,
 		ChainTypes::UserTesting => TESTING_STATE_SYNC_THRESHOLD,
-		ChainTypes::Floonet => TESTING_STATE_SYNC_THRESHOLD,
+		ChainTypes::Testnet => TESTING_STATE_SYNC_THRESHOLD,
 		_ => STATE_SYNC_THRESHOLD,
 	}
 }
@@ -393,7 +369,7 @@ pub fn txhashset_archive_interval() -> u64 {
 	match get_chain_type() {
 		ChainTypes::AutomatedTesting => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
 		ChainTypes::UserTesting => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
-		ChainTypes::Floonet => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
+		ChainTypes::Testnet => TESTING_TXHASHSET_ARCHIVE_INTERVAL,
 		_ => TXHASHSET_ARCHIVE_INTERVAL,
 	}
 }
@@ -402,19 +378,19 @@ pub fn txhashset_archive_interval() -> u64 {
 /// Production defined as a live public network, testnet[n] or mainnet.
 pub fn is_production_mode() -> bool {
 	match get_chain_type() {
-		ChainTypes::Floonet => true,
+		ChainTypes::Testnet => true,
 		ChainTypes::Mainnet => true,
 		_ => false,
 	}
 }
 
-/// Are we in floonet?
+/// Are we in testnet?
 /// Note: We do not have a corresponding is_mainnet() as we want any tests to be as close
 /// as possible to "mainnet" configuration as possible.
 /// We want to avoid missing any mainnet only code paths.
-pub fn is_floonet() -> bool {
+pub fn is_testnet() -> bool {
 	match get_chain_type() {
-		ChainTypes::Floonet => true,
+		ChainTypes::Testnet => true,
 		_ => false,
 	}
 }
@@ -452,4 +428,10 @@ where
 	}
 	last_n.reverse();
 	last_n
+}
+
+/// Calculates the size of a header (in bytes) given a number of edge bits in the PoW
+#[inline]
+pub fn max_header_size_bytes() -> usize {
+	414 + 800 //800 for Version2 BlockHeader BlockAuxData
 }

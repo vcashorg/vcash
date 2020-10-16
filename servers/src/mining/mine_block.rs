@@ -127,47 +127,6 @@ pub fn get_block(
 	return result.unwrap();
 }
 
-pub fn get_grin_solution(b: &mut core::Block, head: &core::BlockHeader) -> bool {
-	let deadline = Utc::now().timestamp_millis() + 10_i64 * 1000;
-
-	debug!(
-		"PoolCenter Mining Cuckoo{} for max 3s on {} @ {}.",
-		global::min_edge_bits(),
-		b.header.total_difficulty(),
-		b.header.height
-	);
-	let mut iter_count = 0;
-
-	while Utc::now().timestamp() < deadline {
-		let mut ctx = global::create_pow_context::<u32>(
-			head.height,
-			global::min_edge_bits(),
-			global::proofsize(),
-			10,
-		)
-		.unwrap();
-		ctx.set_header_nonce(b.header.pre_pow(), None, true)
-			.unwrap();
-		if let Ok(proofs) = ctx.find_cycles() {
-			b.header.pow.proof = proofs[0].clone();
-			let proof_diff = b.header.pow.to_difficulty(b.header.height);
-			if proof_diff >= (b.header.total_difficulty() - head.total_difficulty()) {
-				debug!(
-					"PoolCenter found solution for height = {} before deadline in {}, iter_count = {}",b.header.height,
-					deadline - Utc::now().timestamp_millis(), iter_count,
-				);
-				return true;
-			}
-		}
-
-		b.header.pow.nonce += 1;
-		iter_count += 1;
-	}
-
-	debug!("PoolCenter No solution found in 3s",);
-	false
-}
-
 /// Builds a new block with the chain head as previous and eligible
 /// transactions from the pool.
 fn build_block(
@@ -275,7 +234,7 @@ fn build_block(
 ///
 fn burn_reward(block_fees: BlockFees) -> Result<(core::Output, core::TxKernel, BlockFees), Error> {
 	warn!("Burning block fees: {:?}", block_fees);
-	let keychain = ExtKeychain::from_random_seed(global::is_floonet())?;
+	let keychain = ExtKeychain::from_random_seed(global::is_testnet())?;
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 	let (out, kernel) = crate::core::libtx::reward::output(
 		&keychain,

@@ -168,7 +168,7 @@ impl GlobalConfig {
 
 		match *chain_type {
 			global::ChainTypes::Mainnet => {}
-			global::ChainTypes::Floonet => {
+			global::ChainTypes::Testnet => {
 				defaults.api_http_addr = "127.0.0.1:13513".to_owned();
 				defaults.pool_server_config.pool_server_addr = "127.0.0.1:13517".to_owned();
 				defaults.pool_server_config.wallet_listener_url =

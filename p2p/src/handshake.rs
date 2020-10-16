@@ -95,7 +95,7 @@ impl Handshake {
 	) -> Result<ProtocolVersion, Error> {
 		let cur_height = local_diff.to_num() - 1;
 		//if cur_height >= global::support_token_height() {
-		let minimum_compatible_protocol_version = if global::is_floonet() { 3 } else { 2 };
+		let minimum_compatible_protocol_version = if global::is_testnet() { 3 } else { 2 };
 		if other.value() < minimum_compatible_protocol_version {
 			return Err(Error::LowProtocolVersion);
 		}

@@ -106,7 +106,7 @@ vcash client --help
 ```sh
 docker build -t vcash -f etc/Dockerfile .
 ```
-For floonet, use `etc/Dockerfile.floonet` instead
+For testnet, use `etc/Dockerfile.testnet` instead
 
 You can bind-mount your vcash cache to run inside the container.
 

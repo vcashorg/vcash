@@ -4,8 +4,8 @@ author: The Vcash Team
 
 args:
   - floonet:
-      help: Run vcash against the Floonet (as opposed to mainnet)
-      long: floonet
+      help: Run vcash against the Testnet (as opposed to mainnet)
+      long: testnet
       takes_value: false
   - usernet:
       help: Run vcash as a local-only network. Doesn't block peer connections but will not connect to any peer or seed

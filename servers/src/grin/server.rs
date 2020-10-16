@@ -45,7 +45,6 @@ use crate::core::core::verifier_cache::LruVerifierCache;
 use crate::core::ser::ProtocolVersion;
 use crate::core::{consensus, genesis, global, pow};
 use crate::grin::{dandelion_monitor, seed, sync};
-use crate::mining::stratumserver;
 use crate::mining::test_miner::Miner;
 use crate::p2p;
 use crate::p2p::types::PeerAddr;
@@ -194,7 +193,7 @@ impl Server {
 		let genesis = match config.chain_type {
 			global::ChainTypes::AutomatedTesting => pow::mine_genesis_block().unwrap(),
 			global::ChainTypes::UserTesting => pow::mine_genesis_block().unwrap(),
-			global::ChainTypes::Floonet => genesis::genesis_floo(),
+			global::ChainTypes::Testnet => genesis::genesis_test(),
 			global::ChainTypes::Mainnet => genesis::genesis_main(),
 		};
 
@@ -391,23 +390,22 @@ impl Server {
 	}
 
 	/// Start a minimal "stratum" mining service on a separate thread
-	pub fn start_stratum_server(&self, config: StratumServerConfig) {
-		let edge_bits = global::min_edge_bits();
-		let proof_size = global::proofsize();
-		let sync_state = self.sync_state.clone();
-
-		let mut stratum_server = stratumserver::StratumServer::new(
-			config,
-			self.chain.clone(),
-			self.tx_pool.clone(),
-			self.verifier_cache.clone(),
-			self.state_info.stratum_stats.clone(),
-		);
-		let _ = thread::Builder::new()
-			.name("stratum_server".to_string())
-			.spawn(move || {
-				stratum_server.run_loop(edge_bits as u32, proof_size, sync_state);
-			});
+	pub fn start_stratum_server(&self, _config: StratumServerConfig) {
+		//		let proof_size = global::proofsize();
+		//		let sync_state = self.sync_state.clone();
+		//
+		//		let mut stratum_server = stratumserver::StratumServer::new(
+		//			config,
+		//			self.chain.clone(),
+		//			self.tx_pool.clone(),
+		//			self.verifier_cache.clone(),
+		//			self.state_info.stratum_stats.clone(),
+		//		);
+		//		let _ = thread::Builder::new()
+		//			.name("stratum_server".to_string())
+		//			.spawn(move || {
+		//				stratum_server.run_loop(proof_size, sync_state);
+		//			});
 	}
 
 	/// Start mining for blocks internally on a separate thread. Relies on
