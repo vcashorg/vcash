@@ -433,5 +433,8 @@ where
 /// Calculates the size of a header (in bytes) given a number of edge bits in the PoW
 #[inline]
 pub fn max_header_size_bytes() -> usize {
-	414 + 800 //800 for Version2 BlockHeader BlockAuxData
+	//414 for header body length.
+	//1104 for BlockAuxData, based on max merkle branch length 13 and max coinbase tx length 600.
+	//500 for extra redundancy.
+	414 + 1104 + 500
 }
