@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 use crate::chain::{Chain, SyncState};
 use crate::core::core::hash::Hash;
 use crate::core::core::transaction::Transaction;
-use crate::core::core::verifier_cache::VerifierCache;
 use crate::handlers::blocks_api::{BlockHandler, HeaderHandler};
 use crate::handlers::chain_api::{ChainHandler, KernelHandler, OutputHandler, TokenOutputHandler};
 use crate::handlers::pool_api::PoolHandler;
@@ -39,22 +38,20 @@ use std::sync::Weak;
 /// Methods in this API are intended to be 'single use'.
 ///
 
-pub struct Foreign<B, P, V>
+pub struct Foreign<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
 	pub chain: Weak<Chain>,
-	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
+	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P>>>,
 	pub sync_state: Weak<SyncState>,
 }
 
-impl<B, P, V> Foreign<B, P, V>
+impl<B, P> Foreign<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
 	/// Create a new API instance with the chain, transaction pool, peers and `sync_state`. All subsequent
 	/// API calls will operate on this instance of node API.
@@ -71,7 +68,7 @@ where
 
 	pub fn new(
 		chain: Weak<Chain>,
-		tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
+		tx_pool: Weak<RwLock<pool::TransactionPool<B, P>>>,
 		sync_state: Weak<SyncState>,
 	) -> Self {
 		Foreign {
@@ -132,7 +129,15 @@ where
 			chain: self.chain.clone(),
 		};
 		let hash = block_handler.parse_inputs(height, hash, commit)?;
-		block_handler.get_block(&hash, true, true)
+
+		// We include the rangeproof by default.
+		let include_proof = true;
+
+		// We do *not* include the Merkle proof.
+		// These are not actively used and expensive to generate for historical blocks.
+		let include_merkle_proof = false;
+
+		block_handler.get_block(&hash, include_proof, include_merkle_proof)
 	}
 
 	/// Returns the node version and block header version (used by grin-wallet).

@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,8 +33,6 @@ pub use self::types::*;
 use crate::core::{Block, BlockHeader};
 use crate::genesis;
 use crate::global;
-use chrono;
-use num;
 
 #[macro_use]
 mod common;
@@ -49,7 +47,7 @@ pub mod lean;
 mod siphash;
 mod types;
 
-pub use crate::pow::cuckaroo::{new_cuckaroo_ctx, CuckarooContext};
+pub use crate::pow::cuckaroo::{new_cuckaroo_ctx, no_cuckaroo_ctx, CuckarooContext};
 pub use crate::pow::cuckarood::{new_cuckarood_ctx, CuckaroodContext};
 pub use crate::pow::cuckaroom::{new_cuckaroom_ctx, CuckaroomContext};
 pub use crate::pow::cuckarooz::{new_cuckarooz_ctx, CuckaroozContext};
@@ -145,14 +143,14 @@ mod test {
 		println!("proof {}", global::proofsize());
 		pow_size(
 			&mut b.header,
-			Difficulty::min(),
+			Difficulty::min_dma(),
 			global::proofsize(),
 			global::min_edge_bits(),
 		)
 		.unwrap();
 		println!("nonce {}", b.header.pow.nonce);
 		assert_ne!(b.header.pow.nonce, 310);
-		assert!(b.header.pow.to_difficulty(0) >= Difficulty::min());
+		assert!(b.header.pow.to_difficulty(0) >= Difficulty::min_dma());
 		assert!(verify_size(&b.header).is_ok());
 	}
 }

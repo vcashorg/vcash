@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
 pub mod common;
 
 use self::core::consensus;
-use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{HeaderVersion, KernelFeatures, NRDRelativeHeight};
 use self::core::global;
 use self::keychain::{ExtKeychain, Keychain};
@@ -32,6 +31,7 @@ use std::sync::Arc;
 fn test_nrd_kernels_enabled() {
 	util::init_test_logger();
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
+	global::set_local_accept_fee_base(10);
 	global::set_local_nrd_enabled(true);
 
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
@@ -41,30 +41,31 @@ fn test_nrd_kernels_enabled() {
 
 	let genesis = genesis_block(&keychain);
 	let chain = Arc::new(init_chain(db_root, genesis));
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 
 	// Initialize a new pool with our chain adapter.
-	let mut pool = init_transaction_pool(
-		Arc::new(ChainAdapter {
-			chain: chain.clone(),
-		}),
-		verifier_cache,
-	);
+	let mut pool = init_transaction_pool(Arc::new(ChainAdapter {
+		chain: chain.clone(),
+	}));
 
 	// Add some blocks.
 	add_some_blocks(&chain, 3, &keychain);
 
 	// Spend the initial coinbase.
 	let header_1 = chain.get_header_by_height(1).unwrap();
-	let tx = test_transaction_spending_coinbase(&keychain, &header_1, vec![10, 20, 30, 40]);
+	let mg = consensus::MILLI_GRIN;
+	let tx = test_transaction_spending_coinbase(
+		&keychain,
+		&header_1,
+		vec![1_000 * mg, 2_000 * mg, 3_000 * mg, 4_000 * mg],
+	);
 	add_block(&chain, &[tx], &keychain);
 
 	let tx_1 = test_transaction_with_kernel_features(
 		&keychain,
-		vec![10, 20],
-		vec![24],
+		vec![1_000 * mg, 2_000 * mg],
+		vec![2_400 * mg],
 		KernelFeatures::NoRecentDuplicate {
-			fee: 6,
+			fee: (600 * mg as u32).into(),
 			relative_height: NRDRelativeHeight::new(144).unwrap(),
 		},
 	);
@@ -83,7 +84,7 @@ fn test_nrd_kernels_enabled() {
 	assert_eq!(header.height, consensus::TESTING_THIRD_HARD_FORK);
 	assert_eq!(header.version, HeaderVersion(3));
 
-	// NRD kernel support not enabled via feature flag, so not valid.
+	// NRD kernel support enabled via feature flag, so valid.
 	assert_eq!(
 		pool.add_to_pool(test_source(), tx_1.clone(), false, &header),
 		Ok(())

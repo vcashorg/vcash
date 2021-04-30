@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,19 +16,16 @@ use self::chain::types::NoopAdapter;
 use self::chain::types::Options;
 use self::chain::Chain;
 use self::core::core::hash::Hashed;
-use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::Block;
 use self::core::genesis;
 use self::core::global::ChainTypes;
 use self::core::libtx::{self, reward};
 use self::core::{consensus, global, pow};
 use self::keychain::{ExtKeychainPath, Keychain};
-use self::util::RwLock;
 use chrono::Duration;
 use grin_chain as chain;
 use grin_core as core;
 use grin_keychain as keychain;
-use grin_util as util;
 use std::fs;
 use std::sync::Arc;
 
@@ -37,13 +34,11 @@ pub fn clean_output_dir(dir_name: &str) {
 }
 
 pub fn init_chain(dir_name: &str, genesis: Block) -> Chain {
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 	Chain::init(
 		dir_name.to_string(),
 		Arc::new(NoopAdapter {}),
 		genesis,
 		pow::verify_size,
-		verifier_cache,
 		false,
 	)
 	.unwrap()
@@ -87,7 +82,8 @@ where
 {
 	for n in 1..chain_length {
 		let prev = chain.head_header().unwrap();
-		let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
+		let next_header_info =
+			consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
 		let pk = ExtKeychainPath::new(1, n as u32, 0, 0, 0).to_identifier();
 		let reward = libtx::reward::output(
 			keychain,
@@ -98,8 +94,8 @@ where
 			false,
 		)
 		.unwrap();
-		let mut b = core::core::Block::new(&prev, &[], next_header_info.clone().difficulty, reward)
-			.unwrap();
+		let mut b =
+			core::core::Block::new(&prev, &[], next_header_info.difficulty, reward).unwrap();
 		b.header.timestamp = prev.timestamp + Duration::seconds(60);
 		b.header.pow.secondary_scaling = next_header_info.secondary_scaling;
 

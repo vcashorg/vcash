@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,11 +35,11 @@ pub struct VecBackend<T: PMMRable> {
 }
 
 impl<T: PMMRable> Backend<T> for VecBackend<T> {
-	fn append(&mut self, elmt: &T, hashes: Vec<Hash>) -> Result<(), String> {
+	fn append(&mut self, elmt: &T, hashes: &[Hash]) -> Result<(), String> {
 		if let Some(data) = &mut self.data {
 			data.push(elmt.clone());
 		}
-		self.hashes.append(&mut hashes.clone());
+		self.hashes.extend_from_slice(hashes);
 		Ok(())
 	}
 
@@ -62,6 +62,10 @@ impl<T: PMMRable> Backend<T> for VecBackend<T> {
 	fn get_from_file(&self, position: u64) -> Option<Hash> {
 		let idx = usize::try_from(position.saturating_sub(1)).expect("usize from u64");
 		self.hashes.get(idx).cloned()
+	}
+
+	fn get_peak_from_file(&self, position: u64) -> Option<Hash> {
+		self.get_from_file(position)
 	}
 
 	fn get_data_from_file(&self, position: u64) -> Option<T::E> {

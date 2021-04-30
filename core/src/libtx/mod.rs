@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,16 +28,13 @@ pub mod proof;
 pub mod reward;
 pub mod secp_ser;
 
-use crate::consensus;
 use crate::core::Transaction;
+use crate::global::get_accept_fee_base;
 
 pub use self::proof::ProofBuilder;
 pub use crate::libtx::error::{Error, ErrorKind};
 
-/// default base fee for tx
-pub const DEFAULT_BASE_FEE: u64 = consensus::MILLI_GRIN;
-
-/// Transaction fee calculation
+/// Transaction fee calculation given numbers of inputs, outputs, and kernels
 pub fn tx_fee(
 	input_len: usize,
 	output_len: usize,
@@ -45,19 +42,18 @@ pub fn tx_fee(
 	token_input_len: usize,
 	token_output_len: usize,
 	token_kernel_len: usize,
-	base_fee: Option<u64>,
 ) -> u64 {
-	let use_base_fee = match base_fee {
-		Some(bf) => bf,
-		None => DEFAULT_BASE_FEE,
-	};
-
-	Transaction::weight(
+	Transaction::weight_by_iok(
 		input_len as u64,
 		output_len as u64,
 		kernel_len as u64,
 		token_input_len as u64,
 		token_output_len as u64,
 		token_kernel_len as u64,
-	) * use_base_fee
+	) * get_accept_fee_base()
+}
+
+/// Transaction fee calculation given transaction
+pub fn accept_fee(tx: Transaction, height: u64) -> u64 {
+	tx.accept_fee(height)
 }

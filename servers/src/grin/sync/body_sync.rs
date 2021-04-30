@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,11 +14,14 @@
 
 use chrono::prelude::{DateTime, Utc};
 use chrono::Duration;
+use p2p::Capabilities;
+use rand::prelude::*;
 use std::cmp;
 use std::sync::Arc;
 
-use crate::chain::{self, SyncState, SyncStatus};
-use crate::core::core::hash::Hash;
+use crate::chain::{self, SyncState, SyncStatus, Tip};
+use crate::core::core::hash::{Hash, Hashed};
+use crate::core::core::BlockHeader;
 use crate::p2p;
 
 pub struct BodySync {
@@ -69,27 +72,58 @@ impl BodySync {
 		Ok(false)
 	}
 
-	/// Return true if txhashset download is needed (when requested block is under the horizon).
-	fn body_sync(&mut self) -> Result<bool, chain::Error> {
-		let mut hashes: Option<Vec<Hash>> = Some(vec![]);
-		let txhashset_needed = self
-			.chain
-			.check_txhashset_needed("body_sync".to_owned(), &mut hashes)?;
+	/// Is our local node running in archive_mode?
+	fn archive_mode(&self) -> bool {
+		self.chain.archive_mode()
+	}
 
-		if txhashset_needed {
+	/// Return true if txhashset download is needed (when requested block is under the horizon).
+	/// Otherwise go request some missing blocks and return false.
+	fn body_sync(&mut self) -> Result<bool, chain::Error> {
+		let head = self.chain.head()?;
+		let header_head = self.chain.header_head()?;
+		let fork_point = self.chain.fork_point()?;
+
+		if self.chain.check_txhashset_needed(&fork_point)? {
 			debug!(
 				"body_sync: cannot sync full blocks earlier than horizon. will request txhashset",
 			);
 			return Ok(true);
 		}
 
-		let mut hashes = hashes.ok_or_else(|| {
-			chain::ErrorKind::SyncError("Got no hashes for body sync".to_string())
-		})?;
+		let peers = {
+			// Find connected peers with strictly greater difficulty than us.
+			let peers_iter = || {
+				// If we are running with archive mode enabled we only want to sync
+				// from other archive nodes.
+				let cap = if self.archive_mode() {
+					Capabilities::BLOCK_HIST
+				} else {
+					Capabilities::UNKNOWN
+				};
 
-		hashes.reverse();
+				self.peers
+					.iter()
+					.with_capabilities(cap)
+					.with_difficulty(|x| x > head.total_difficulty)
+					.connected()
+			};
 
-		let peers = self.peers.more_work_peers()?;
+			// We prefer outbound peers with greater difficulty.
+			let mut peers: Vec<_> = peers_iter().outbound().into_iter().collect();
+			if peers.is_empty() {
+				debug!("no outbound peers with more work, considering inbound");
+				peers = peers_iter().inbound().into_iter().collect();
+			}
+
+			// If we have no peers (outbound or inbound) then we are done for now.
+			if peers.is_empty() {
+				debug!("no peers (inbound or outbound) with more work");
+				return Ok(false);
+			}
+
+			peers
+		};
 
 		// if we have 5 peers to sync from then ask for 50 blocks total (peer_count *
 		// 10) max will be 80 if all 8 peers are advertising more work
@@ -99,25 +133,14 @@ impl BodySync {
 			chain::MAX_ORPHAN_SIZE.saturating_sub(self.chain.orphans_len()) + 1,
 		);
 
-		let hashes_to_get = hashes
-			.iter()
-			.filter(|x| {
-				// only ask for blocks that we have not yet processed
-				// either successfully stored or in our orphan list
-				self.chain.get_block(x).is_err() && !self.chain.is_orphan(x)
-			})
-			.take(block_count)
-			.collect::<Vec<_>>();
+		let hashes = self.block_hashes_to_sync(&fork_point, &header_head, block_count as u64)?;
 
-		if !hashes_to_get.is_empty() {
-			let body_head = self.chain.head()?;
-			let header_head = self.chain.header_head()?;
-
+		if !hashes.is_empty() {
 			debug!(
 				"block_sync: {}/{} requesting blocks {:?} from {} peers",
-				body_head.height,
+				head.height,
 				header_head.height,
-				hashes_to_get,
+				hashes,
 				peers.len(),
 			);
 
@@ -125,10 +148,10 @@ impl BodySync {
 			self.blocks_requested = 0;
 			self.receive_timeout = Utc::now() + Duration::seconds(6);
 
-			let mut peers_iter = peers.iter().cycle();
-			for hash in hashes_to_get.clone() {
-				if let Some(peer) = peers_iter.next() {
-					if let Err(e) = peer.send_block_request(*hash, chain::Options::SYNC) {
+			let mut rng = rand::thread_rng();
+			for hash in hashes {
+				if let Some(peer) = peers.choose(&mut rng) {
+					if let Err(e) = peer.send_block_request(hash, chain::Options::SYNC) {
 						debug!("Skipped request to {}: {:?}", peer.info.addr, e);
 						peer.stop();
 					} else {
@@ -138,6 +161,25 @@ impl BodySync {
 			}
 		}
 		return Ok(false);
+	}
+
+	fn block_hashes_to_sync(
+		&self,
+		fork_point: &BlockHeader,
+		header_head: &Tip,
+		count: u64,
+	) -> Result<Vec<Hash>, chain::Error> {
+		let mut hashes = vec![];
+		let max_height = cmp::min(fork_point.height + count, header_head.height);
+		let mut current = self.chain.get_header_by_height(max_height)?;
+		while current.height > fork_point.height {
+			if !self.chain.is_orphan(&current.hash()) {
+				hashes.push(current.hash());
+			}
+			current = self.chain.get_previous_header(&current)?;
+		}
+		hashes.reverse();
+		Ok(hashes)
 	}
 
 	// Should we run block body sync and ask for more full blocks?

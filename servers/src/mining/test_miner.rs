@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ use crate::core::global;
 use crate::mining::mine_block;
 use crate::util;
 use crate::util::StopState;
-use crate::{ServerTxPool, ServerVerifierCache};
+use crate::ServerTxPool;
 use grin_chain::SyncState;
 use std::thread;
 use std::time::Duration;
@@ -37,7 +37,6 @@ pub struct Miner {
 	config: StratumServerConfig,
 	chain: Arc<chain::Chain>,
 	tx_pool: ServerTxPool,
-	verifier_cache: ServerVerifierCache,
 	stop_state: Arc<StopState>,
 	sync_state: Arc<SyncState>,
 	// Just to hold the port we're on, so this miner can be identified
@@ -52,7 +51,6 @@ impl Miner {
 		config: StratumServerConfig,
 		chain: Arc<chain::Chain>,
 		tx_pool: ServerTxPool,
-		verifier_cache: ServerVerifierCache,
 		stop_state: Arc<StopState>,
 		sync_state: Arc<SyncState>,
 	) -> Miner {
@@ -60,7 +58,6 @@ impl Miner {
 			config,
 			chain,
 			tx_pool,
-			verifier_cache,
 			debug_output_id: String::from("none"),
 			stop_state,
 			sync_state,
@@ -157,7 +154,6 @@ impl Miner {
 			let (mut b, block_fees) = mine_block::get_block(
 				&self.chain,
 				&self.tx_pool,
-				self.verifier_cache.clone(),
 				key_id.clone(),
 				wallet_listener_url.clone(),
 			);

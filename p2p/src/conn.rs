@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -249,6 +249,15 @@ where
 				// increase the appropriate counter
 				match &next {
 					Ok(Message::Attachment(_, _)) => reader_tracker.inc_quiet_received(bytes_read),
+					Ok(Message::Headers(data)) => {
+						// We process a full 512 headers locally in smaller 32 header batches.
+						// We only want to increment the msg count once for the full 512 headers.
+						if data.remaining == 0 {
+							reader_tracker.inc_received(bytes_read);
+						} else {
+							reader_tracker.inc_quiet_received(bytes_read);
+						}
+					}
 					_ => reader_tracker.inc_received(bytes_read),
 				}
 

@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,8 +21,10 @@ use std::thread;
 use std::time::Duration;
 
 use crate::chain;
+use crate::chain::txhashset::BitmapChunk;
 use crate::core::core;
 use crate::core::core::hash::Hash;
+use crate::core::core::{OutputIdentifier, Segment, SegmentIdentifier, TxKernel};
 use crate::core::global;
 use crate::core::pow::Difficulty;
 use crate::handshake::Handshake;
@@ -33,6 +35,7 @@ use crate::types::{
 	Capabilities, ChainAdapter, Error, NetAdapter, P2PConfig, PeerAddr, PeerInfo, ReasonForBan,
 	TxHashSetRead,
 };
+use crate::util::secp::pedersen::RangeProof;
 use crate::util::StopState;
 use chrono::prelude::{DateTime, Utc};
 
@@ -51,7 +54,7 @@ impl Server {
 	/// Creates a new idle p2p server with no peers
 	pub fn new(
 		db_root: &str,
-		capab: Capabilities,
+		capabilities: Capabilities,
 		config: P2PConfig,
 		adapter: Arc<dyn ChainAdapter>,
 		genesis: Hash,
@@ -59,7 +62,7 @@ impl Server {
 	) -> Result<Server, Error> {
 		Ok(Server {
 			config: config.clone(),
-			capabilities: capab,
+			capabilities,
 			handshake: Arc::new(Handshake::new(genesis, config.clone())),
 			peers: Arc::new(Peers::new(PeerStore::new(db_root)?, adapter, config)),
 			stop_state,
@@ -241,7 +244,7 @@ impl Server {
 	/// different sets of peers themselves. In addition, it prevent potential
 	/// duplicate connections, malicious or not.
 	fn check_undesirable(&self, stream: &TcpStream) -> bool {
-		if self.peers.peer_inbound_count()
+		if self.peers.iter().inbound().connected().count() as u32
 			>= self.config.peer_max_inbound_count() + self.config.peer_listener_buffer_count()
 		{
 			debug!("Accepting new connection will exceed peer limit, refusing connection.");
@@ -381,6 +384,38 @@ impl ChainAdapter for DummyAdapter {
 	}
 
 	fn get_tmpfile_pathname(&self, _tmpfile_name: String) -> PathBuf {
+		unimplemented!()
+	}
+
+	fn get_kernel_segment(
+		&self,
+		_hash: Hash,
+		_id: SegmentIdentifier,
+	) -> Result<Segment<TxKernel>, chain::Error> {
+		unimplemented!()
+	}
+
+	fn get_bitmap_segment(
+		&self,
+		_hash: Hash,
+		_id: SegmentIdentifier,
+	) -> Result<(Segment<BitmapChunk>, Hash), chain::Error> {
+		unimplemented!()
+	}
+
+	fn get_output_segment(
+		&self,
+		_hash: Hash,
+		_id: SegmentIdentifier,
+	) -> Result<(Segment<OutputIdentifier>, Hash), chain::Error> {
+		unimplemented!()
+	}
+
+	fn get_rangeproof_segment(
+		&self,
+		_hash: Hash,
+		_id: SegmentIdentifier,
+	) -> Result<Segment<RangeProof>, chain::Error> {
 		unimplemented!()
 	}
 }

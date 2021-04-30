@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ use crate::types::*;
 use crate::web::*;
 use hyper::{Body, Request};
 use serde_json::json;
+use std::convert::TryInto;
 use std::sync::Weak;
 
 // RESTful index of available api endpoints
@@ -54,7 +55,12 @@ impl StatusHandler {
 		let (api_sync_status, api_sync_info) = sync_status_to_api(sync_status);
 		Ok(Status::from_tip_and_peers(
 			head,
-			w(&self.peers)?.peer_count(),
+			w(&self.peers)?
+				.iter()
+				.connected()
+				.count()
+				.try_into()
+				.unwrap(),
 			api_sync_status,
 			api_sync_info,
 		))
@@ -73,11 +79,12 @@ fn sync_status_to_api(sync_status: SyncStatus) -> (String, Option<serde_json::Va
 		SyncStatus::NoSync => ("no_sync".to_string(), None),
 		SyncStatus::AwaitingPeers(_) => ("awaiting_peers".to_string(), None),
 		SyncStatus::HeaderSync {
-			current_height,
+			sync_head,
 			highest_height,
+			..
 		} => (
 			"header_sync".to_string(),
-			Some(json!({ "current_height": current_height, "highest_height": highest_height })),
+			Some(json!({ "current_height": sync_head.height, "highest_height": highest_height })),
 		),
 		SyncStatus::TxHashsetDownload(stats) => (
 			"txhashset_download".to_string(),

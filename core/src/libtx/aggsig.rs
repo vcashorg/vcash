@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -225,6 +225,7 @@ pub fn verify_partial_sig(
 /// use core::core::transaction::KernelFeatures;
 /// use core::core::{Output, OutputFeatures};
 /// use keychain::{Keychain, ExtKeychain, SwitchCommitmentType};
+/// use std::convert::TryInto;
 ///
 /// let secp = Secp256k1::with_caps(ContextFlag::Commit);
 /// let keychain = ExtKeychain::from_random_seed(false).unwrap();
@@ -239,7 +240,7 @@ pub fn verify_partial_sig(
 /// let height = 20;
 /// let over_commit = secp.commit_value(reward_value).unwrap();
 /// let out_commit = output.commitment();
-/// let features = KernelFeatures::HeightLocked{fee: 0, lock_height: height};
+/// let features = KernelFeatures::HeightLocked{fee: 1.into(), lock_height: height};
 /// let msg = features.kernel_sig_msg().unwrap();
 /// let excess = secp.commit_sum(vec![out_commit], vec![over_commit]).unwrap();
 /// let pubkey = excess.to_pubkey(&secp).unwrap();
@@ -287,6 +288,7 @@ where
 /// use core::core::transaction::KernelFeatures;
 /// use core::core::{Output, OutputFeatures};
 /// use keychain::{Keychain, ExtKeychain, SwitchCommitmentType};
+/// use std::convert::TryInto;
 ///
 /// // Create signature
 /// let secp = Secp256k1::with_caps(ContextFlag::Commit);
@@ -302,7 +304,7 @@ where
 /// let height = 20;
 /// let over_commit = secp.commit_value(reward_value).unwrap();
 /// let out_commit = output.commitment();
-/// let features = KernelFeatures::HeightLocked{fee: 0, lock_height: height};
+/// let features = KernelFeatures::HeightLocked{fee: 1.into(), lock_height: height};
 /// let msg = features.kernel_sig_msg().unwrap();
 /// let excess = secp.commit_sum(vec![out_commit], vec![over_commit]).unwrap();
 /// let pubkey = excess.to_pubkey(&secp).unwrap();

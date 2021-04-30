@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ use crate::consensus::{self, reward};
 use crate::core::committed::{self, Committed};
 use crate::core::compact_block::CompactBlock;
 use crate::core::hash::{DefaultHashable, Hash, Hashed, ZERO_HASH};
-use crate::core::verifier_cache::VerifierCache;
 use crate::core::{
 	pmmr, transaction, Commitment, Inputs, KernelFeatures, Output, Transaction, TransactionBody,
 	TxKernel, Weighting,
@@ -34,9 +33,7 @@ use chrono::Duration;
 use keychain::{self, BlindingFactor};
 use std::convert::TryInto;
 use std::fmt;
-use std::sync::Arc;
 use util::from_hex;
-use util::RwLock;
 use util::{secp, static_secp_instance};
 
 use crate::consensus::total_reward;
@@ -742,14 +739,14 @@ pub struct UntrustedBlockHeader(BlockHeader);
 impl Readable for UntrustedBlockHeader {
 	fn read<R: Reader>(reader: &mut R) -> Result<UntrustedBlockHeader, ser::Error> {
 		let header = read_block_header(reader)?;
-		if header.timestamp
-			> Utc::now() + Duration::seconds(12 * (consensus::BLOCK_TIME_SEC_ADJUSTED as i64))
-		{
-			// refuse blocks more than 12 blocks intervals in future (as in bitcoin)
+		let ftl = global::get_future_time_limit();
+		if header.timestamp > Utc::now() + Duration::seconds(ftl as i64) {
+			// refuse blocks whose timestamp is too far in the future
+			// this future_time_limit (FTL) is specified in grin-server.toml
 			// TODO add warning in p2p code if local time is too different from peers
 			error!(
-				"block header {} validation error: block time is more than 12 blocks in future",
-				header.hash()
+				"block header {} validation error: block time is more than {} seconds in the future",
+				header.hash(), ftl
 			);
 			return Err(ser::Error::CorruptedData);
 		}
@@ -781,7 +778,7 @@ impl Readable for UntrustedBlockHeader {
 		}
 
 		// Validate global output and kernel MMR sizes against upper bounds based on block height.
-		let global_weight = TransactionBody::weight_as_block(
+		let global_weight = TransactionBody::weight_by_iok(
 			0,
 			header.output_mmr_count(),
 			header.kernel_mmr_count(),
@@ -829,7 +826,6 @@ impl Hashed for Block {
 impl Writeable for Block {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		self.header.write(writer)?;
-
 		if !writer.serialization_mode().is_hash_mode() {
 			if self.header.height < global::refactor_header_height() {
 				self.aux_data.write(writer)?;
@@ -1093,7 +1089,7 @@ impl Block {
 
 	/// Sum of all fees (inputs less outputs) in the block
 	pub fn total_fees(&self) -> u64 {
-		self.body.fee()
+		self.body.fee(self.header.height)
 	}
 
 	/// "Lightweight" validation that we can perform quickly during read/deserialization.
@@ -1128,13 +1124,9 @@ impl Block {
 	/// Validates all the elements in a block that can be checked without
 	/// additional data. Includes commitment sums and kernels, Merkle
 	/// trees, reward, etc.
-	pub fn validate(
-		&self,
-		prev_kernel_offset: &BlindingFactor,
-		verifier: Arc<RwLock<dyn VerifierCache>>,
-	) -> Result<(), Error> {
+	pub fn validate(&self, prev_kernel_offset: &BlindingFactor) -> Result<(), Error> {
 		self.body.validate_token_height(self.header.height)?;
-		self.body.validate(Weighting::AsBlock, verifier)?;
+		self.body.validate(Weighting::AsBlock)?;
 
 		self.verify_kernel_lock_heights()?;
 		self.verify_nrd_kernels_for_header_version()?;

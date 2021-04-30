@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,9 @@ use crate::core::consensus::WEEK_HEIGHT_ADJUSTED;
 use crate::core::core::committed::Committed;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::merkle_proof::MerkleProof;
-use crate::core::core::pmmr::{self, Backend, ReadablePMMR, ReadonlyPMMR, RewindablePMMR, PMMR};
+use crate::core::core::pmmr::{
+	self, Backend, ReadablePMMR, ReadonlyPMMR, RewindablePMMR, VecBackend, PMMR,
+};
 use crate::core::core::{Block, BlockHeader, KernelFeatures, Output, OutputIdentifier, TxKernel};
 use crate::core::core::{
 	BlockTokenSums, TokenInput, TokenIssueProof, TokenKey, TokenOutput, TokenOutputIdentifier,
@@ -30,13 +32,12 @@ use crate::core::ser::{PMMRable, ProtocolVersion};
 use crate::error::{Error, ErrorKind};
 use crate::linked_list::{ListIndex, PruneableListIndex, RewindableListIndex};
 use crate::store::{self, Batch, ChainStore};
-use crate::txhashset::bitmap_accumulator::BitmapAccumulator;
+use crate::txhashset::bitmap_accumulator::{BitmapAccumulator, BitmapChunk};
 use crate::txhashset::{RewindableKernelView, UTXOView};
 use crate::types::{CommitPos, OutputRoots, Tip, TxHashSetRoots, TxHashsetWriteStatus};
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::{file, secp_static, zip};
 use croaring::Bitmap;
-use grin_store;
 use grin_store::pmmr::{clean_files_by_prefix, PMMRBackend};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -412,6 +413,30 @@ impl TxHashSet {
 			self.token_issue_proof_pmmr_h.last_pos,
 		)
 		.get_last_n_insertions(distance)
+	}
+
+	/// Efficient view into the kernel PMMR based on size in header.
+	pub fn kernel_pmmr_at(
+		&self,
+		header: &BlockHeader,
+	) -> ReadonlyPMMR<TxKernel, PMMRBackend<TxKernel>> {
+		ReadonlyPMMR::at(&self.kernel_pmmr_h.backend, header.kernel_mmr_size)
+	}
+
+	/// Efficient view into the output PMMR based on size in header.
+	pub fn output_pmmr_at(
+		&self,
+		header: &BlockHeader,
+	) -> ReadonlyPMMR<OutputIdentifier, PMMRBackend<OutputIdentifier>> {
+		ReadonlyPMMR::at(&self.output_pmmr_h.backend, header.output_mmr_size)
+	}
+
+	/// Efficient view into the rangeproof PMMR based on size in header.
+	pub fn rangeproof_pmmr_at(
+		&self,
+		header: &BlockHeader,
+	) -> ReadonlyPMMR<RangeProof, PMMRBackend<RangeProof>> {
+		ReadonlyPMMR::at(&self.rproof_pmmr_h.backend, header.output_mmr_size)
 	}
 
 	/// Convenience function to query the db for a header by its hash.
@@ -1257,6 +1282,13 @@ impl<'a> HeaderExtension<'a> {
 		self.head.clone()
 	}
 
+	/// Get header hash by height.
+	/// Based on current header MMR.
+	pub fn get_header_hash_by_height(&self, height: u64) -> Option<Hash> {
+		let pos = pmmr::insertion_to_pmmr_index(height + 1);
+		self.get_header_hash(pos)
+	}
+
 	/// Get the header at the specified height based on the current state of the header extension.
 	/// Derives the MMR pos from the height (insertion index) and retrieves the header hash.
 	/// Looks the header up in the db by hash.
@@ -1265,8 +1297,7 @@ impl<'a> HeaderExtension<'a> {
 		height: u64,
 		batch: &Batch<'_>,
 	) -> Result<BlockHeader, Error> {
-		let pos = pmmr::insertion_to_pmmr_index(height + 1);
-		if let Some(hash) = self.get_header_hash(pos) {
+		if let Some(hash) = self.get_header_hash_by_height(height) {
 			Ok(batch.get_block_header(&hash)?)
 		} else {
 			Err(ErrorKind::Other("get header by height".to_string()).into())
@@ -1275,20 +1306,17 @@ impl<'a> HeaderExtension<'a> {
 
 	/// Compares the provided header to the header in the header MMR at that height.
 	/// If these match we know the header is on the current chain.
-	pub fn is_on_current_chain(
+	pub fn is_on_current_chain<T: Into<Tip>>(
 		&self,
-		header: &BlockHeader,
+		t: T,
 		batch: &Batch<'_>,
-	) -> Result<(), Error> {
-		if header.height > self.head.height {
-			return Err(ErrorKind::Other("not on current chain, out beyond".to_string()).into());
+	) -> Result<bool, Error> {
+		let t = t.into();
+		if t.height > self.head.height {
+			return Ok(false);
 		}
-		let chain_header = self.get_header_by_height(header.height, batch)?;
-		if chain_header.hash() == header.hash() {
-			Ok(())
-		} else {
-			Err(ErrorKind::Other("not on current chain".to_string()).into())
-		}
+		let chain_header = self.get_header_by_height(t.height, batch)?;
+		Ok(chain_header.hash() == t.hash())
 	}
 
 	/// Force the rollback of this extension, no matter the result.
@@ -1499,12 +1527,53 @@ impl<'a> Extension<'a> {
 	pub fn utxo_view(&'a self, header_ext: &'a HeaderExtension<'a>) -> UTXOView<'a> {
 		UTXOView::new(
 			header_ext.pmmr.readonly_pmmr(),
-			self.output_pmmr.readonly_pmmr(),
-			self.token_output_pmmr.readonly_pmmr(),
-			self.token_issue_proof_pmmr.readonly_pmmr(),
-			self.rproof_pmmr.readonly_pmmr(),
-			self.token_rproof_pmmr.readonly_pmmr(),
+			self.output_readonly_pmmr(),
+			self.token_output_readonly_pmmr(),
+			self.token_issue_proof_readonly_pmmr(),
+			self.rproof_readonly_pmmr(),
+			self.token_rproof_readonly_pmmr(),
 		)
+	}
+
+	/// Readonly view of our output data.
+	pub fn output_readonly_pmmr(
+		&self,
+	) -> ReadonlyPMMR<OutputIdentifier, PMMRBackend<OutputIdentifier>> {
+		self.output_pmmr.readonly_pmmr()
+	}
+
+	/// Readonly view of our token output data.
+	pub fn token_output_readonly_pmmr(
+		&self,
+	) -> ReadonlyPMMR<TokenOutputIdentifier, PMMRBackend<TokenOutputIdentifier>> {
+		self.token_output_pmmr.readonly_pmmr()
+	}
+
+	/// Take a snapshot of our bitmap accumulator
+	pub fn bitmap_accumulator(&self) -> BitmapAccumulator {
+		self.bitmap_accumulator.clone()
+	}
+
+	/// Readonly view of our bitmap accumulator data.
+	pub fn bitmap_readonly_pmmr(&self) -> ReadonlyPMMR<BitmapChunk, VecBackend<BitmapChunk>> {
+		self.bitmap_accumulator.readonly_pmmr()
+	}
+
+	/// Readonly view of our rangeproof data.
+	pub fn rproof_readonly_pmmr(&self) -> ReadonlyPMMR<RangeProof, PMMRBackend<RangeProof>> {
+		self.rproof_pmmr.readonly_pmmr()
+	}
+
+	/// Readonly view of our token rangeproof data.
+	pub fn token_rproof_readonly_pmmr(&self) -> ReadonlyPMMR<RangeProof, PMMRBackend<RangeProof>> {
+		self.token_rproof_pmmr.readonly_pmmr()
+	}
+
+	/// Readonly view of our token issue proof data.
+	pub fn token_issue_proof_readonly_pmmr(
+		&self,
+	) -> ReadonlyPMMR<TokenIssueProof, PMMRBackend<TokenIssueProof>> {
+		self.token_issue_proof_pmmr.readonly_pmmr()
 	}
 
 	/// Apply a new block to the current txhashet extension (output, rangeproof, kernel MMRs).

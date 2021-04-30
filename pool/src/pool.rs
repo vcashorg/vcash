@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,12 +18,10 @@
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::id::{ShortId, ShortIdentifiable};
 use self::core::core::transaction;
-use self::core::core::verifier_cache::VerifierCache;
 use self::core::core::{
 	Block, BlockHeader, BlockSums, Committed, OutputIdentifier, TokenOutputIdentifier, Transaction,
 	TxKernel, Weighting,
 };
-use self::util::RwLock;
 use crate::types::{BlockChain, PoolEntry, PoolError};
 use grin_core as core;
 use grin_util as util;
@@ -32,29 +30,25 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use util::static_secp_instance;
 
-pub struct Pool<B, V>
+pub struct Pool<B>
 where
 	B: BlockChain,
-	V: VerifierCache,
 {
 	/// Entries in the pool (tx + info + timer) in simple insertion order.
 	pub entries: Vec<PoolEntry>,
 	/// The blockchain
 	pub blockchain: Arc<B>,
-	pub verifier_cache: Arc<RwLock<V>>,
 	pub name: String,
 }
 
-impl<B, V> Pool<B, V>
+impl<B> Pool<B>
 where
 	B: BlockChain,
-	V: VerifierCache + 'static,
 {
-	pub fn new(chain: Arc<B>, verifier_cache: Arc<RwLock<V>>, name: String) -> Self {
+	pub fn new(chain: Arc<B>, name: String) -> Self {
 		Pool {
 			entries: vec![],
 			blockchain: chain,
-			verifier_cache,
 			name,
 		}
 	}
@@ -129,13 +123,13 @@ where
 		//   * maintain dependency ordering
 		//   * maximize cut-through
 		//   * maximize overall fees
+		let header = self.blockchain.chain_head()?;
 		let txs = self.bucket_transactions(weighting);
 
 		// Iteratively apply the txs to the current chain state,
 		// rejecting any that do not result in a valid state.
 		// Verify these txs produce an aggregated tx below max_weight.
 		// Return a vec of all the valid txs.
-		let header = self.blockchain.chain_head()?;
 		let valid_txs = self.validate_raw_txs(&txs, None, &header, weighting)?;
 		Ok(valid_txs)
 	}
@@ -162,7 +156,8 @@ where
 		let tx = transaction::aggregate(&txs)?;
 
 		// Validate the single aggregate transaction "as pool", not subject to tx weight limits.
-		tx.validate(Weighting::NoLimit, self.verifier_cache.clone())?;
+		let header = self.blockchain.chain_head()?;
+		tx.validate(Weighting::NoLimit, header.height)?;
 
 		Ok(Some(tx))
 	}
@@ -233,7 +228,7 @@ where
 	) -> Result<BlockSums, PoolError> {
 		// Validate the tx, conditionally checking against weight limits,
 		// based on weight verification type.
-		tx.validate(weighting, self.verifier_cache.clone())?;
+		tx.validate(weighting, header.height)?;
 
 		// Validate the tx against current chain state.
 		// Check all inputs are in the current UTXO set.
@@ -316,7 +311,7 @@ where
 		tx: &Transaction,
 		header: &BlockHeader,
 	) -> Result<BlockSums, PoolError> {
-		let overage = tx.overage();
+		let overage = tx.overage(header.height);
 
 		let offset = {
 			let secp = static_secp_instance();
@@ -366,19 +361,19 @@ where
 
 	// Use our bucket logic to identify the best transaction for eviction and evict it.
 	// We want to avoid evicting a transaction where another transaction depends on it.
-	// We want to evict a transaction with low fee_to_weight.
+	// We want to evict a transaction with low fee_rate.
 	pub fn evict_transaction(&mut self) {
 		if let Some(evictable_transaction) = self.bucket_transactions(Weighting::NoLimit).last() {
 			self.entries.retain(|x| x.tx != *evictable_transaction);
 		};
 	}
 
-	/// Buckets consist of a vec of txs and track the aggregate fee_to_weight.
+	/// Buckets consist of a vec of txs and track the aggregate fee_rate.
 	/// We aggregate (cut-through) dependent transactions within a bucket *unless* adding a tx
-	/// would reduce the aggregate fee_to_weight, in which case we start a new bucket.
-	/// Note this new bucket will by definition have a lower fee_to_weight than the bucket
+	/// would reduce the aggregate fee_rate, in which case we start a new bucket.
+	/// Note this new bucket will by definition have a lower fee_rate than the bucket
 	/// containing the tx it depends on.
-	/// Sorting the buckets by fee_to_weight will therefore preserve dependency ordering,
+	/// Sorting the buckets by fee_rate will therefore preserve dependency ordering,
 	/// maximizing both cut-through and overall fees.
 	fn bucket_transactions(&self, weighting: Weighting) -> Vec<Transaction> {
 		let mut tx_buckets: Vec<Bucket> = Vec::new();
@@ -420,13 +415,14 @@ where
 				continue;
 			}
 
+			let height = self.blockchain.chain_head().map(|x| x.height).unwrap_or(0);
 			match insert_pos {
 				None => {
 					// No parent tx, just add to the end in its own bucket.
 					// This is the common case for non 0-conf txs in the txpool.
 					// We assume the tx is valid here as we validated it on the way into the txpool.
 					insert_pos = Some(tx_buckets.len());
-					tx_buckets.push(Bucket::new(entry.tx.clone(), tx_buckets.len()));
+					tx_buckets.push(Bucket::new(entry.tx.clone(), tx_buckets.len(), height));
 				}
 				Some(pos) => {
 					// We found a single parent tx, so aggregate in the bucket
@@ -434,19 +430,21 @@ where
 					// Otherwise discard and let the next block pick this tx up.
 					let bucket = &tx_buckets[pos];
 
-					if let Ok(new_bucket) = bucket.aggregate_with_tx(
-						entry.tx.clone(),
-						weighting,
-						self.verifier_cache.clone(),
-					) {
-						if new_bucket.fee_to_weight >= bucket.fee_to_weight {
-							// Only aggregate if it would not reduce the fee_to_weight ratio.
+					if let Ok(new_bucket) =
+						bucket.aggregate_with_tx(entry.tx.clone(), weighting, height)
+					{
+						if new_bucket.fee_rate >= bucket.fee_rate {
+							// Only aggregate if it would not reduce the fee_rate ratio.
 							tx_buckets[pos] = new_bucket;
 						} else {
 							// Otherwise put it in its own bucket at the end.
-							// Note: This bucket will have a lower fee_to_weight
+							// Note: This bucket will have a lower fee_rate
 							// than the bucket it depends on.
-							tx_buckets.push(Bucket::new(entry.tx.clone(), tx_buckets.len()));
+							tx_buckets.push(Bucket::new(
+								entry.tx.clone(),
+								tx_buckets.len(),
+								height,
+							));
 						}
 					} else {
 						// Aggregation failed so discard this new tx.
@@ -468,11 +466,11 @@ where
 			}
 		}
 
-		// Sort buckets by fee_to_weight (descending) and age (oldest first).
-		// Txs with highest fee_to_weight will be prioritied.
-		// Aggregation that increases the fee_to_weight of a bucket will prioritize the bucket.
+		// Sort buckets by fee_rate (descending) and age (oldest first).
+		// Txs with highest fee_rate will be prioritied.
+		// Aggregation that increases the fee_rate of a bucket will prioritize the bucket.
 		// Oldest (based on pool insertion time) will then be prioritized.
-		tx_buckets.sort_unstable_by_key(|x| (Reverse(x.fee_to_weight), x.age_idx));
+		tx_buckets.sort_unstable_by_key(|x| (Reverse(x.fee_rate), x.age_idx));
 
 		tx_buckets.into_iter().flat_map(|x| x.raw_txs).collect()
 	}
@@ -541,18 +539,18 @@ where
 
 struct Bucket {
 	raw_txs: Vec<Transaction>,
-	fee_to_weight: u64,
+	fee_rate: u64,
 	age_idx: usize,
 }
 
 impl Bucket {
 	/// Construct a new bucket with the given tx.
 	/// also specifies an "age_idx" so we can sort buckets by age
-	/// as well as fee_to_weight. Txs are maintainedin the pool in insert order
+	/// as well as fee_rate. Txs are maintained in the pool in insert order
 	/// so buckets with low age_idx contain oldest txs.
-	fn new(tx: Transaction, age_idx: usize) -> Bucket {
+	fn new(tx: Transaction, age_idx: usize, height: u64) -> Bucket {
 		Bucket {
-			fee_to_weight: tx.fee_to_weight(),
+			fee_rate: tx.fee_rate(height),
 			raw_txs: vec![tx],
 			age_idx,
 		}
@@ -562,14 +560,14 @@ impl Bucket {
 		&self,
 		new_tx: Transaction,
 		weighting: Weighting,
-		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
+		height: u64,
 	) -> Result<Bucket, PoolError> {
 		let mut raw_txs = self.raw_txs.clone();
 		raw_txs.push(new_tx);
 		let agg_tx = transaction::aggregate(&raw_txs)?;
-		agg_tx.validate(weighting, verifier_cache)?;
+		agg_tx.validate(weighting, height)?;
 		Ok(Bucket {
-			fee_to_weight: agg_tx.fee_to_weight(),
+			fee_rate: agg_tx.fee_rate(height),
 			raw_txs: raw_txs,
 			age_idx: self.age_idx,
 		})

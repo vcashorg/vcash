@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ use crate::core::hash::Hash;
 use crate::pow::ProofOfWork;
 use chrono::prelude::{TimeZone, Utc};
 use keychain::BlindingFactor;
-use util;
 use util::secp::constants::SINGLE_BULLET_PROOF_SIZE;
 use util::secp::pedersen::{Commitment, RangeProof};
 use util::secp::Signature;
@@ -49,6 +48,7 @@ pub fn genesis_dev() -> core::Block {
 }
 
 /// Testnet genesis block
+#[allow(clippy::inconsistent_digit_grouping)]
 pub fn genesis_test() -> core::Block {
 	let gen = core::Block::with_header(core::BlockHeader {
 		height: 0,
@@ -150,6 +150,7 @@ pub fn genesis_test() -> core::Block {
 }
 
 /// Mainnet genesis block
+#[allow(clippy::inconsistent_digit_grouping)]
 pub fn genesis_main() -> core::Block {
 	let gen = core::Block::with_header(core::BlockHeader {
 		height: 0,

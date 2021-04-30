@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 //! the peer-to-peer server, the blockchain and the transaction pool) and acts
 //! as a facade.
 
-use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 use std::sync::{mpsc, Arc};
+use std::{convert::TryInto, fs};
 use std::{
 	thread::{self, JoinHandle},
 	time::{self, Duration},
@@ -41,13 +41,12 @@ use crate::common::stats::{
 };
 use crate::common::types::{Error, PoolServerConfig, ServerConfig, StratumServerConfig};
 use crate::core::core::hash::Hashed;
-use crate::core::core::verifier_cache::LruVerifierCache;
 use crate::core::ser::ProtocolVersion;
 use crate::core::{consensus, genesis, global, pow};
 use crate::grin::{dandelion_monitor, seed, sync};
 use crate::mining::test_miner::Miner;
 use crate::p2p;
-use crate::p2p::types::PeerAddr;
+use crate::p2p::types::{Capabilities, PeerAddr};
 use crate::pool;
 use crate::poolserver;
 use crate::util::file::get_first_line;
@@ -55,10 +54,7 @@ use crate::util::{RwLock, StopState};
 use grin_util::logger::LogEntry;
 
 /// Arcified  thread-safe TransactionPool with type parameters used by server components
-pub type ServerTxPool =
-	Arc<RwLock<pool::TransactionPool<PoolToChainAdapter, PoolToNetAdapter, LruVerifierCache>>>;
-/// Arcified thread-safe LruVerifierCache
-pub type ServerVerifierCache = Arc<RwLock<LruVerifierCache>>;
+pub type ServerTxPool = Arc<RwLock<pool::TransactionPool<PoolToChainAdapter, PoolToNetAdapter>>>;
 
 /// Grin server holding internal structures.
 pub struct Server {
@@ -70,9 +66,6 @@ pub struct Server {
 	pub chain: Arc<chain::Chain>,
 	/// in-memory transaction pool
 	pub tx_pool: ServerTxPool,
-	/// Shared cache for verification results when
-	/// verifying rangeproof and kernel signatures.
-	verifier_cache: ServerVerifierCache,
 	/// Whether we're currently syncing
 	pub sync_state: Arc<SyncState>,
 	/// To be passed around to collect stats and info
@@ -170,16 +163,11 @@ impl Server {
 
 		let stop_state = Arc::new(StopState::new());
 
-		// Shared cache for verification results.
-		// We cache rangeproof verification and kernel signature verification.
-		let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
-
 		let pool_adapter = Arc::new(PoolToChainAdapter::new());
 		let pool_net_adapter = Arc::new(PoolToNetAdapter::new(config.dandelion_config.clone()));
 		let tx_pool = Arc::new(RwLock::new(pool::TransactionPool::new(
 			config.pool_config.clone(),
 			pool_adapter.clone(),
-			verifier_cache.clone(),
 			pool_net_adapter.clone(),
 		)));
 
@@ -204,7 +192,6 @@ impl Server {
 			chain_adapter.clone(),
 			genesis.clone(),
 			pow::verify_size,
-			verifier_cache.clone(),
 			archive_mode,
 		)?);
 
@@ -214,14 +201,22 @@ impl Server {
 			sync_state.clone(),
 			shared_chain.clone(),
 			tx_pool.clone(),
-			verifier_cache.clone(),
 			config.clone(),
 			init_net_hooks(&config),
 		));
 
+		// Initialize our capabilities.
+		// Currently either "default" or with optional "archive_mode" (block history) support enabled.
+		let capabilities = if let Some(true) = config.archive_mode {
+			Capabilities::default() | Capabilities::BLOCK_HIST
+		} else {
+			Capabilities::default()
+		};
+		debug!("Capabilities: {:?}", capabilities);
+
 		let p2p_server = Arc::new(p2p::Server::new(
 			&config.db_root,
-			config.p2p_config.capabilities,
+			capabilities,
 			config.p2p_config.clone(),
 			net_adapter.clone(),
 			genesis.hash(),
@@ -236,7 +231,7 @@ impl Server {
 		let mut connect_thread = None;
 
 		if config.p2p_config.seeding_type != p2p::Seeding::Programmatic {
-			let seeder = match config.p2p_config.seeding_type {
+			let seed_list = match config.p2p_config.seeding_type {
 				p2p::Seeding::None => {
 					warn!("No seed configured, will stay solo until connected to");
 					seed::predefined_seeds(vec![])
@@ -253,16 +248,10 @@ impl Server {
 				_ => unreachable!(),
 			};
 
-			let preferred_peers = match &config.p2p_config.peers_preferred {
-				Some(addrs) => addrs.peers.clone(),
-				None => vec![],
-			};
-
 			connect_thread = Some(seed::connect_and_monitor(
 				p2p_server.clone(),
-				config.p2p_config.capabilities,
-				seeder,
-				&preferred_peers,
+				seed_list,
+				config.p2p_config.clone(),
 				stop_state.clone(),
 			)?);
 		}
@@ -322,7 +311,6 @@ impl Server {
 			config.dandelion_config.clone(),
 			tx_pool.clone(),
 			pool_net_adapter,
-			verifier_cache.clone(),
 			stop_state.clone(),
 		)?;
 
@@ -332,7 +320,6 @@ impl Server {
 			p2p: p2p_server,
 			chain: shared_chain,
 			tx_pool,
-			verifier_cache,
 			sync_state,
 			state_info: ServerStateInfo {
 				..Default::default()
@@ -361,7 +348,13 @@ impl Server {
 
 	/// Number of peers
 	pub fn peer_count(&self) -> u32 {
-		self.p2p.peers.peer_count()
+		self.p2p
+			.peers
+			.iter()
+			.connected()
+			.count()
+			.try_into()
+			.unwrap()
 	}
 
 	/// Start a pool server on a separate thread
@@ -369,7 +362,6 @@ impl Server {
 		let sync_state = self.sync_state.clone();
 		let chain = self.chain.clone();
 		let tx_pool = self.tx_pool.clone();
-		let verifier_cache = self.verifier_cache.clone();
 		let stop_state = self.stop_state.clone();
 		let _ = thread::Builder::new().spawn(move || {
 			// TODO push this down in the run loop so miner gets paused anytime we
@@ -379,13 +371,7 @@ impl Server {
 				warn!("Pool server wating for node syncing...");
 				thread::sleep(secs_2);
 			}
-			poolserver::start_poolserver_service(
-				chain,
-				tx_pool,
-				verifier_cache,
-				config,
-				stop_state,
-			);
+			poolserver::start_poolserver_service(chain, tx_pool, config, stop_state);
 		});
 	}
 
@@ -436,7 +422,6 @@ impl Server {
 			config,
 			self.chain.clone(),
 			self.tx_pool.clone(),
-			self.verifier_cache.clone(),
 			stop_state,
 			sync_state,
 		);
@@ -517,7 +502,8 @@ impl Server {
 		let peer_stats = self
 			.p2p
 			.peers
-			.connected_peers()
+			.iter()
+			.connected()
 			.into_iter()
 			.map(|p| PeerStats::from_peer(&p))
 			.collect();

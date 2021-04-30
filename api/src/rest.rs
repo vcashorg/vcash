@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ use futures::TryStreamExt;
 use hyper::server::accept;
 use hyper::service::make_service_fn;
 use hyper::{Body, Request, Server, StatusCode};
-use rustls;
 use rustls::internal::pemfile;
 use std::convert::Infallible;
 use std::fmt::{self, Display};
@@ -36,6 +35,7 @@ use std::sync::Arc;
 use std::{io, thread};
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
+use tokio::stream::StreamExt;
 use tokio_rustls::TlsAcceptor;
 
 /// Errors that can be returned by an ApiEndpoint implementation.
@@ -253,7 +253,10 @@ impl ApiServer {
 			.spawn(move || {
 				let server = async move {
 					let mut listener = TcpListener::bind(&addr).await.expect("failed to bind");
-					let listener = listener.incoming().and_then(move |s| acceptor.accept(s));
+					let listener = listener
+						.incoming()
+						.and_then(move |s| acceptor.accept(s))
+						.filter(|r| r.is_ok());
 
 					let server = Server::builder(accept::from_stream(listener)).serve(
 						make_service_fn(move |_| {

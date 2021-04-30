@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,6 @@
 
 use super::utils::w;
 use crate::core::core::hash::Hashed;
-use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::Transaction;
 use crate::core::global;
 use crate::core::ser::{self, ProtocolVersion};
@@ -31,20 +30,18 @@ use std::sync::Weak;
 
 /// Get basic information about the transaction pool.
 /// GET /v1/pool
-pub struct PoolInfoHandler<B, P, V>
+pub struct PoolInfoHandler<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
-	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
+	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P>>>,
 }
 
-impl<B, P, V> Handler for PoolInfoHandler<B, P, V>
+impl<B, P> Handler for PoolInfoHandler<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
 	fn get(&self, _req: Request<Body>) -> ResponseFuture {
 		let pool_arc = w_fut!(&self.tx_pool);
@@ -56,20 +53,18 @@ where
 	}
 }
 
-pub struct PoolHandler<B, P, V>
+pub struct PoolHandler<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
-	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
+	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P>>>,
 }
 
-impl<B, P, V> PoolHandler<B, P, V>
+impl<B, P> PoolHandler<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
 	pub fn get_pool_size(&self) -> Result<usize, Error> {
 		let pool_arc = w(&self.tx_pool)?;
@@ -118,23 +113,21 @@ struct TxWrapper {
 
 /// Push new transaction to our local transaction pool.
 /// POST /v1/pool/push_tx
-pub struct PoolPushHandler<B, P, V>
+pub struct PoolPushHandler<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
-	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
+	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P>>>,
 }
 
-async fn update_pool<B, P, V>(
-	pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
+async fn update_pool<B, P>(
+	pool: Weak<RwLock<pool::TransactionPool<B, P>>>,
 	req: Request<Body>,
 ) -> Result<(), Error>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
 	let pool = w(&pool)?;
 	let params = QueryParams::from(req.uri().query());
@@ -176,11 +169,10 @@ where
 	Ok(())
 }
 
-impl<B, P, V> Handler for PoolPushHandler<B, P, V>
+impl<B, P> Handler for PoolPushHandler<B, P>
 where
 	B: BlockChain + 'static,
 	P: PoolAdapter + 'static,
-	V: VerifierCache + 'static,
 {
 	fn post(&self, req: Request<Body>) -> ResponseFuture {
 		let pool = self.tx_pool.clone();

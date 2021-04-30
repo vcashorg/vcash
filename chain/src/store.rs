@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::{Block, BlockHeader, BlockSums, BlockTokenSums, TokenKey};
 use crate::core::global;
 use crate::core::pow::Difficulty;
-use crate::core::ser::ProtocolVersion;
+use crate::core::ser::{ProtocolVersion, Readable, Writeable};
 use crate::linked_list::MultiIndex;
 use crate::types::{CommitPos, Tip};
 use crate::util::secp::pedersen::Commitment;
@@ -679,4 +679,26 @@ impl<'a> Iterator for DifficultyIter<'a> {
 /// Allows for fast lookup of the most recent entry per excess commitment.
 pub fn nrd_recent_kernel_index() -> MultiIndex<CommitPos> {
 	MultiIndex::init(NRD_KERNEL_LIST_PREFIX, NRD_KERNEL_ENTRY_PREFIX)
+}
+
+struct BoolFlag(bool);
+
+impl From<BoolFlag> for bool {
+	fn from(b: BoolFlag) -> Self {
+		b.0
+	}
+}
+
+impl Readable for BoolFlag {
+	fn read<R: ser::Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let x = reader.read_u8()?;
+		Ok(BoolFlag(1 & x == 1))
+	}
+}
+
+impl Writeable for BoolFlag {
+	fn write<W: ser::Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		writer.write_u8(self.0.into())?;
+		Ok(())
+	}
 }

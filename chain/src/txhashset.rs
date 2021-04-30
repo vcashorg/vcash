@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,10 +17,12 @@
 
 mod bitmap_accumulator;
 mod rewindable_kernel_view;
+mod segmenter;
 mod txhashset;
 mod utxo_view;
 
 pub use self::bitmap_accumulator::*;
 pub use self::rewindable_kernel_view::*;
+pub use self::segmenter::*;
 pub use self::txhashset::*;
 pub use self::utxo_view::*;

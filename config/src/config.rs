@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,6 @@
 
 //! Configuration file management
 
-use dirs;
 use rand::distributions::{Alphanumeric, Distribution};
 use rand::thread_rng;
 use std::env;
@@ -23,7 +22,6 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::Read;
 use std::path::PathBuf;
-use toml;
 
 use crate::comments::insert_comments;
 use crate::core::global;
@@ -255,10 +253,17 @@ impl GlobalConfig {
 		let mut chain_path = grin_home.clone();
 		chain_path.push(GRIN_CHAIN_DIR);
 		self.members.as_mut().unwrap().server.db_root = chain_path.to_str().unwrap().to_owned();
-		let mut secret_path = grin_home.clone();
-		secret_path.push(API_SECRET_FILE_NAME);
+		let mut api_secret_path = grin_home.clone();
+		api_secret_path.push(API_SECRET_FILE_NAME);
 		self.members.as_mut().unwrap().server.api_secret_path =
-			Some(secret_path.to_str().unwrap().to_owned());
+			Some(api_secret_path.to_str().unwrap().to_owned());
+		let mut foreign_api_secret_path = grin_home.clone();
+		foreign_api_secret_path.push(FOREIGN_API_SECRET_FILE_NAME);
+		self.members
+			.as_mut()
+			.unwrap()
+			.server
+			.foreign_api_secret_path = Some(foreign_api_secret_path.to_str().unwrap().to_owned());
 		let mut log_path = grin_home.clone();
 		log_path.push(SERVER_LOG_FILE_NAME);
 		self.members

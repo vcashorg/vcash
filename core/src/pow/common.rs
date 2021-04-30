@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,10 @@
 //! Common types and traits for cuckoo family of solvers
 
 use crate::pow::error::Error;
-use crate::pow::num::{PrimInt, ToPrimitive};
 use crate::pow::siphash::siphash24;
 use blake2::blake2b::blake2b;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use num::{FromPrimitive, PrimInt, ToPrimitive};
 use std::fmt;
 use std::hash::Hash;
 use std::io::Cursor;
@@ -26,7 +26,6 @@ use std::ops::{BitOrAssign, Mul};
 
 use crate::core::hash::Hash as BitHash;
 use crate::num_bigint::BigUint;
-use crate::pow::num::FromPrimitive;
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 use util::ToHex;

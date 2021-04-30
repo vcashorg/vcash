@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,15 +15,19 @@
 use self::chain::types::{NoopAdapter, Tip};
 use self::chain::Chain;
 use self::core::core::hash::Hashed;
-use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{
-	Block, BlockHeader, KernelFeatures, TokenKernelFeatures, TokenKey, Transaction,
+	block, transaction, Block, BlockHeader, KernelFeatures, Output, OutputFeatures, Transaction,
 };
+use self::core::core::{TokenKernelFeatures, TokenKey};
 use self::core::global::ChainTypes;
-use self::core::libtx::{self, build, ProofBuilder};
+use self::core::libtx::build::{self, Append};
+use self::core::libtx::proof::{self, ProofBuild};
+use self::core::libtx::{self, Error, ProofBuilder};
 use self::core::pow::Difficulty;
 use self::core::{consensus, global, pow};
-use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
+use self::keychain::{
+	BlindSum, ExtKeychain, ExtKeychainPath, Identifier, Keychain, SwitchCommitmentType,
+};
 use self::util::RwLock;
 use chrono::Duration;
 use grin_chain as chain;
@@ -58,13 +62,11 @@ impl ChainAdapter for StatusAdapter {
 fn setup_with_status_adapter(dir_name: &str, genesis: Block, adapter: Arc<StatusAdapter>) -> Chain {
 	util::init_test_logger();
 	clean_output_dir(dir_name);
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 	let chain = chain::Chain::init(
 		dir_name.to_string(),
 		adapter,
 		genesis,
 		pow::verify_size,
-		verifier_cache,
 		false,
 	)
 	.unwrap();
@@ -580,7 +582,7 @@ fn spend_rewind_spend() {
 		let key_id30 = ExtKeychainPath::new(1, 30, 0, 0, 0).to_identifier();
 
 		let tx1 = build::transaction(
-			KernelFeatures::Plain { fee: 20000 },
+			KernelFeatures::Plain { fee: 20000.into() },
 			None,
 			&[
 				build::coinbase_input(consensus::REWARD_ORIGIN, key_id_coinbase.clone()),
@@ -678,7 +680,7 @@ fn spend_in_fork_and_compact() {
 		let key_id31 = ExtKeychainPath::new(1, 31, 0, 0, 0).to_identifier();
 
 		let tx1 = build::transaction(
-			KernelFeatures::Plain { fee: 20000 },
+			KernelFeatures::Plain { fee: 20000.into() },
 			Some(TokenKernelFeatures::PlainToken),
 			&[
 				build::coinbase_input(consensus::REWARD_ORIGIN, key_id2.clone()),
@@ -699,7 +701,7 @@ fn spend_in_fork_and_compact() {
 		chain.validate(false).unwrap();
 
 		let tx2 = build::transaction(
-			KernelFeatures::Plain { fee: 20000 },
+			KernelFeatures::Plain { fee: 20000.into() },
 			Some(TokenKernelFeatures::PlainToken),
 			&[
 				build::input(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
@@ -826,8 +828,9 @@ fn test_block_subsidy_halvings() {
 /// Test ability to retrieve block headers for a given output
 #[test]
 fn output_header_mappings() {
-	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	clean_output_dir(".grin_header_for_output");
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
+	util::init_test_logger();
 	{
 		let chain = init_chain(
 			".grin_header_for_output",
@@ -838,7 +841,8 @@ fn output_header_mappings() {
 
 		for n in 1..15 {
 			let prev = chain.head_header().unwrap();
-			let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
+			let next_header_info =
+				consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
 			let pk = ExtKeychainPath::new(1, n as u32, 0, 0, 0).to_identifier();
 			let reward = libtx::reward::output(
 				&keychain,
@@ -894,6 +898,148 @@ fn output_header_mappings() {
 	}
 	// Cleanup chain directory
 	clean_output_dir(".grin_header_for_output");
+}
+
+/// Build a negative output. This function must not be used outside of tests.
+/// The commitment will be an inversion of the value passed in and the value is
+/// subtracted from the sum.
+fn build_output_negative<K, B>(value: u64, key_id: Identifier) -> Box<Append<K, B>>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	Box::new(
+		move |build, acc| -> Result<(Transaction, BlindSum), Error> {
+			let (tx, sum) = acc?;
+
+			// TODO: proper support for different switch commitment schemes
+			let switch = SwitchCommitmentType::Regular;
+
+			let commit = build.keychain.commit(value, &key_id, switch)?;
+
+			// invert commitment
+			let commit = build.keychain.secp().commit_sum(vec![], vec![commit])?;
+
+			eprintln!("Building output: {}, {:?}", value, commit);
+
+			// build a proof with a rangeproof of 0 as a placeholder
+			// the test will replace this later
+			let proof = proof::create(
+				build.keychain,
+				build.builder,
+				0,
+				&key_id,
+				switch,
+				commit,
+				None,
+			)?;
+
+			// we return the output and the value is subtracted instead of added
+			Ok((
+				tx.with_output(Output::new(OutputFeatures::Plain, commit, proof)),
+				sum.sub_key_id(key_id.to_value_path(value)),
+			))
+		},
+	)
+}
+
+/// Test the duplicate rangeproof bug
+#[test]
+fn test_overflow_cached_rangeproof() {
+	clean_output_dir(".grin_overflow");
+	global::set_local_chain_type(ChainTypes::AutomatedTesting);
+
+	util::init_test_logger();
+	{
+		let chain = init_chain(".grin_overflow", pow::mine_genesis_block().unwrap());
+		let prev = chain.head_header().unwrap();
+		let kc = ExtKeychain::from_random_seed(false).unwrap();
+		let pb = ProofBuilder::new(&kc);
+
+		let mut head = prev;
+
+		// mine the first block and keep track of the block_hash
+		// so we can spend the coinbase later
+		let b = prepare_block(&kc, &head, &chain, 2);
+
+		assert!(b.outputs()[0].is_coinbase());
+		head = b.header.clone();
+		chain
+			.process_block(b.clone(), chain::Options::SKIP_POW)
+			.unwrap();
+
+		// now mine three further blocks
+		for n in 3..6 {
+			let b = prepare_block(&kc, &head, &chain, n);
+			head = b.header.clone();
+			chain.process_block(b, chain::Options::SKIP_POW).unwrap();
+		}
+
+		// create a few keys for use in txns
+		let key_id2 = ExtKeychainPath::new(1, 2, 0, 0, 0).to_identifier();
+		let key_id30 = ExtKeychainPath::new(1, 30, 0, 0, 0).to_identifier();
+		let key_id31 = ExtKeychainPath::new(1, 31, 0, 0, 0).to_identifier();
+		let key_id32 = ExtKeychainPath::new(1, 32, 0, 0, 0).to_identifier();
+
+		// build a regular transaction so we have a rangeproof to copy
+		let tx1 = build::transaction(
+			KernelFeatures::Plain { fee: 20000.into() },
+			&[
+				build::coinbase_input(consensus::REWARD, key_id2.clone()),
+				build::output(consensus::REWARD - 20000, key_id30.clone()),
+			],
+			&kc,
+			&pb,
+		)
+		.unwrap();
+
+		// mine block with tx1
+		let next = prepare_block_tx(&kc, &head, &chain, 7, &[tx1.clone()]);
+		let prev_main = next.header.clone();
+		chain
+			.process_block(next.clone(), chain::Options::SKIP_POW)
+			.unwrap();
+		chain.validate(false).unwrap();
+
+		// create a second tx that contains a negative output
+		// and a positive output for 1m grin
+		let mut tx2 = build::transaction(
+			KernelFeatures::Plain { fee: 0.into() },
+			&[
+				build::input(consensus::REWARD - 20000, key_id30.clone()),
+				build::output(
+					consensus::REWARD - 20000 + 1_000_000_000_000_000,
+					key_id31.clone(),
+				),
+				build_output_negative(1_000_000_000_000_000, key_id32.clone()),
+			],
+			&kc,
+			&pb,
+		)
+		.unwrap();
+
+		// make sure tx1 only has one output as expected
+		assert_eq!(tx1.body.outputs.len(), 1);
+		let last_rp = tx1.body.outputs[0].proof;
+
+		// overwrite all our rangeproofs with the rangeproof from last block
+		for i in 0..tx2.body.outputs.len() {
+			tx2.body.outputs[i].proof = last_rp;
+		}
+
+		let next = prepare_block_tx(&kc, &prev_main, &chain, 8, &[tx2.clone()]);
+		// process_block fails with verifier_cache disabled or with correct verifier_cache
+		// implementations
+		let res = chain.process_block(next, chain::Options::SKIP_POW);
+
+		assert_eq!(
+			res.unwrap_err().kind(),
+			chain::ErrorKind::InvalidBlockProof(block::Error::Transaction(
+				transaction::Error::Secp(util::secp::Error::InvalidRangeProof)
+			))
+		);
+	}
+	clean_output_dir(".grin_overflow");
 }
 
 // Use diff as both diff *and* key_idx for convenience (deterministic private key for test blocks)
@@ -966,7 +1112,8 @@ where
 	let proof_size = global::proofsize();
 	let key_id = ExtKeychainPath::new(1, key_idx, 0, 0, 0).to_identifier();
 
-	let fees = txs.iter().map(|tx| tx.fee()).sum();
+	let height = prev.height + 1;
+	let fees = txs.iter().map(|tx| tx.fee(height)).sum();
 	let reward = libtx::reward::output(
 		kc,
 		&libtx::ProofBuilder::new(kc),
@@ -991,13 +1138,11 @@ where
 fn actual_diff_iter_output() {
 	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 	let genesis_block = pow::mine_genesis_block().unwrap();
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 	let chain = chain::Chain::init(
 		"../.grin".to_string(),
 		Arc::new(NoopAdapter {}),
 		genesis_block,
 		pow::verify_size,
-		verifier_cache,
 		false,
 	)
 	.unwrap();

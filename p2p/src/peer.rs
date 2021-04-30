@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,8 +23,10 @@ use std::sync::Arc;
 use lru_cache::LruCache;
 
 use crate::chain;
+use crate::chain::txhashset::BitmapChunk;
 use crate::conn;
 use crate::core::core::hash::{Hash, Hashed};
+use crate::core::core::{OutputIdentifier, Segment, SegmentIdentifier, TxKernel};
 use crate::core::pow::Difficulty;
 use crate::core::ser::Writeable;
 use crate::core::{core, global};
@@ -35,6 +37,7 @@ use crate::types::{
 	Capabilities, ChainAdapter, Error, NetAdapter, P2PConfig, PeerAddr, PeerInfo, ReasonForBan,
 	TxHashSetRead,
 };
+use crate::util::secp::pedersen::RangeProof;
 use chrono::prelude::{DateTime, Utc};
 
 const MAX_TRACK_SIZE: usize = 30;
@@ -202,27 +205,13 @@ impl Peer {
 
 	/// Whether the peer is considered abusive, mostly for spammy nodes
 	pub fn is_abusive(&self) -> bool {
-		let rec = self.tracker.received_bytes.read();
-		let sent = self.tracker.sent_bytes.read();
-		rec.count_per_min() > MAX_PEER_MSG_PER_MIN || sent.count_per_min() > MAX_PEER_MSG_PER_MIN
+		let rec = self.tracker().received_bytes.read();
+		rec.count_per_min() > MAX_PEER_MSG_PER_MIN
 	}
 
-	/// Number of bytes sent to the peer
-	pub fn last_min_sent_bytes(&self) -> Option<u64> {
-		let sent_bytes = self.tracker.sent_bytes.read();
-		Some(sent_bytes.bytes_per_min())
-	}
-
-	/// Number of bytes received from the peer
-	pub fn last_min_received_bytes(&self) -> Option<u64> {
-		let received_bytes = self.tracker.received_bytes.read();
-		Some(received_bytes.bytes_per_min())
-	}
-
-	pub fn last_min_message_counts(&self) -> Option<(u64, u64)> {
-		let received_bytes = self.tracker.received_bytes.read();
-		let sent_bytes = self.tracker.sent_bytes.read();
-		Some((sent_bytes.count_per_min(), received_bytes.count_per_min()))
+	/// Tracker tracks sent/received bytes and message counts per minute.
+	pub fn tracker(&self) -> &conn::Tracker {
+		&self.tracker
 	}
 
 	/// Set this peer status to banned
@@ -564,6 +553,38 @@ impl ChainAdapter for TrackingAdapter {
 
 	fn get_tmpfile_pathname(&self, tmpfile_name: String) -> PathBuf {
 		self.adapter.get_tmpfile_pathname(tmpfile_name)
+	}
+
+	fn get_kernel_segment(
+		&self,
+		hash: Hash,
+		id: SegmentIdentifier,
+	) -> Result<Segment<TxKernel>, chain::Error> {
+		self.adapter.get_kernel_segment(hash, id)
+	}
+
+	fn get_bitmap_segment(
+		&self,
+		hash: Hash,
+		id: SegmentIdentifier,
+	) -> Result<(Segment<BitmapChunk>, Hash), chain::Error> {
+		self.adapter.get_bitmap_segment(hash, id)
+	}
+
+	fn get_output_segment(
+		&self,
+		hash: Hash,
+		id: SegmentIdentifier,
+	) -> Result<(Segment<OutputIdentifier>, Hash), chain::Error> {
+		self.adapter.get_output_segment(hash, id)
+	}
+
+	fn get_rangeproof_segment(
+		&self,
+		hash: Hash,
+		id: SegmentIdentifier,
+	) -> Result<Segment<RangeProof>, chain::Error> {
+		self.adapter.get_rangeproof_segment(hash, id)
 	}
 }
 

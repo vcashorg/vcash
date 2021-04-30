@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,12 +14,10 @@
 
 pub mod common;
 
-use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{transaction, Weighting};
 use self::core::global;
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::TxSource;
-use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
 use grin_keychain as keychain;
@@ -32,6 +30,7 @@ use std::sync::Arc;
 fn test_the_transaction_pool() {
 	util::init_test_logger();
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
+	global::set_local_accept_fee_base(1);
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 
 	let db_root = "target/.transaction_pool";
@@ -39,17 +38,14 @@ fn test_the_transaction_pool() {
 
 	let genesis = genesis_block(&keychain);
 	let chain = Arc::new(init_chain(db_root, genesis));
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 
 	// Initialize a new pool with our chain adapter.
-	let mut pool = init_transaction_pool(
-		Arc::new(ChainAdapter {
-			chain: chain.clone(),
-		}),
-		verifier_cache.clone(),
-	);
+	let mut pool = init_transaction_pool(Arc::new(ChainAdapter {
+		chain: chain.clone(),
+	}));
 
-	add_some_blocks(&chain, 3, &keychain);
+	// mine past HF4 to see effect of set_local_accept_fee_base
+	add_some_blocks(&chain, 4 * 3, &keychain);
 	let header = chain.head_header().unwrap();
 
 	let header_1 = chain.get_header_by_height(1).unwrap();
@@ -74,9 +70,9 @@ fn test_the_transaction_pool() {
 	}
 
 	// tx1 spends some outputs from the initial test tx.
-	let tx1 = test_transaction(&keychain, vec![500, 600], vec![499, 599]);
+	let tx1 = test_transaction(&keychain, vec![500, 600], vec![469, 569]);
 	// tx2 spends some outputs from both tx1 and the initial test tx.
-	let tx2 = test_transaction(&keychain, vec![499, 700], vec![498]);
+	let tx2 = test_transaction(&keychain, vec![469, 700], vec![498]);
 
 	{
 		// Check we have a single initial tx in the pool.
@@ -105,7 +101,7 @@ fn test_the_transaction_pool() {
 	// Test adding a duplicate tx with the same input and outputs.
 	// Note: not the *same* tx, just same underlying inputs/outputs.
 	{
-		let tx1a = test_transaction(&keychain, vec![500, 600], vec![499, 599]);
+		let tx1a = test_transaction(&keychain, vec![500, 600], vec![469, 569]);
 		assert!(pool
 			.add_to_pool(test_source(), tx1a, false, &header)
 			.is_err());
@@ -113,7 +109,7 @@ fn test_the_transaction_pool() {
 
 	// Test adding a tx attempting to spend a non-existent output.
 	{
-		let bad_tx = test_transaction(&keychain, vec![10_001], vec![10_000]);
+		let bad_tx = test_transaction(&keychain, vec![10_001], vec![9_900]);
 		assert!(pool
 			.add_to_pool(test_source(), bad_tx, false, &header)
 			.is_err());
@@ -130,7 +126,7 @@ fn test_the_transaction_pool() {
 
 	// Confirm the tx pool correctly identifies an invalid tx (already spent).
 	{
-		let tx3 = test_transaction(&keychain, vec![500], vec![497]);
+		let tx3 = test_transaction(&keychain, vec![500], vec![467]);
 		assert!(pool
 			.add_to_pool(test_source(), tx3, false, &header)
 			.is_err());
@@ -139,9 +135,9 @@ fn test_the_transaction_pool() {
 
 	// Now add a couple of txs to the stempool (stem = true).
 	{
-		let tx = test_transaction(&keychain, vec![599], vec![598]);
+		let tx = test_transaction(&keychain, vec![569], vec![538]);
 		pool.add_to_pool(test_source(), tx, true, &header).unwrap();
-		let tx2 = test_transaction(&keychain, vec![598], vec![597]);
+		let tx2 = test_transaction(&keychain, vec![538], vec![507]);
 		pool.add_to_pool(test_source(), tx2, true, &header).unwrap();
 		assert_eq!(pool.total_size(), 3);
 		assert_eq!(pool.stempool.size(), 2);
@@ -165,7 +161,7 @@ fn test_the_transaction_pool() {
 	// Adding a duplicate tx to the stempool will result in it being fluffed.
 	// This handles the case of the stem path having a cycle in it.
 	{
-		let tx = test_transaction(&keychain, vec![597], vec![596]);
+		let tx = test_transaction(&keychain, vec![507], vec![476]);
 		pool.add_to_pool(test_source(), tx.clone(), true, &header)
 			.unwrap();
 		assert_eq!(pool.total_size(), 4);
@@ -185,15 +181,14 @@ fn test_the_transaction_pool() {
 	// We will do this be adding a new tx to the pool
 	// that is a superset of a tx already in the pool.
 	{
-		let tx4 = test_transaction(&keychain, vec![800], vec![799]);
+		let tx4 = test_transaction(&keychain, vec![800], vec![769]);
 
 		// tx1 and tx2 are already in the txpool (in aggregated form)
 		// tx4 is the "new" part of this aggregated tx that we care about
 		let agg_tx = transaction::aggregate(&[tx1.clone(), tx2.clone(), tx4]).unwrap();
 
-		agg_tx
-			.validate(Weighting::AsTransaction, verifier_cache.clone())
-			.unwrap();
+		let height = 12 + 1;
+		agg_tx.validate(Weighting::AsTransaction, height).unwrap();
 
 		pool.add_to_pool(test_source(), agg_tx, false, &header)
 			.unwrap();

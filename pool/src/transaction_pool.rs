@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@
 
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::id::ShortId;
-use self::core::core::verifier_cache::VerifierCache;
 use self::core::core::{
 	transaction, Block, BlockHeader, HeaderVersion, OutputIdentifier, Transaction, Weighting,
 };
@@ -34,51 +33,38 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// Transaction pool implementation.
-pub struct TransactionPool<B, P, V>
+pub struct TransactionPool<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache,
 {
 	/// Pool Config
 	pub config: PoolConfig,
 	/// Our transaction pool.
-	pub txpool: Pool<B, V>,
+	pub txpool: Pool<B>,
 	/// Our Dandelion "stempool".
-	pub stempool: Pool<B, V>,
+	pub stempool: Pool<B>,
 	/// Cache of previous txs in case of a re-org.
 	pub reorg_cache: Arc<RwLock<VecDeque<PoolEntry>>>,
 	/// The blockchain
 	pub blockchain: Arc<B>,
-	pub verifier_cache: Arc<RwLock<V>>,
 	/// The pool adapter
 	pub adapter: Arc<P>,
 }
 
-impl<B, P, V> TransactionPool<B, P, V>
+impl<B, P> TransactionPool<B, P>
 where
 	B: BlockChain,
 	P: PoolAdapter,
-	V: VerifierCache + 'static,
 {
 	/// Create a new transaction pool
-	pub fn new(
-		config: PoolConfig,
-		chain: Arc<B>,
-		verifier_cache: Arc<RwLock<V>>,
-		adapter: Arc<P>,
-	) -> Self {
+	pub fn new(config: PoolConfig, chain: Arc<B>, adapter: Arc<P>) -> Self {
 		TransactionPool {
 			config,
-			txpool: Pool::new(chain.clone(), verifier_cache.clone(), "txpool".to_string()),
-			stempool: Pool::new(
-				chain.clone(),
-				verifier_cache.clone(),
-				"stempool".to_string(),
-			),
+			txpool: Pool::new(chain.clone(), "txpool".to_string()),
+			stempool: Pool::new(chain.clone(), "stempool".to_string()),
 			reorg_cache: Arc::new(RwLock::new(VecDeque::new())),
 			blockchain: chain,
-			verifier_cache,
 			adapter,
 		}
 	}
@@ -182,7 +168,7 @@ where
 		// NRD kernels only valid post HF3 and if NRD feature enabled.
 		self.verify_kernel_variants(tx, header)?;
 
-		// Do we have the capacity to accept this transaction?
+		// Does this transaction pay the required fees and fit within the pool capacity?
 		let acceptability = self.is_acceptable(tx, stem);
 		let mut evict = false;
 		if !stem && acceptability.as_ref().err() == Some(&PoolError::OverCapacity) {
@@ -196,7 +182,7 @@ where
 
 		// Make sure the transaction is valid before anything else.
 		// Validate tx accounting for max tx weight.
-		tx.validate(Weighting::AsTransaction, self.verifier_cache.clone())
+		tx.validate(Weighting::AsTransaction, header.height)
 			.map_err(PoolError::InvalidTx)?;
 
 		// Check the tx lock_time is valid based on current chain state.
@@ -277,14 +263,15 @@ where
 		};
 
 		// Validate the tx to ensure our converted inputs are correct.
-		tx.validate(Weighting::AsTransaction, self.verifier_cache.clone())?;
+		let header = self.chain_head()?;
+		tx.validate(Weighting::AsTransaction, header.height)?;
 
 		Ok(PoolEntry::new(tx, entry.src))
 	}
 
 	// Evict a transaction from the txpool.
 	// Uses bucket logic to identify the "last" transaction.
-	// No other tx depends on it and it has low fee_to_weight.
+	// No other tx depends on it and it has low fee_rate
 	pub fn evict_from_txpool(&mut self) {
 		self.txpool.evict_transaction()
 	}
@@ -365,14 +352,12 @@ where
 			return Err(PoolError::OverCapacity);
 		}
 
-		// for a basic transaction (1 input, 2 outputs) -
-		// (-1 * 1) + (4 * 2) + 1 = 8
-		// 8 * 10 = 80
-		if self.config.accept_fee_base > 0 {
-			let threshold = (tx.tx_weight() as u64) * self.config.accept_fee_base;
-			if tx.fee() < threshold {
-				return Err(PoolError::LowFeeTransaction(threshold));
-			}
+		// weight for a basic transaction (2 inputs, 2 outputs, 1 kernel) -
+		// (2 * 1) + (2 * 21) + (1 * 3) = 47
+		// minfees = 47 * 500_000 = 23_500_000
+		let header = self.chain_head()?;
+		if tx.shifted_fee(header.height) < tx.accept_fee(header.height) {
+			return Err(PoolError::LowFeeTransaction(tx.shifted_fee(header.height)));
 		}
 		Ok(())
 	}

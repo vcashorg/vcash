@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ pub fn tx2i1o() -> Transaction {
 	let key_id3 = keychain::ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
 
 	let tx = build::transaction(
-		KernelFeatures::Plain { fee: 2 },
+		KernelFeatures::Plain { fee: 2.into() },
 		None,
 		&[input(10, key_id1), input(11, key_id2), output(19, key_id3)],
 		&keychain,
@@ -60,7 +60,7 @@ pub fn tx1i1o() -> Transaction {
 	let key_id2 = keychain::ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
 
 	let tx = build::transaction(
-		KernelFeatures::Plain { fee: 2 },
+		KernelFeatures::Plain { fee: 2.into() },
 		None,
 		&[input(5, key_id1), output(3, key_id2)],
 		&keychain,
@@ -101,7 +101,7 @@ pub fn tx1i2o() -> Transaction {
 	let key_id3 = keychain::ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
 
 	let tx = build::transaction(
-		KernelFeatures::Plain { fee: 2 },
+		KernelFeatures::Plain { fee: 2.into() },
 		None,
 		&[input(6, key_id1), output(3, key_id2), output(1, key_id3)],
 		&keychain,
@@ -181,7 +181,10 @@ where
 	K: Keychain,
 	B: ProofBuild,
 {
-	let fees = txs.iter().map(|tx| tx.fee()).sum();
+	let fees = txs
+		.iter()
+		.map(|tx| tx.fee(previous_header.height + 1))
+		.sum();
 	let reward_output = reward::output(
 		keychain,
 		builder,
@@ -209,7 +212,7 @@ where
 	B: ProofBuild,
 {
 	build::transaction(
-		KernelFeatures::Plain { fee: 2 },
+		KernelFeatures::Plain { fee: 2.into() },
 		None,
 		&[input(v, key_id1), output(3, key_id2)],
 		keychain,

@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ pub trait Backend<T: PMMRable> {
 	/// associated data element to flatfile storage (for leaf nodes only). The
 	/// position of the first element of the Vec in the MMR is provided to
 	/// help the implementation.
-	fn append(&mut self, data: &T, hashes: Vec<Hash>) -> Result<(), String>;
+	fn append(&mut self, data: &T, hashes: &[Hash]) -> Result<(), String>;
 
 	/// Rewind the backend state to a previous position, as if all append
 	/// operations after that had been canceled. Expects a position in the PMMR
@@ -45,6 +45,11 @@ pub trait Backend<T: PMMRable> {
 	/// Get a Hash  by original insertion position
 	/// (ignoring the remove log).
 	fn get_from_file(&self, position: u64) -> Option<Hash>;
+
+	/// Get hash for peak pos.
+	/// Optimized for reading peak hashes rather than arbitrary pos hashes.
+	/// Peaks can be assumed to not be compacted.
+	fn get_peak_from_file(&self, position: u64) -> Option<Hash>;
 
 	/// Get a Data Element by original insertion position
 	/// (ignoring the remove log).

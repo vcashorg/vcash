@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ use std::thread;
 use std::time::Duration;
 
 use clap::ArgMatches;
-use ctrlc;
 
 use crate::config::GlobalConfig;
 use crate::p2p::Seeding;

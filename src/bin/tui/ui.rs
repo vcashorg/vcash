@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,8 +29,7 @@ use cursive::utils::markup::StyledString;
 use cursive::views::{
 	CircularFocus, Dialog, LinearLayout, Panel, SelectView, StackView, TextView, ViewRef,
 };
-use cursive::Cursive;
-use cursive::CursiveExt;
+use cursive::{CursiveRunnable, CursiveRunner};
 use std::sync::mpsc;
 use std::{thread, time};
 
@@ -44,7 +43,7 @@ use grin_core::global;
 use grin_util::logger::LogEntry;
 
 pub struct UI {
-	cursive: Cursive,
+	cursive: CursiveRunner<CursiveRunnable>,
 	ui_rx: mpsc::Receiver<UIMessage>,
 	ui_tx: mpsc::Sender<UIMessage>,
 	controller_tx: mpsc::Sender<ControllerMessage>,
@@ -72,7 +71,7 @@ impl UI {
 		let (ui_tx, ui_rx) = mpsc::channel::<UIMessage>();
 
 		let mut grin_ui = UI {
-			cursive: Cursive::default(),
+			cursive: cursive::default().into_runner(),
 			ui_tx,
 			ui_rx,
 			controller_tx,

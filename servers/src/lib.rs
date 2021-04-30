@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -42,6 +42,6 @@ mod poolserver;
 
 pub use crate::common::stats::{DiffBlock, PeerStats, ServerStats, StratumStats, WorkerStats};
 pub use crate::common::types::{ServerConfig, StratumServerConfig};
-pub use crate::grin::server::{Server, ServerTxPool, ServerVerifierCache};
+pub use crate::grin::server::{Server, ServerTxPool};
 pub use crate::poolserver::controller::SubmitInfo;
 pub use crate::poolserver::handle_block::JobInfo;

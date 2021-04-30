@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -98,6 +98,14 @@ impl RateCounter {
 			.iter()
 			.filter(|x| !x.is_quiet())
 			.count() as u64
+	}
+
+	/// Elapsed time in ms since the last entry.
+	/// We use this to rate limit when sending.
+	pub fn elapsed_since_last_msg(&self) -> Option<u64> {
+		self.last_min_entries
+			.last()
+			.map(|x| millis_since_epoch().saturating_sub(x.timestamp))
 	}
 }
 

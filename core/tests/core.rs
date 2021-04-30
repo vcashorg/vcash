@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,10 +19,9 @@ pub mod common;
 use self::core::core::block::BlockHeader;
 use self::core::core::block::Error::KernelLockHeight;
 use self::core::core::hash::{Hashed, ZERO_HASH};
-use self::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
 use self::core::core::{
-	aggregate, deaggregate, KernelFeatures, Output, OutputFeatures, OutputIdentifier, Transaction,
-	TxKernel, Weighting,
+	aggregate, deaggregate, FeeFields, KernelFeatures, Output, OutputFeatures, OutputIdentifier,
+	Transaction, TxKernel, Weighting,
 };
 use self::core::libtx::build::{self, initial_tx, input, output, with_excess};
 use self::core::libtx::{aggsig, ProofBuilder};
@@ -31,9 +30,7 @@ use crate::common::{new_block, tx1i1o, tx1i2o, tx2i1o};
 use crate::common::{tokentx1i2o, txissuetoken};
 use grin_core as core;
 use keychain::{BlindingFactor, ExtKeychain, Keychain};
-use std::sync::Arc;
 use util::static_secp_instance;
-use util::RwLock;
 
 // Setup test with AutomatedTesting chain_type;
 fn test_setup() {
@@ -107,7 +104,8 @@ fn simple_tx_ser_deser() {
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
 	let dtx: Transaction = ser::deserialize_default(&mut &vec[..]).unwrap();
-	assert_eq!(dtx.fee(), 2);
+	let height = 42; // arbitrary
+	assert_eq!(dtx.fee(height), 2);
 	assert_eq!(dtx.inputs().len(), 2);
 	assert_eq!(dtx.outputs().len(), 1);
 	assert_eq!(tx.hash(), dtx.hash());
@@ -170,17 +168,15 @@ fn test_zero_commit_fails() {
 
 	// blinding should fail as signing with a zero r*G shouldn't work
 	let res = build::transaction(
-		KernelFeatures::Plain { fee: 0 },
+		KernelFeatures::Plain {
+			fee: FeeFields::zero(),
+		},
 		None,
 		&[input(10, key_id1.clone()), output(10, key_id1)],
 		&keychain,
 		&builder,
 	);
 	assert!(res.is_err());
-}
-
-fn verifier_cache() -> Arc<RwLock<dyn VerifierCache>> {
-	Arc::new(RwLock::new(LruVerifierCache::new()))
 }
 
 #[test]
@@ -194,7 +190,7 @@ fn build_tx_kernel() {
 
 	// first build a valid tx with corresponding blinding factor
 	let tx = build::transaction(
-		KernelFeatures::Plain { fee: 2 },
+		KernelFeatures::Plain { fee: 2.into() },
 		None,
 		&[input(10, key_id1), output(5, key_id2), output(3, key_id3)],
 		&keychain,
@@ -203,16 +199,16 @@ fn build_tx_kernel() {
 	.unwrap();
 
 	// check the tx is valid
-	tx.validate(Weighting::AsTransaction, verifier_cache())
-		.unwrap();
+	let height = 42; // arbitrary
+	tx.validate(Weighting::AsTransaction, height).unwrap();
 
 	// check the kernel is also itself valid
 	assert_eq!(tx.kernels().len(), 1);
 	let kern = &tx.kernels()[0];
 	kern.verify().unwrap();
 
-	assert_eq!(kern.features, KernelFeatures::Plain { fee: 2 });
-	assert_eq!(2, tx.fee());
+	assert_eq!(kern.features, KernelFeatures::Plain { fee: 2.into() });
+	assert_eq!(2, tx.fee(height));
 }
 
 // Proof of concept demonstrating we can build two transactions that share
@@ -234,7 +230,7 @@ fn build_two_half_kernels() {
 	let key_id3 = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
 
 	// build kernel with associated private excess
-	let mut kernel = TxKernel::with_features(KernelFeatures::Plain { fee: 2 });
+	let mut kernel = TxKernel::with_features(KernelFeatures::Plain { fee: 2.into() });
 
 	// Construct the message to be signed.
 	let msg = kernel.msg_to_sign().unwrap();
@@ -268,15 +264,10 @@ fn build_two_half_kernels() {
 	)
 	.unwrap();
 
-	assert_eq!(
-		tx1.validate(Weighting::AsTransaction, verifier_cache()),
-		Ok(()),
-	);
+	let height = 42; // arbitrary
+	assert_eq!(tx1.validate(Weighting::AsTransaction, height), Ok(()),);
 
-	assert_eq!(
-		tx2.validate(Weighting::AsTransaction, verifier_cache()),
-		Ok(()),
-	);
+	assert_eq!(tx2.validate(Weighting::AsTransaction, height), Ok(()),);
 
 	// The transactions share an identical kernel.
 	assert_eq!(tx1.kernels()[0], tx2.kernels()[0]);
@@ -300,19 +291,14 @@ fn transaction_cut_through() {
 	let tx1 = tx1i2o();
 	let tx2 = tx2i1o();
 
-	assert!(tx1
-		.validate(Weighting::AsTransaction, verifier_cache())
-		.is_ok());
-	assert!(tx2
-		.validate(Weighting::AsTransaction, verifier_cache())
-		.is_ok());
-
-	let vc = verifier_cache();
+	let height = 42; // arbitrary
+	assert!(tx1.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
 
 	// now build a "cut_through" tx from tx1 and tx2
 	let tx3 = aggregate(&[tx1, tx2]).unwrap();
 
-	assert!(tx3.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	assert!(tx3.validate(Weighting::AsTransaction, height).is_ok());
 }
 
 // Attempt to deaggregate a multi-kernel transaction in a different way
@@ -324,33 +310,30 @@ fn multi_kernel_transaction_deaggregation() {
 	let tx3 = tokentx1i2o();
 	let tx4 = tokentx1i2o();
 
-	let vc = verifier_cache();
-
-	assert!(tx1.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx2.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx3.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx4.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	let height = 42; // arbitrary
+	assert!(tx1.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx3.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx4.validate(Weighting::AsTransaction, height).is_ok());
 
 	let tx1234 = aggregate(&[tx1.clone(), tx2.clone(), tx3.clone(), tx4.clone()]).unwrap();
 	let tx12 = aggregate(&[tx1, tx2]).unwrap();
 	let tx34 = aggregate(&[tx3, tx4]).unwrap();
 
-	assert!(tx1234
-		.validate(Weighting::AsTransaction, vc.clone())
-		.is_ok());
-	assert!(tx12.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx34.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	assert!(tx1234.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx12.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx34.validate(Weighting::AsTransaction, height).is_ok());
 
 	let deaggregated_tx34 = deaggregate(tx1234.clone(), &[tx12.clone()]).unwrap();
 	assert!(deaggregated_tx34
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx34, deaggregated_tx34);
 
 	let deaggregated_tx12 = deaggregate(tx1234, &[tx34]).unwrap();
 
 	assert!(deaggregated_tx12
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx12, deaggregated_tx12);
 }
@@ -362,21 +345,20 @@ fn multi_kernel_transaction_deaggregation_2() {
 	let tx2 = tokentx1i2o();
 	let tx3 = tokentx1i2o();
 
-	let vc = verifier_cache();
-
-	assert!(tx1.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx2.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx3.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	let height = 42; // arbitrary
+	assert!(tx1.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx3.validate(Weighting::AsTransaction, height).is_ok());
 
 	let tx123 = aggregate(&[tx1.clone(), tx2.clone(), tx3.clone()]).unwrap();
 	let tx12 = aggregate(&[tx1, tx2]).unwrap();
 
-	assert!(tx123.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx12.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	assert!(tx123.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx12.validate(Weighting::AsTransaction, height).is_ok());
 
 	let deaggregated_tx3 = deaggregate(tx123, &[tx12]).unwrap();
 	assert!(deaggregated_tx3
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx3, deaggregated_tx3);
 }
@@ -388,22 +370,21 @@ fn multi_kernel_transaction_deaggregation_3() {
 	let tx2 = tokentx1i2o();
 	let tx3 = tokentx1i2o();
 
-	let vc = verifier_cache();
-
-	assert!(tx1.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx2.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx3.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	let height = 42; // arbitrary
+	assert!(tx1.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx3.validate(Weighting::AsTransaction, height).is_ok());
 
 	let tx123 = aggregate(&[tx1.clone(), tx2.clone(), tx3.clone()]).unwrap();
 	let tx13 = aggregate(&[tx1, tx3]).unwrap();
 	let tx2 = aggregate(&[tx2]).unwrap();
 
-	assert!(tx123.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx2.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	assert!(tx123.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
 
 	let deaggregated_tx13 = deaggregate(tx123, &[tx2]).unwrap();
 	assert!(deaggregated_tx13
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx13, deaggregated_tx13);
 }
@@ -417,13 +398,12 @@ fn multi_kernel_transaction_deaggregation_4() {
 	let tx4 = tokentx1i2o();
 	let tx5 = tokentx1i2o();
 
-	let vc = verifier_cache();
-
-	assert!(tx1.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx2.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx3.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx4.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx5.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	let height = 42; // arbitrary
+	assert!(tx1.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx3.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx4.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx5.validate(Weighting::AsTransaction, height).is_ok());
 
 	let tx12345 = aggregate(&[
 		tx1.clone(),
@@ -433,13 +413,11 @@ fn multi_kernel_transaction_deaggregation_4() {
 		tx5.clone(),
 	])
 	.unwrap();
-	assert!(tx12345
-		.validate(Weighting::AsTransaction, vc.clone())
-		.is_ok());
+	assert!(tx12345.validate(Weighting::AsTransaction, height).is_ok());
 
 	let deaggregated_tx5 = deaggregate(tx12345, &[tx1, tx2, tx3, tx4]).unwrap();
 	assert!(deaggregated_tx5
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx5, deaggregated_tx5);
 }
@@ -453,13 +431,12 @@ fn multi_kernel_transaction_deaggregation_5() {
 	let tx4 = tokentx1i2o();
 	let tx5 = tokentx1i2o();
 
-	let vc = verifier_cache();
-
-	assert!(tx1.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx2.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx3.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx4.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx5.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	let height = 42; // arbitrary
+	assert!(tx1.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx3.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx4.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx5.validate(Weighting::AsTransaction, height).is_ok());
 
 	let tx12345 = aggregate(&[
 		tx1.clone(),
@@ -472,13 +449,11 @@ fn multi_kernel_transaction_deaggregation_5() {
 	let tx12 = aggregate(&[tx1, tx2]).unwrap();
 	let tx34 = aggregate(&[tx3, tx4]).unwrap();
 
-	assert!(tx12345
-		.validate(Weighting::AsTransaction, vc.clone())
-		.is_ok());
+	assert!(tx12345.validate(Weighting::AsTransaction, height).is_ok());
 
 	let deaggregated_tx5 = deaggregate(tx12345, &[tx12, tx34]).unwrap();
 	assert!(deaggregated_tx5
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx5, deaggregated_tx5);
 }
@@ -490,27 +465,26 @@ fn basic_transaction_deaggregation() {
 	let tx1 = tokentx1i2o();
 	let tx2 = tokentx1i2o();
 
-	let vc = verifier_cache();
-
-	assert!(tx1.validate(Weighting::AsTransaction, vc.clone()).is_ok());
-	assert!(tx2.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	let height = 42; // arbitrary
+	assert!(tx1.validate(Weighting::AsTransaction, height).is_ok());
+	assert!(tx2.validate(Weighting::AsTransaction, height).is_ok());
 
 	// now build a "cut_through" tx from tx1 and tx2
 	let tx3 = aggregate(&[tx1.clone(), tx2.clone()]).unwrap();
 
-	assert!(tx3.validate(Weighting::AsTransaction, vc.clone()).is_ok());
+	assert!(tx3.validate(Weighting::AsTransaction, height).is_ok());
 
 	let deaggregated_tx1 = deaggregate(tx3.clone(), &[tx2.clone()]).unwrap();
 
 	assert!(deaggregated_tx1
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx1, deaggregated_tx1);
 
 	let deaggregated_tx2 = deaggregate(tx3, &[tx1]).unwrap();
 
 	assert!(deaggregated_tx2
-		.validate(Weighting::AsTransaction, vc.clone())
+		.validate(Weighting::AsTransaction, height)
 		.is_ok());
 	assert_eq!(tx2, deaggregated_tx2);
 }
@@ -524,7 +498,7 @@ fn hash_output() {
 	let key_id3 = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
 
 	let tx = build::transaction(
-		KernelFeatures::Plain { fee: 1 },
+		KernelFeatures::Plain { fee: 1.into() },
 		None,
 		&[input(75, key_id1), output(42, key_id2), output(32, key_id3)],
 		&keychain,
@@ -541,9 +515,8 @@ fn hash_output() {
 #[test]
 fn blind_tx() {
 	let btx = tx2i1o();
-	assert!(btx
-		.validate(Weighting::AsTransaction, verifier_cache())
-		.is_ok());
+	let height = 42; // arbitrary
+	assert!(btx.validate(Weighting::AsTransaction, height).is_ok());
 
 	// Ignored for bullet proofs, because calling range_proof_info
 	// with a bullet proof causes painful errors
@@ -588,8 +561,9 @@ fn tx_build_exchange() {
 
 		// Alice builds her transaction, with change, which also produces the sum
 		// of blinding factors before they're obscured.
-		let tx = Transaction::empty()
-			.with_kernel(TxKernel::with_features(KernelFeatures::Plain { fee: 2 }));
+		let tx = Transaction::empty().with_kernel(TxKernel::with_features(KernelFeatures::Plain {
+			fee: 2.into(),
+		}));
 		let (tx, sum, _token_sum) =
 			build::partial_transaction(tx, &[in1, in2, output(1, key_id3)], &keychain, &builder)
 				.unwrap();
@@ -601,7 +575,7 @@ fn tx_build_exchange() {
 	// blinding factors. He adds his output, finalizes the transaction so it's
 	// ready for broadcast.
 	let tx_final = build::transaction(
-		KernelFeatures::Plain { fee: 2 },
+		KernelFeatures::Plain { fee: 2.into() },
 		None,
 		&[
 			initial_tx(tx_alice),
@@ -613,9 +587,8 @@ fn tx_build_exchange() {
 	)
 	.unwrap();
 
-	tx_final
-		.validate(Weighting::AsTransaction, verifier_cache())
-		.unwrap();
+	let height = 42; // arbitrary
+	tx_final.validate(Weighting::AsTransaction, height).unwrap();
 }
 
 #[test]
@@ -629,8 +602,7 @@ fn reward_empty_block() {
 
 	let b = new_block(&[], &keychain, &builder, &previous_header, &key_id);
 
-	b.validate(&BlindingFactor::zero(), verifier_cache())
-		.unwrap();
+	b.validate(&BlindingFactor::zero()).unwrap();
 }
 
 #[test]
@@ -640,15 +612,13 @@ fn reward_with_tx_block() {
 	let builder = ProofBuilder::new(&keychain);
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 
-	let vc = verifier_cache();
-
 	let tx1 = tx2i1o();
-	tx1.validate(Weighting::AsTransaction, vc.clone()).unwrap();
-
 	let previous_header = BlockHeader::default();
+	tx1.validate(Weighting::AsTransaction, previous_header.height + 1)
+		.unwrap();
 
 	let block = new_block(&[tx1], &keychain, &builder, &previous_header, &key_id);
-	block.validate(&BlindingFactor::zero(), vc.clone()).unwrap();
+	block.validate(&BlindingFactor::zero()).unwrap();
 }
 
 #[test]
@@ -658,15 +628,13 @@ fn simple_block() {
 	let builder = ProofBuilder::new(&keychain);
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 
-	let vc = verifier_cache();
-
 	let tx1 = tx2i1o();
 	let tx2 = tx1i1o();
 
 	let previous_header = BlockHeader::default();
 	let b = new_block(&[tx1, tx2], &keychain, &builder, &previous_header, &key_id);
 
-	b.validate(&BlindingFactor::zero(), vc.clone()).unwrap();
+	b.validate(&BlindingFactor::zero()).unwrap();
 }
 
 #[test]
@@ -678,13 +646,11 @@ fn test_block_with_timelocked_tx() {
 	let key_id2 = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
 	let key_id3 = ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
 
-	let vc = verifier_cache();
-
 	// first check we can add a timelocked tx where lock height matches current
 	// block height and that the resulting block is valid
 	let tx1 = build::transaction(
 		KernelFeatures::HeightLocked {
-			fee: 2,
+			fee: 2.into(),
 			lock_height: 1,
 		},
 		None,
@@ -703,13 +669,13 @@ fn test_block_with_timelocked_tx() {
 		&previous_header,
 		&key_id3.clone(),
 	);
-	b.validate(&BlindingFactor::zero(), vc.clone()).unwrap();
+	b.validate(&BlindingFactor::zero()).unwrap();
 
 	// now try adding a timelocked tx where lock height is greater than current
 	// block height
 	let tx1 = build::transaction(
 		KernelFeatures::HeightLocked {
-			fee: 2,
+			fee: 2.into(),
 			lock_height: 2,
 		},
 		None,
@@ -722,7 +688,7 @@ fn test_block_with_timelocked_tx() {
 	let previous_header = BlockHeader::default();
 	let b = new_block(&[tx1], &keychain, &builder, &previous_header, &key_id3);
 
-	match b.validate(&BlindingFactor::zero(), vc.clone()) {
+	match b.validate(&BlindingFactor::zero()) {
 		Err(KernelLockHeight(height)) => {
 			assert_eq!(height, 2);
 		}
@@ -734,14 +700,14 @@ fn test_block_with_timelocked_tx() {
 pub fn test_verify_1i1o_sig() {
 	test_setup();
 	let tx = tx1i1o();
-	tx.validate(Weighting::AsTransaction, verifier_cache())
-		.unwrap();
+	let height = 42; // arbitrary
+	tx.validate(Weighting::AsTransaction, height).unwrap();
 }
 
 #[test]
 pub fn test_verify_2i1o_sig() {
 	test_setup();
 	let tx = tx2i1o();
-	tx.validate(Weighting::AsTransaction, verifier_cache())
-		.unwrap();
+	let height = 42; // arbitrary
+	tx.validate(Weighting::AsTransaction, height).unwrap();
 }

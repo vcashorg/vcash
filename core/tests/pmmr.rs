@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -88,6 +88,18 @@ fn first_100_mmr_heights() {
 		);
 		count += 1;
 	}
+}
+
+#[test]
+fn test_bintree_range() {
+	assert_eq!(pmmr::bintree_range(0), 0..1);
+	assert_eq!(pmmr::bintree_range(1), 1..2);
+	assert_eq!(pmmr::bintree_range(2), 2..3);
+	assert_eq!(pmmr::bintree_range(3), 1..4);
+	assert_eq!(pmmr::bintree_range(4), 4..5);
+	assert_eq!(pmmr::bintree_range(5), 5..6);
+	assert_eq!(pmmr::bintree_range(6), 4..7);
+	assert_eq!(pmmr::bintree_range(7), 1..8);
 }
 
 // The pos of the rightmost leaf for the provided MMR size (last leaf in subtree).

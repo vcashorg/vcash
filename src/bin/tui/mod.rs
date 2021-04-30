@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,17 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Grin TUI
-use chrono;
-use humansize;
-//
 mod constants;
 mod logs;
 mod menu;
 mod mining;
 mod peers;
 mod status;
-pub mod table;
 mod types;
 pub mod ui;
 mod version;

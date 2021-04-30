@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ use rand::prelude::*;
 
 use crate::api;
 use crate::chain;
-use crate::core::global::ChainTypes;
+use crate::core::global::{ChainTypes, DEFAULT_FUTURE_TIME_LIMIT};
 use crate::core::{core, libtx, pow};
 use crate::keychain;
 use crate::p2p;
@@ -160,6 +160,10 @@ pub struct ServerConfig {
 	#[serde(default)]
 	pub chain_type: ChainTypes,
 
+	/// Future Time Limit
+	#[serde(default = "default_future_time_limit")]
+	pub future_time_limit: u64,
+
 	/// Automatically run full chain validation during normal block processing?
 	#[serde(default)]
 	pub chain_validation_mode: ChainValidationMode,
@@ -204,6 +208,10 @@ pub struct ServerConfig {
 	pub webhook_config: WebHooksConfig,
 }
 
+fn default_future_time_limit() -> u64 {
+	DEFAULT_FUTURE_TIME_LIMIT
+}
+
 impl Default for ServerConfig {
 	fn default() -> ServerConfig {
 		ServerConfig {
@@ -218,6 +226,7 @@ impl Default for ServerConfig {
 			dandelion_config: pool::DandelionConfig::default(),
 			stratum_mining_config: Some(StratumServerConfig::default()),
 			chain_type: ChainTypes::default(),
+			future_time_limit: default_future_time_limit(),
 			archive_mode: Some(false),
 			chain_validation_mode: ChainValidationMode::default(),
 			pool_config: pool::PoolConfig::default(),
@@ -381,11 +390,11 @@ impl DandelionEpoch {
 	/// Choose a new outbound stem relay peer.
 	pub fn next_epoch(&mut self, peers: &Arc<p2p::Peers>) {
 		self.start_time = Some(Utc::now().timestamp());
-		self.relay_peer = peers.outgoing_connected_peers().first().cloned();
+		self.relay_peer = peers.iter().outbound().connected().choose_random();
 
 		// If stem_probability == 90 then we stem 90% of the time.
-		let mut rng = rand::thread_rng();
 		let stem_probability = self.config.stem_probability;
+		let mut rng = rand::thread_rng();
 		self.is_stem = rng.gen_range(0, 100) < stem_probability;
 
 		let addr = self.relay_peer.clone().map(|p| p.info.addr);
@@ -422,7 +431,7 @@ impl DandelionEpoch {
 		}
 
 		if update_relay {
-			self.relay_peer = peers.outgoing_connected_peers().first().cloned();
+			self.relay_peer = peers.iter().outbound().connected().choose_random();
 			info!(
 				"DandelionEpoch: relay_peer: new peer chosen: {:?}",
 				self.relay_peer.clone().map(|p| p.info.addr)

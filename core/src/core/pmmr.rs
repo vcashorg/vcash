@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ mod backend;
 mod pmmr;
 mod readonly_pmmr;
 mod rewindable_pmmr;
+pub mod segment;
 mod vec_backend;
 
 pub use self::backend::*;

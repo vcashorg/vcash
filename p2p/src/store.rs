@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -124,6 +124,15 @@ impl PeerStore {
 
 		let batch = self.db.batch()?;
 		batch.put_ser(&peer_key(p.addr)[..], p)?;
+		batch.commit()
+	}
+
+	pub fn save_peers(&self, p: Vec<PeerData>) -> Result<(), Error> {
+		let batch = self.db.batch()?;
+		for pd in p {
+			debug!("save_peers: {:?} marked {:?}", pd.addr, pd.flags);
+			batch.put_ser(&peer_key(pd.addr)[..], &pd)?;
+		}
 		batch.commit()
 	}
 

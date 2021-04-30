@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 use crate::chain::{self, SyncState, SyncStatus};
 use crate::common::types::Error;
-use crate::core::core::hash::{Hash, Hashed};
-use crate::p2p::{self, types::ReasonForBan, Peer};
+use crate::core::core::hash::Hash;
+use crate::core::pow::Difficulty;
+use crate::p2p::{self, types::ReasonForBan, Capabilities, Peer};
 
 pub struct HeaderSync {
 	sync_state: Arc<SyncState>,
@@ -46,56 +47,53 @@ impl HeaderSync {
 		}
 	}
 
-	pub fn check_run(
-		&mut self,
-		header_head: &chain::Tip,
-		highest_height: u64,
-	) -> Result<bool, chain::Error> {
-		if !self.header_sync_due(header_head) {
-			return Ok(false);
-		}
-
-		let enable_header_sync = match self.sync_state.status() {
+	pub fn check_run(&mut self, sync_head: chain::Tip) -> Result<bool, chain::Error> {
+		// We only want to run header_sync for some sync states.
+		let do_run = match self.sync_state.status() {
 			SyncStatus::BodySync { .. }
 			| SyncStatus::HeaderSync { .. }
-			| SyncStatus::TxHashsetDone => true,
-			SyncStatus::NoSync | SyncStatus::Initial | SyncStatus::AwaitingPeers(_) => {
-				let sync_head = self.chain.get_sync_head()?;
-				debug!(
-					"sync: initial transition to HeaderSync. sync_head: {} at {}, resetting to: {} at {}",
-					sync_head.hash(),
-					sync_head.height,
-					header_head.hash(),
-					header_head.height,
-				);
-
-				// Reset sync_head to header_head on transition to HeaderSync,
-				// but ONLY on initial transition to HeaderSync state.
-				//
-				// The header_head and sync_head may diverge here in the presence of a fork
-				// in the header chain. Ensure we track the new advertised header chain here
-				// correctly, so reset any previous (and potentially stale) sync_head to match
-				// our last known "good" header_head.
-				//
-				self.chain.rebuild_sync_mmr(&header_head)?;
-				true
-			}
+			| SyncStatus::TxHashsetDone
+			| SyncStatus::NoSync
+			| SyncStatus::Initial
+			| SyncStatus::AwaitingPeers(_) => true,
 			_ => false,
 		};
 
-		if enable_header_sync {
+		if !do_run {
+			return Ok(false);
+		}
+
+		// TODO - can we safely reuse the peer here across multiple runs?
+		let sync_peer = self.choose_sync_peer();
+
+		if let Some(sync_peer) = sync_peer {
+			let (peer_height, peer_diff) = {
+				let info = sync_peer.info.live_info.read();
+				(info.height, info.total_difficulty)
+			};
+
+			// Quick check - nothing to sync if we are caught up with the peer.
+			if peer_diff <= sync_head.total_difficulty {
+				return Ok(false);
+			}
+
+			if !self.header_sync_due(sync_head) {
+				return Ok(false);
+			}
+
 			self.sync_state.update(SyncStatus::HeaderSync {
-				current_height: header_head.height,
-				highest_height: highest_height,
+				sync_head,
+				highest_height: peer_height,
+				highest_diff: peer_diff,
 			});
 
-			self.syncing_peer = self.header_sync();
-			return Ok(true);
+			self.header_sync(sync_head, sync_peer.clone());
+			self.syncing_peer = Some(sync_peer.clone());
 		}
-		Ok(false)
+		Ok(true)
 	}
 
-	fn header_sync_due(&mut self, header_head: &chain::Tip) -> bool {
+	fn header_sync_due(&mut self, header_head: chain::Tip) -> bool {
 		let now = Utc::now();
 		let (timeout, latest_height, prev_height) = self.prev_header_sync;
 
@@ -168,40 +166,47 @@ impl HeaderSync {
 		}
 	}
 
-	fn header_sync(&mut self) -> Option<Arc<Peer>> {
-		if let Ok(header_head) = self.chain.header_head() {
-			let difficulty = header_head.total_difficulty;
+	fn choose_sync_peer(&self) -> Option<Arc<Peer>> {
+		let peers_iter = || {
+			self.peers
+				.iter()
+				.with_capabilities(Capabilities::HEADER_HIST)
+				.connected()
+		};
 
-			if let Some(peer) = self.peers.most_work_peer() {
-				if peer.info.total_difficulty() > difficulty {
-					return self.request_headers(peer);
-				}
-			}
+		// Filter peers further based on max difficulty.
+		let max_diff = peers_iter().max_difficulty().unwrap_or(Difficulty::zero());
+		let peers_iter = || peers_iter().with_difficulty(|x| x >= max_diff);
+
+		// Choose a random "most work" peer, preferring outbound if at all possible.
+		peers_iter().outbound().choose_random().or_else(|| {
+			warn!("no suitable outbound peer for header sync, considering inbound");
+			peers_iter().inbound().choose_random()
+		})
+	}
+
+	fn header_sync(&self, sync_head: chain::Tip, peer: Arc<Peer>) {
+		if peer.info.total_difficulty() > sync_head.total_difficulty {
+			self.request_headers(sync_head, peer);
 		}
-		return None;
 	}
 
 	/// Request some block headers from a peer to advance us.
-	fn request_headers(&mut self, peer: Arc<Peer>) -> Option<Arc<Peer>> {
-		if let Ok(locator) = self.get_locator() {
+	fn request_headers(&self, sync_head: chain::Tip, peer: Arc<Peer>) {
+		if let Ok(locator) = self.get_locator(sync_head) {
 			debug!(
 				"sync: request_headers: asking {} for headers, {:?}",
 				peer.info.addr, locator,
 			);
 
 			let _ = peer.send_header_request(locator);
-			return Some(peer);
 		}
-		return None;
 	}
 
-	/// We build a locator based on sync_head.
-	/// Even if sync_head is significantly out of date we will "reset" it once we
-	/// start getting headers back from a peer.
-	fn get_locator(&mut self) -> Result<Vec<Hash>, Error> {
-		let tip = self.chain.get_sync_head()?;
-		let heights = get_locator_heights(tip.height);
-		let locator = self.chain.get_locator_hashes(&heights)?;
+	/// Build a locator based on header_head.
+	fn get_locator(&self, sync_head: chain::Tip) -> Result<Vec<Hash>, Error> {
+		let heights = get_locator_heights(sync_head.height);
+		let locator = self.chain.get_locator_hashes(sync_head, &heights)?;
 		Ok(locator)
 	}
 }

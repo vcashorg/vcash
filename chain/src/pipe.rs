@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,13 +15,10 @@
 //! Implementation of the chain block acceptance (or refusal) pipeline.
 
 use crate::core::consensus;
+use crate::core::core::get_grin_magic_data_str;
 use crate::core::core::hash::Hashed;
-use crate::core::core::verifier_cache::VerifierCache;
 use crate::core::core::Committed;
-use crate::core::core::{
-	block, get_grin_magic_data_str, Block, BlockHeader, BlockSums, OutputIdentifier,
-	TransactionBody,
-};
+use crate::core::core::{block, Block, BlockHeader, BlockSums, OutputIdentifier, TransactionBody};
 use crate::core::global;
 use crate::core::pow::{self, compact_to_biguint, hash_to_biguint, pow_hash_after_mask};
 use crate::error::{Error, ErrorKind};
@@ -29,8 +26,6 @@ use crate::store;
 use crate::txhashset;
 use crate::types::{CommitPos, Options, Tip};
 use crate::util;
-use crate::util::RwLock;
-use std::sync::Arc;
 use util::ToHex;
 
 /// Contextual information required to process a new block and either reject or
@@ -46,8 +41,6 @@ pub struct BlockContext<'a> {
 	pub header_pmmr: &'a mut txhashset::PMMRHandle<BlockHeader>,
 	/// The active batch to use for block processing.
 	pub batch: store::Batch<'a>,
-	/// The verifier cache (caching verifier for rangeproofs and kernel signatures)
-	pub verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 }
 
 fn validate_block_auxdata(
@@ -266,43 +259,53 @@ pub fn process_block(
 	}
 }
 
-/// Sync a chunk of block headers.
+/// Process a batch of sequential block headers.
 /// This is only used during header sync.
-pub fn sync_block_headers(
+/// Will update header_head locally if this batch of headers increases total work.
+/// Returns the updated sync_head, which may be on a fork.
+pub fn process_block_headers(
 	headers: &[BlockHeader],
+	sync_head: Tip,
 	ctx: &mut BlockContext<'_>,
-) -> Result<(), Error> {
+) -> Result<Option<Tip>, Error> {
 	if headers.is_empty() {
-		return Ok(());
+		return Ok(None);
 	}
 	let last_header = headers.last().expect("last header");
 
-	// Check if we know about all these headers. If so we can accept them quickly.
-	// If they *do not* increase total work on the sync chain we are done.
-	// If they *do* increase total work then we should process them to update sync_head.
-	let sync_head = {
-		let hash = ctx.header_pmmr.head_hash()?;
-		let header = ctx.batch.get_block_header(&hash)?;
-		Tip::from_header(&header)
-	};
-
-	if let Ok(existing) = ctx.batch.get_block_header(&last_header.hash()) {
-		if !has_more_work(&existing, &sync_head) {
-			return Ok(());
-		}
-	}
+	let head = ctx.batch.header_head()?;
 
 	// Validate each header in the chunk and add to our db.
 	// Note: This batch may be rolled back later if the MMR does not validate successfully.
+	// Note: This batch may later be committed even if the MMR itself is rollbacked.
 	for header in headers {
 		validate_header(header, ctx)?;
 		add_block_header(header, &ctx.batch)?;
 	}
 
-	// Now apply this entire chunk of headers to the sync MMR (ctx is sync MMR specific).
+	// Now apply this entire chunk of headers to the header MMR.
 	txhashset::header_extending(&mut ctx.header_pmmr, &mut ctx.batch, |ext, batch| {
 		rewind_and_apply_header_fork(&last_header, ext, batch)?;
-		Ok(())
+
+		// If previous sync_head is not on the "current" chain then
+		// these headers are on an alternative fork to sync_head.
+		let alt_fork = !ext.is_on_current_chain(sync_head, batch)?;
+
+		// Update our "header_head" if this batch results in an increase in total work.
+		// Otherwise rollback this header extension.
+		// Note the outer batch may still be committed to db assuming no errors occur in the extension.
+		if has_more_work(last_header, &head) {
+			let header_head = last_header.into();
+			update_header_head(&header_head, &batch)?;
+		} else {
+			ext.force_rollback();
+		};
+
+		if alt_fork || has_more_work(last_header, &sync_head) {
+			Ok(Some(last_header.into()))
+		} else {
+			Ok(None)
+		}
 	})
 }
 
@@ -452,7 +455,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 	}
 
 	// Block header is invalid (and block is invalid) if this lower bound is too heavy for a full block.
-	let weight = TransactionBody::weight_as_block(
+	let weight = TransactionBody::weight_by_iok(
 		0,
 		num_outputs,
 		num_kernels,
@@ -519,7 +522,7 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 fn validate_block(block: &Block, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
 	let prev = ctx.batch.get_previous_header(&block.header)?;
 	block
-		.validate(&prev.total_kernel_offset, ctx.verifier_cache.clone())
+		.validate(&prev.total_kernel_offset)
 		.map_err(ErrorKind::InvalidBlockProof)?;
 	Ok(())
 }
@@ -617,7 +620,7 @@ fn add_block_header(bh: &BlockHeader, batch: &store::Batch<'_>) -> Result<(), Er
 	Ok(())
 }
 
-fn update_header_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Error> {
+fn update_header_head(head: &Tip, batch: &store::Batch<'_>) -> Result<(), Error> {
 	batch
 		.save_header_head(&head)
 		.map_err(|e| ErrorKind::StoreErr(e, "pipe save header head".to_owned()))?;
@@ -630,7 +633,7 @@ fn update_header_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Er
 	Ok(())
 }
 
-fn update_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Error> {
+fn update_head(head: &Tip, batch: &store::Batch<'_>) -> Result<(), Error> {
 	batch
 		.save_body_head(&head)
 		.map_err(|e| ErrorKind::StoreErr(e, "pipe save body".to_owned()))?;
@@ -653,7 +656,7 @@ pub fn rewind_and_apply_header_fork(
 ) -> Result<(), Error> {
 	let mut fork_hashes = vec![];
 	let mut current = header.clone();
-	while current.height > 0 && ext.is_on_current_chain(&current, batch).is_err() {
+	while current.height > 0 && !ext.is_on_current_chain(&current, batch)? {
 		fork_hashes.push(current.hash());
 		current = batch.get_previous_header(&current)?;
 	}
@@ -694,11 +697,7 @@ pub fn rewind_and_apply_fork(
 
 	// Rewind the txhashset extension back to common ancestor based on header MMR.
 	let mut current = batch.head_header()?;
-	while current.height > 0
-		&& header_extension
-			.is_on_current_chain(&current, batch)
-			.is_err()
-	{
+	while current.height > 0 && !header_extension.is_on_current_chain(&current, batch)? {
 		current = batch.get_previous_header(&current)?;
 	}
 	let fork_point = current;

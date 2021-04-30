@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,6 +34,11 @@ use crate::pow::{PoWContext, Proof};
 pub fn new_cuckaroo_ctx(edge_bits: u8, proof_size: usize) -> Result<Box<dyn PoWContext>, Error> {
 	let params = CuckooParams::new(edge_bits, edge_bits, proof_size)?;
 	Ok(Box::new(CuckarooContext { params }))
+}
+
+/// Error returned for cuckaroo request beyond HardFork4
+pub fn no_cuckaroo_ctx() -> Result<Box<dyn PoWContext>, Error> {
+	Err(ErrorKind::Verification("no cuckaroo past HardFork4".to_owned()).into())
 }
 
 /// Cuckaroo cycle context. Only includes the verifier for now.

@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,10 +14,13 @@
 
 //! Message types that transit over the network and related serialization code.
 
+use crate::chain::txhashset::BitmapSegment;
 use crate::conn::Tracker;
 use crate::core::core::hash::Hash;
+use crate::core::core::transaction::{OutputIdentifier, TxKernel};
 use crate::core::core::{
-	BlockHeader, Transaction, UntrustedBlock, UntrustedBlockHeader, UntrustedCompactBlock,
+	BlockHeader, Segment, SegmentIdentifier, Transaction, UntrustedBlock, UntrustedBlockHeader,
+	UntrustedCompactBlock,
 };
 use crate::core::pow::Difficulty;
 use crate::core::ser::{
@@ -28,12 +31,13 @@ use crate::types::{
 	AttachmentMeta, AttachmentUpdate, Capabilities, Error, PeerAddr, ReasonForBan,
 	MAX_BLOCK_HEADERS, MAX_LOCATORS, MAX_PEER_ADDRS,
 };
+use crate::util::secp::pedersen::RangeProof;
 use bytes::Bytes;
 use num::FromPrimitive;
-use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use std::{fmt, thread, time::Duration};
 
 /// Grin's user agent with current version
 pub const USER_AGENT: &str = concat!("MW/Vcash ", env!("CARGO_PKG_VERSION"));
@@ -70,12 +74,20 @@ enum_from_primitive! {
 		BanReason = 18,
 		GetTransaction = 19,
 		TransactionKernel = 20,
+		GetOutputBitmapSegment = 21,
+		OutputBitmapSegment = 22,
+		GetOutputSegment = 23,
+		OutputSegment = 24,
+		GetRangeProofSegment = 25,
+		RangeProofSegment = 26,
+		GetKernelSegment = 27,
+		KernelSegment = 28,
 	}
 }
 
 /// Max theoretical size of a block filled with outputs.
 fn max_block_size() -> u64 {
-	(global::max_block_weight() / consensus::BLOCK_OUTPUT_WEIGHT * 708) as u64
+	(global::max_block_weight() / consensus::OUTPUT_WEIGHT * 708) as u64
 }
 
 // Max msg size when msg type is unknown.
@@ -107,6 +119,14 @@ fn max_msg_size(msg_type: Type) -> u64 {
 		Type::BanReason => 64,
 		Type::GetTransaction => 32,
 		Type::TransactionKernel => 32,
+		Type::GetOutputBitmapSegment => 41,
+		Type::OutputBitmapSegment => 2 * max_block_size(),
+		Type::GetOutputSegment => 41,
+		Type::OutputSegment => 2 * max_block_size(),
+		Type::GetRangeProofSegment => 41,
+		Type::RangeProofSegment => 2 * max_block_size(),
+		Type::GetKernelSegment => 41,
+		Type::KernelSegment => 2 * max_block_size(),
 	}
 }
 
@@ -218,6 +238,17 @@ pub fn write_message<W: Write>(
 	msg: &Msg,
 	tracker: Arc<Tracker>,
 ) -> Result<(), Error> {
+	// Introduce a delay so messages are spaced at least 150ms apart.
+	// This gives a max msg rate of 60000/150 = 400 messages per minute.
+	// Exceeding 500 messages per minute will result in being banned as abusive.
+	if let Some(elapsed) = tracker.sent_bytes.read().elapsed_since_last_msg() {
+		let min_interval: u64 = 150;
+		let sleep_ms = min_interval.saturating_sub(elapsed);
+		if sleep_ms > 0 {
+			thread::sleep(Duration::from_millis(sleep_ms))
+		}
+	}
+
 	let mut buf = ser::ser_vec(&msg.header, msg.version)?;
 	buf.extend(&msg.body[..]);
 	stream.write_all(&buf[..])?;
@@ -498,6 +529,40 @@ impl Readable for PeerAddrs {
 	}
 }
 
+impl IntoIterator for PeerAddrs {
+	type Item = PeerAddr;
+	type IntoIter = std::vec::IntoIter<Self::Item>;
+	fn into_iter(self) -> Self::IntoIter {
+		self.peers.into_iter()
+	}
+}
+
+impl Default for PeerAddrs {
+	fn default() -> Self {
+		PeerAddrs { peers: vec![] }
+	}
+}
+
+impl PeerAddrs {
+	pub fn as_slice(&self) -> &[PeerAddr] {
+		self.peers.as_slice()
+	}
+
+	pub fn contains(&self, addr: &PeerAddr) -> bool {
+		self.peers.contains(addr)
+	}
+
+	pub fn difference(&self, other: &[PeerAddr]) -> PeerAddrs {
+		let peers = self
+			.peers
+			.iter()
+			.filter(|x| !other.contains(x))
+			.cloned()
+			.collect();
+		PeerAddrs { peers }
+	}
+}
+
 /// We found some issue in the communication, sending an error back, usually
 /// followed by closing the connection.
 pub struct PeerError {
@@ -710,6 +775,115 @@ impl Readable for TxHashSetArchive {
 	}
 }
 
+/// Request to get a segment of a (P)MMR at a particular block.
+pub struct SegmentRequest {
+	/// The hash of the block the MMR is associated with
+	pub block_hash: Hash,
+	/// The identifier of the requested segment
+	pub identifier: SegmentIdentifier,
+}
+
+impl Readable for SegmentRequest {
+	fn read<R: Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let block_hash = Readable::read(reader)?;
+		let identifier = Readable::read(reader)?;
+		Ok(Self {
+			block_hash,
+			identifier,
+		})
+	}
+}
+
+impl Writeable for SegmentRequest {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		Writeable::write(&self.block_hash, writer)?;
+		Writeable::write(&self.identifier, writer)
+	}
+}
+
+/// Response to a (P)MMR segment request.
+pub struct SegmentResponse<T> {
+	/// The hash of the block the MMR is associated with
+	pub block_hash: Hash,
+	/// The MMR segment
+	pub segment: Segment<T>,
+}
+
+impl<T: Readable> Readable for SegmentResponse<T> {
+	fn read<R: Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let block_hash = Readable::read(reader)?;
+		let segment = Readable::read(reader)?;
+		Ok(Self {
+			block_hash,
+			segment,
+		})
+	}
+}
+
+impl<T: Writeable> Writeable for SegmentResponse<T> {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		Writeable::write(&self.block_hash, writer)?;
+		Writeable::write(&self.segment, writer)
+	}
+}
+
+/// Response to an output PMMR segment request.
+pub struct OutputSegmentResponse {
+	/// The segment response
+	pub response: SegmentResponse<OutputIdentifier>,
+	/// The root hash of the output bitmap MMR
+	pub output_bitmap_root: Hash,
+}
+
+impl Readable for OutputSegmentResponse {
+	fn read<R: Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let response = Readable::read(reader)?;
+		let output_bitmap_root = Readable::read(reader)?;
+		Ok(Self {
+			response,
+			output_bitmap_root,
+		})
+	}
+}
+
+impl Writeable for OutputSegmentResponse {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		Writeable::write(&self.response, writer)?;
+		Writeable::write(&self.output_bitmap_root, writer)
+	}
+}
+
+/// Response to an output bitmap MMR segment request.
+pub struct OutputBitmapSegmentResponse {
+	/// The hash of the block the MMR is associated with
+	pub block_hash: Hash,
+	/// The MMR segment
+	pub segment: BitmapSegment,
+	/// The root hash of the output PMMR
+	pub output_root: Hash,
+}
+
+impl Readable for OutputBitmapSegmentResponse {
+	fn read<R: Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let block_hash = Readable::read(reader)?;
+		let segment = Readable::read(reader)?;
+		let output_root = Readable::read(reader)?;
+		Ok(Self {
+			block_hash,
+			segment,
+			output_root,
+		})
+	}
+}
+
+impl Writeable for OutputBitmapSegmentResponse {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		Writeable::write(&self.block_hash, writer)?;
+		Writeable::write(&self.segment, writer)?;
+		Writeable::write(&self.output_root, writer)
+	}
+}
+
 pub enum Message {
 	Unknown(u8),
 	Ping(Ping),
@@ -725,12 +899,31 @@ pub enum Message {
 	CompactBlock(UntrustedCompactBlock),
 	GetHeaders(Locator),
 	Header(UntrustedBlockHeader),
-	Headers(Vec<BlockHeader>),
+	Headers(HeadersData),
 	GetPeerAddrs(GetPeerAddrs),
 	PeerAddrs(PeerAddrs),
 	TxHashSetRequest(TxHashSetRequest),
 	TxHashSetArchive(TxHashSetArchive),
 	Attachment(AttachmentUpdate, Option<Bytes>),
+	GetOutputBitmapSegment(SegmentRequest),
+	OutputBitmapSegment(OutputBitmapSegmentResponse),
+	GetOutputSegment(SegmentRequest),
+	OutputSegment(OutputSegmentResponse),
+	GetRangeProofSegment(SegmentRequest),
+	RangeProofSegment(SegmentResponse<RangeProof>),
+	GetKernelSegment(SegmentRequest),
+	KernelSegment(SegmentResponse<TxKernel>),
+}
+
+/// We receive 512 headers from a peer.
+/// But we process them in smaller batches of 32 headers.
+/// HeadersData wraps the current batch and a count of the headers remaining after this batch.
+pub struct HeadersData {
+	/// Batch of headers currently being processed.
+	pub headers: Vec<BlockHeader>,
+	/// Number of headers stil to be processed after this current batch.
+	/// 0 indicates this is the final batch from the larger set of headers received from the peer.
+	pub remaining: u64,
 }
 
 impl fmt::Display for Message {
@@ -756,6 +949,14 @@ impl fmt::Display for Message {
 			Message::TxHashSetRequest(_) => write!(f, "tx hash set request"),
 			Message::TxHashSetArchive(_) => write!(f, "tx hash set"),
 			Message::Attachment(_, _) => write!(f, "attachment"),
+			Message::GetOutputBitmapSegment(_) => write!(f, "get output bitmap segment"),
+			Message::OutputBitmapSegment(_) => write!(f, "output bitmap segment"),
+			Message::GetOutputSegment(_) => write!(f, "get output segment"),
+			Message::OutputSegment(_) => write!(f, "output segment"),
+			Message::GetRangeProofSegment(_) => write!(f, "get range proof segment"),
+			Message::RangeProofSegment(_) => write!(f, "range proof segment"),
+			Message::GetKernelSegment(_) => write!(f, "get kernel segment"),
+			Message::KernelSegment(_) => write!(f, "kernel segment"),
 		}
 	}
 }

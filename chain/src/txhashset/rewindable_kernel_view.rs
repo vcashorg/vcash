@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 //! Lightweight readonly view into kernel MMR for convenience.
 
-use crate::core::core::pmmr::RewindablePMMR;
+use crate::core::core::pmmr::{ReadablePMMR, ReadonlyPMMR, RewindablePMMR};
 use crate::core::core::{BlockHeader, TokenTxKernel, TxKernel};
 use crate::error::{Error, ErrorKind};
 use grin_store::pmmr::PMMRBackend;
@@ -64,7 +64,10 @@ impl<'a> RewindableKernelView<'a> {
 	/// fast sync where a reorg past the horizon could allow a whole rewrite of
 	/// the kernel set.
 	pub fn validate_root(&self) -> Result<(), Error> {
-		let root = self.pmmr.root().map_err(|_| ErrorKind::InvalidRoot)?;
+		let root = self
+			.readonly_pmmr()
+			.root()
+			.map_err(|_| ErrorKind::InvalidRoot)?;
 		if root != self.header.kernel_root {
 			return Err(ErrorKind::InvalidTxHashSet(format!(
 				"Kernel root at {} does not match",
@@ -73,7 +76,10 @@ impl<'a> RewindableKernelView<'a> {
 			.into());
 		}
 
-		let token_root = self.token_pmmr.root().map_err(|_| ErrorKind::InvalidRoot)?;
+		let token_root = self
+			.readonly_token_pmmr()
+			.root()
+			.map_err(|_| ErrorKind::InvalidRoot)?;
 		if token_root != self.header.token_kernel_root {
 			return Err(ErrorKind::InvalidTxHashSet(format!(
 				"Token Kernel root at {} does not match",
@@ -83,5 +89,15 @@ impl<'a> RewindableKernelView<'a> {
 		}
 
 		Ok(())
+	}
+
+	/// Readonly view of our internal data.
+	pub fn readonly_pmmr(&self) -> ReadonlyPMMR<TxKernel, PMMRBackend<TxKernel>> {
+		self.pmmr.as_readonly()
+	}
+
+	/// Readonly view of our internal data.
+	pub fn readonly_token_pmmr(&self) -> ReadonlyPMMR<TokenTxKernel, PMMRBackend<TokenTxKernel>> {
+		self.token_pmmr.as_readonly()
 	}
 }

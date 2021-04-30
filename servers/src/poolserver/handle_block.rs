@@ -20,7 +20,7 @@ use crate::core::pow::BITSTODIFF2NTABLE;
 use crate::core::{consensus, core, global};
 use crate::keychain::{ExtKeychain, Identifier, Keychain};
 use crate::util::ToHex;
-use crate::{ServerTxPool, ServerVerifierCache};
+use crate::ServerTxPool;
 use grin_core::core::hash::ZERO_HASH;
 use serde_json::{json, Value};
 
@@ -53,7 +53,6 @@ pub struct CbData {
 pub struct BlockHandler {
 	chain: Arc<chain::Chain>,
 	tx_pool: ServerTxPool,
-	verifier_cache: ServerVerifierCache,
 	stop_state: Arc<StopState>,
 	wallet_listener_url: Option<String>,
 	key_id: Arc<RwLock<Option<Identifier>>>,
@@ -67,7 +66,6 @@ impl BlockHandler {
 	pub fn new(
 		chain: Arc<chain::Chain>,
 		tx_pool: ServerTxPool,
-		verifier_cache: ServerVerifierCache,
 		stop_state: Arc<StopState>,
 		wallet_listener_url: Option<String>,
 		notify_urls: Vec<String>,
@@ -76,7 +74,6 @@ impl BlockHandler {
 		BlockHandler {
 			chain,
 			tx_pool,
-			verifier_cache,
 			//sync_state,
 			stop_state,
 			wallet_listener_url,
@@ -380,7 +377,7 @@ impl BlockHandler {
 		};
 
 		// build the coinbase and the block itself
-		let fees = txs.iter().map(|tx| tx.fee()).sum();
+		let fees = txs.iter().map(|tx| tx.fee(head.height)).sum();
 		let height = head.height + 1;
 		let block_fees = BlockFees {
 			fees,
@@ -399,7 +396,7 @@ impl BlockHandler {
 		let mut b = core::Block::from_reward(&head, &txs, output, kernel, difficulty.difficulty)?;
 
 		// making sure we're not spending time mining a useless block
-		b.validate(&head.total_kernel_offset, self.verifier_cache.clone())?;
+		b.validate(&head.total_kernel_offset)?;
 
 		b.header.bits = nbits;
 		b.header.pow.nonce = thread_rng().gen();

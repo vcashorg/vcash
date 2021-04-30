@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,8 @@ use std::sync::Arc;
 use crate::chain::{self, SyncState, SyncStatus};
 use crate::core::core::hash::Hashed;
 use crate::core::global;
-use crate::p2p::{self, Peer};
+use crate::core::pow::Difficulty;
+use crate::p2p::{self, Capabilities, Peer};
 
 /// Fast sync has 3 "states":
 /// * syncing headers
@@ -132,19 +133,6 @@ impl StateSync {
 						.set_sync_error(chain::ErrorKind::SyncError(format!("{:?}", e)).into()),
 				}
 
-				// to avoid the confusing log,
-				// update the final HeaderSync state mainly for 'current_height'
-				self.sync_state.update_if(
-					SyncStatus::HeaderSync {
-						current_height: header_head.height,
-						highest_height,
-					},
-					|s| match s {
-						SyncStatus::HeaderSync { .. } => true,
-						_ => false,
-					},
-				);
-
 				self.sync_state
 					.update(SyncStatus::TxHashsetDownload(Default::default()));
 			}
@@ -158,7 +146,24 @@ impl StateSync {
 		let mut txhashset_height = header_head.height.saturating_sub(threshold);
 		txhashset_height = txhashset_height.saturating_sub(txhashset_height % archive_interval);
 
-		if let Some(peer) = self.peers.most_work_peer() {
+		let peers_iter = || {
+			self.peers
+				.iter()
+				.with_capabilities(Capabilities::TXHASHSET_HIST)
+				.connected()
+		};
+
+		// Filter peers further based on max difficulty.
+		let max_diff = peers_iter().max_difficulty().unwrap_or(Difficulty::zero());
+		let peers_iter = || peers_iter().with_difficulty(|x| x >= max_diff);
+
+		// Choose a random "most work" peer, preferring outbound if at all possible.
+		let peer = peers_iter().outbound().choose_random().or_else(|| {
+			warn!("no suitable outbound peer for state sync, considering inbound");
+			peers_iter().inbound().choose_random()
+		});
+
+		if let Some(peer) = peer {
 			// ask for txhashset at state_sync_threshold
 			let mut txhashset_head = self
 				.chain

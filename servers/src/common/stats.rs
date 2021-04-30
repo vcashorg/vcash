@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ use chrono::prelude::*;
 
 use crate::chain::SyncStatus;
 use crate::p2p;
+use crate::p2p::Capabilities;
 use grin_core::pow::Difficulty;
 
 /// Server state info collection struct, to be passed around into internals
@@ -129,8 +130,12 @@ pub struct StratumStats {
 	pub network_difficulty: u64,
 	/// cuckoo size of last share submitted
 	pub edge_bits: u16,
+	/// Number of blocks found by all workers
+	pub blocks_found: u16,
 	/// current network Hashrate (for edge_bits)
 	pub network_hashrate: f64,
+	/// The minimum acceptable share difficulty to request from miners
+	pub minimum_share_difficulty: u64,
 	/// Individual worker status
 	pub worker_stats: Vec<WorkerStats>,
 }
@@ -192,6 +197,8 @@ pub struct PeerStats {
 	pub sent_bytes_per_sec: u64,
 	/// Number of bytes we've received from the peer.
 	pub received_bytes_per_sec: u64,
+	/// Peer advertised capability flags.
+	pub capabilities: Capabilities,
 }
 
 impl PartialEq for PeerStats {
@@ -237,8 +244,9 @@ impl PeerStats {
 			height: peer.info.height(),
 			direction: direction.to_string(),
 			last_seen: peer.info.last_seen(),
-			sent_bytes_per_sec: peer.last_min_sent_bytes().unwrap_or(0) / 60,
-			received_bytes_per_sec: peer.last_min_received_bytes().unwrap_or(0) / 60,
+			sent_bytes_per_sec: peer.tracker().sent_bytes.read().bytes_per_min() / 60,
+			received_bytes_per_sec: peer.tracker().received_bytes.read().bytes_per_min() / 60,
+			capabilities: peer.info.capabilities,
 		}
 	}
 }
@@ -267,8 +275,10 @@ impl Default for StratumStats {
 			num_workers: 0,
 			block_height: 0,
 			network_difficulty: 0,
-			edge_bits: 0,
+			edge_bits: 32,
+			blocks_found: 0,
 			network_hashrate: 0.0,
+			minimum_share_difficulty: 1,
 			worker_stats: Vec::new(),
 		}
 	}

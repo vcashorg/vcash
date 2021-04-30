@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -53,8 +53,8 @@ pub mod pubkey_serde {
 
 /// Serializes an Option<secp::Signature> to and from hex
 pub mod option_sig_serde {
-	use crate::serde::{Deserialize, Deserializer, Serializer};
 	use serde::de::Error;
+	use serde::{Deserialize, Deserializer, Serializer};
 	use util::{from_hex, secp, static_secp_instance, ToHex};
 
 	///
@@ -83,6 +83,9 @@ pub mod option_sig_serde {
 			Some(string) => from_hex(&string)
 				.map_err(Error::custom)
 				.and_then(|bytes: Vec<u8>| {
+					if bytes.len() < 64 {
+						return Err(Error::invalid_length(bytes.len(), &"64 bytes"));
+					}
 					let mut b = [0u8; 64];
 					b.copy_from_slice(&bytes[0..64]);
 					secp::Signature::from_compact(&static_secp, &b)
@@ -96,8 +99,8 @@ pub mod option_sig_serde {
 
 /// Serializes an Option<secp::SecretKey> to and from hex
 pub mod option_seckey_serde {
-	use crate::serde::{Deserialize, Deserializer, Serializer};
 	use serde::de::Error;
+	use serde::{Deserialize, Deserializer, Serializer};
 	use util::{from_hex, secp, static_secp_instance, ToHex};
 
 	///
@@ -125,6 +128,9 @@ pub mod option_seckey_serde {
 			Some(string) => from_hex(&string)
 				.map_err(Error::custom)
 				.and_then(|bytes: Vec<u8>| {
+					if bytes.len() < 32 {
+						return Err(Error::invalid_length(bytes.len(), &"32 bytes"));
+					}
 					let mut b = [0u8; 32];
 					b.copy_from_slice(&bytes[0..32]);
 					secp::key::SecretKey::from_slice(&static_secp, &b)
@@ -138,8 +144,8 @@ pub mod option_seckey_serde {
 
 /// Serializes a secp::Signature to and from hex
 pub mod sig_serde {
-	use crate::serde::{Deserialize, Deserializer, Serializer};
 	use serde::de::Error;
+	use serde::{Deserialize, Deserializer, Serializer};
 	use util::{from_hex, secp, static_secp_instance, ToHex};
 
 	///
@@ -162,6 +168,9 @@ pub mod sig_serde {
 		String::deserialize(deserializer)
 			.and_then(|string| from_hex(&string).map_err(Error::custom))
 			.and_then(|bytes: Vec<u8>| {
+				if bytes.len() < 64 {
+					return Err(Error::invalid_length(bytes.len(), &"64 bytes"));
+				}
 				let mut b = [0u8; 64];
 				b.copy_from_slice(&bytes[0..64]);
 				secp::Signature::from_compact(&static_secp, &b).map_err(Error::custom)
@@ -171,8 +180,8 @@ pub mod sig_serde {
 
 /// Serializes an Option<secp::Commitment> to and from hex
 pub mod option_commitment_serde {
-	use crate::serde::{Deserialize, Deserializer, Serializer};
 	use serde::de::Error;
+	use serde::{Deserialize, Deserializer, Serializer};
 	use util::secp::pedersen::Commitment;
 	use util::{from_hex, ToHex};
 

@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,8 +28,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
 // Re-export so only has to be included once
-pub use parking_lot::Mutex;
-pub use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 // Re-export so only has to be included once
 pub use secp256k1zkp as secp;

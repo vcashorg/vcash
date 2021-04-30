@@ -1,4 +1,4 @@
-# Copyright 2019 The Grin Developers
+# Copyright 2021 The Grin Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ variables:
 jobs:
 - job: linux
   pool:
-    vmImage: ubuntu-latest
+    vmImage: ubuntu-18.04
   strategy:
     matrix:
       servers:
@@ -84,7 +84,6 @@ jobs:
         PLATFORM: win-x64
   steps:
     - script: |
-        git apply .ci/win.patch
         choco install -y llvm
       displayName: Windows Install Dependencies
     - template: '.ci/test.yml'

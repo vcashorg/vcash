@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -81,7 +81,7 @@ fn peer_handshake() {
 	let peer = Peer::connect(
 		socket,
 		p2p::Capabilities::UNKNOWN,
-		Difficulty::min(),
+		Difficulty::min_dma(),
 		my_addr,
 		&p2p::handshake::Handshake::new(Hash::from_vec(&vec![]), p2p_config.clone()),
 		net_adapter,
@@ -92,10 +92,10 @@ fn peer_handshake() {
 
 	thread::sleep(time::Duration::from_secs(1));
 
-	peer.send_ping(Difficulty::min(), 0).unwrap();
+	peer.send_ping(Difficulty::min_dma(), 0).unwrap();
 	thread::sleep(time::Duration::from_secs(1));
 
 	let server_peer = server.peers.get_connected_peer(my_addr).unwrap();
-	assert_eq!(server_peer.info.total_difficulty(), Difficulty::min());
-	assert!(server.peers.peer_count() > 0);
+	assert_eq!(server_peer.info.total_difficulty(), Difficulty::min_dma());
+	assert!(server.peers.iter().connected().count() > 0);
 }

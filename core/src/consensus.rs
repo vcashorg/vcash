@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -107,10 +107,13 @@ pub fn total_reward(height: u64, genesis_had_reward: bool) -> u64 {
 	total
 }
 
+/// an hour in seconds
+pub const HOUR_SEC: u64 = 60 * 60;
+
 /// Nominal height for standard time intervals, hour is 6 blocks
-pub const HOUR_HEIGHT_ORIGIN: u64 = 3600 / BLOCK_TIME_SEC_ORIGIN;
+pub const HOUR_HEIGHT_ORIGIN: u64 = HOUR_SEC / BLOCK_TIME_SEC_ORIGIN;
 /// Adjusted nominal height for standard time intervals, hour is 30 blocks
-pub const HOUR_HEIGHT_ADJUSTED: u64 = 3600 / BLOCK_TIME_SEC_ADJUSTED;
+pub const HOUR_HEIGHT_ADJUSTED: u64 = HOUR_SEC / BLOCK_TIME_SEC_ADJUSTED;
 /// A day is 144 blocks
 pub const DAY_HEIGHT_ORIGIN: u64 = 24 * HOUR_HEIGHT_ORIGIN;
 /// A day is 720 blocks
@@ -164,13 +167,13 @@ pub const CUT_THROUGH_HORIZON: u32 = WEEK_HEIGHT_ADJUSTED as u32;
 pub const STATE_SYNC_THRESHOLD: u32 = 2 * DAY_HEIGHT_ADJUSTED as u32;
 
 /// Weight of an input when counted against the max block weight capacity
-pub const BLOCK_INPUT_WEIGHT: u64 = 1;
+pub const INPUT_WEIGHT: u64 = 1;
 
 /// Weight of an output when counted against the max block weight capacity
-pub const BLOCK_OUTPUT_WEIGHT: u64 = 21;
+pub const OUTPUT_WEIGHT: u64 = 21;
 
 /// Weight of a kernel when counted against the max block weight capacity
-pub const BLOCK_KERNEL_WEIGHT: u64 = 3;
+pub const KERNEL_WEIGHT: u64 = 3;
 
 /// Total maximum block weight. At current sizes, this means a maximum
 /// theoretical size of:
@@ -207,6 +210,15 @@ pub const TESTNET_THIRD_HARD_FORK_HEIGHT: u64 = 864;
 /// AutomatedTesting and UserTesting HF3 height.
 pub const TESTING_THIRD_HARD_FORK: u64 = 9;
 
+/// Support Fee Field
+pub const FOURTH_HARD_FORK_HEIGHT: u64 = 300_000;
+
+/// Testnet support Fee Field
+pub const TESTNET_FOURTH_HARD_FORK_HEIGHT: u64 = 1_000;
+
+/// AutomatedTesting support Fee Field
+pub const TESTING_FOURTH_HARD_FORK: u64 = 12;
+
 /// Check whether the block version is valid at a given height, implements
 /// 6 months interval scheduled hard forks for the first 2 years.
 pub fn header_version(height: u64) -> HeaderVersion {
@@ -229,7 +241,7 @@ pub fn header_version(height: u64) -> HeaderVersion {
 /// Check whether the block version is valid at a given height, implements
 /// 6 months interval scheduled hard forks for the first 2 years.
 pub fn valid_header_version(height: u64, version: HeaderVersion) -> bool {
-	return version == header_version(height);
+	version == header_version(height)
 }
 
 /// Number of blocks used to calculate difficulty adjustments
@@ -244,8 +256,8 @@ pub const BLOCK_TIME_WINDOW: u64 = 2 * 7 * 24 * 3600;
 /// Limit value to within this factor of goal
 pub const CLAMP_FACTOR: u64 = 2;
 
-/// Dampening factor to use for difficulty adjustment
-pub const DIFFICULTY_DAMP_FACTOR: u64 = 3;
+/// Dampening factor to use for DMA difficulty adjustment
+pub const DMA_DAMP_FACTOR: u64 = 3;
 
 /// Dampening factor to use for AR scale calculation.
 pub const AR_SCALE_DAMP_FACTOR: u64 = 13;
@@ -354,8 +366,8 @@ pub fn clamp(actual: u64, goal: u64, clamp_factor: u64) -> u64 {
 	max(goal / clamp_factor, min(actual, goal * clamp_factor))
 }
 
-/// Computes the proof-of-work difficulty that the next block should comply
-/// with. Takes an iterator over past block headers information, from latest
+/// Computes the proof-of-work difficulty that the next block should comply with.
+/// Takes an iterator over past block headers information, from latest
 /// (highest height) to oldest (lowest height).
 ///
 /// The difficulty calculation is based on both Digishield and GravityWave

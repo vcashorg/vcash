@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,17 +14,12 @@
 
 use self::chain::types::NoopAdapter;
 use self::chain::ErrorKind;
-use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::KernelFeatures;
 use self::core::global::{self, ChainTypes};
 use self::core::libtx::{self, build, ProofBuilder};
-use self::core::pow::Difficulty;
 use self::core::{consensus, pow};
 use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
-use self::util::RwLock;
-use crate::core::core::hash::Hashed;
 use chrono::Duration;
-use env_logger;
 use grin_chain as chain;
 use grin_core as core;
 use grin_keychain as keychain;
@@ -32,6 +27,7 @@ use grin_util as util;
 use std::fs;
 use std::sync::Arc;
 
+use crate::core::core::hash::Hashed;
 use crate::core::core::Block;
 
 fn clean_output_dir(dir_name: &str) {
@@ -40,14 +36,12 @@ fn clean_output_dir(dir_name: &str) {
 
 #[test]
 fn test_coinbase_maturity() {
-	let _ = env_logger::init();
+	util::init_test_logger();
 	let chain_dir = ".grin_coinbase";
 	clean_output_dir(chain_dir);
 	global::set_local_chain_type(ChainTypes::AutomatedTesting);
 
 	let genesis_block = pow::mine_genesis_block().unwrap();
-
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 
 	{
 		let chain = chain::Chain::init(
@@ -55,7 +49,6 @@ fn test_coinbase_maturity() {
 			Arc::new(NoopAdapter {}),
 			genesis_block,
 			pow::verify_size,
-			verifier_cache,
 			false,
 		)
 		.unwrap();
@@ -107,7 +100,7 @@ fn test_coinbase_maturity() {
 		// here we build a tx that attempts to spend the earlier coinbase output
 		// this is not a valid tx as the coinbase output cannot be spent yet
 		let coinbase_txn = build::transaction(
-			KernelFeatures::Plain { fee: 2 },
+			KernelFeatures::Plain { fee: 2.into() },
 			None,
 			&[
 				build::coinbase_input(amount, key_id1.clone()),
@@ -119,7 +112,7 @@ fn test_coinbase_maturity() {
 		.unwrap();
 
 		let txs = &[coinbase_txn.clone()];
-		let fees = txs.iter().map(|tx| tx.fee()).sum();
+		let fees = txs.iter().map(|tx| tx.fee(prev.height + 1)).sum();
 		let reward =
 			libtx::reward::output(&keychain, &builder, &key_id3, prev.height + 1, fees, false)
 				.unwrap();
@@ -196,7 +189,7 @@ fn test_coinbase_maturity() {
 			// here we build a tx that attempts to spend the earlier coinbase output
 			// this is not a valid tx as the coinbase output cannot be spent yet
 			let coinbase_txn = build::transaction(
-				KernelFeatures::Plain { fee: 2 },
+				KernelFeatures::Plain { fee: 2.into() },
 				None,
 				&[
 					build::coinbase_input(amount, key_id1.clone()),
@@ -208,7 +201,7 @@ fn test_coinbase_maturity() {
 			.unwrap();
 
 			let txs = &[coinbase_txn.clone()];
-			let fees = txs.iter().map(|tx| tx.fee()).sum();
+			let fees = txs.iter().map(|tx| tx.fee(prev.height + 1)).sum();
 			let reward =
 				libtx::reward::output(&keychain, &builder, &key_id3, prev.height + 1, fees, false)
 					.unwrap();
@@ -279,7 +272,7 @@ fn test_coinbase_maturity() {
 				.unwrap();
 
 			let txs = &[coinbase_txn];
-			let fees = txs.iter().map(|tx| tx.fee()).sum();
+			let fees = txs.iter().map(|tx| tx.fee(prev.height + 1)).sum();
 			let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 			let reward =
 				libtx::reward::output(&keychain, &builder, &key_id4, prev.height + 1, fees, false)

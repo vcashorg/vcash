@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,17 +17,16 @@
 pub mod common;
 use crate::common::tx1i10_v2_compatible;
 use crate::core::core::transaction::{self, Error};
-use crate::core::core::verifier_cache::LruVerifierCache;
 use crate::core::core::{aggregate, TokenKernelFeatures, TokenKey};
-use crate::core::core::{KernelFeatures, Output, OutputFeatures, Transaction, Weighting};
+use crate::core::core::{
+	FeeFields, KernelFeatures, Output, OutputFeatures, Transaction, TxKernel, Weighting,
+};
 use crate::core::global;
-use crate::core::libtx::build;
 use crate::core::libtx::proof::{self, ProofBuilder};
+use crate::core::libtx::{build, tx_fee};
 use crate::core::{consensus, ser};
 use grin_core as core;
 use keychain::{ExtKeychain, Keychain};
-use std::sync::Arc;
-use util::RwLock;
 
 // We use json serialization between wallet->node when pushing transactions to the network.
 // This test ensures we exercise this serialization/deserialization code.
@@ -100,7 +99,9 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 
 	let token_key = TokenKey::new_token_key();
 	let mut tx = build::transaction(
-		KernelFeatures::Plain { fee: 0 },
+		KernelFeatures::Plain {
+			fee: FeeFields::zero(),
+		},
 		Some(TokenKernelFeatures::PlainToken),
 		&[
 			build::input(10, key_id1.clone()),
@@ -119,11 +120,10 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 	)
 	.expect("valid tx");
 
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
-
 	// Transaction should fail validation due to cut-through.
+	let height = 42; // arbitrary
 	assert_eq!(
-		tx.validate(Weighting::AsTransaction, verifier_cache.clone()),
+		tx.validate(Weighting::AsTransaction, height),
 		Err(Error::CutThrough),
 	);
 
@@ -160,7 +160,7 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 		.replace_token_outputs(token_outputs);
 
 	// Transaction validates successfully after applying cut-through.
-	tx.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+	tx.validate(Weighting::AsTransaction, height)?;
 
 	// Transaction validates via lightweight "read" validation as well.
 	tx.validate_read()?;
@@ -184,7 +184,9 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 	let builder = ProofBuilder::new(&keychain);
 
 	let mut tx = build::transaction(
-		KernelFeatures::Plain { fee: 0 },
+		KernelFeatures::Plain {
+			fee: FeeFields::zero(),
+		},
 		None,
 		&[
 			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
@@ -198,11 +200,10 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 	)
 	.expect("valid tx");
 
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
-
 	// Transaction should fail validation due to cut-through.
+	let height = 42; // arbitrary
 	assert_eq!(
-		tx.validate(Weighting::AsTransaction, verifier_cache.clone()),
+		tx.validate(Weighting::AsTransaction, height),
 		Err(Error::CutThrough),
 	);
 
@@ -227,10 +228,65 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 		.replace_outputs(outputs);
 
 	// Transaction validates successfully after applying cut-through.
-	tx.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+	tx.validate(Weighting::AsTransaction, height)?;
 
 	// Transaction validates via lightweight "read" validation as well.
 	tx.validate_read()?;
+
+	Ok(())
+}
+
+// Test coverage for FeeFields
+#[test]
+fn test_fee_fields() -> Result<(), Error> {
+	global::set_local_chain_type(global::ChainTypes::UserTesting);
+	global::set_local_accept_fee_base(500_000);
+
+	let keychain = ExtKeychain::from_random_seed(false)?;
+
+	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+
+	let builder = ProofBuilder::new(&keychain);
+
+	let mut tx = build::transaction(
+		KernelFeatures::Plain {
+			fee: FeeFields::new(1, 42).unwrap(),
+		},
+		&[
+			build::coinbase_input(consensus::REWARD, key_id1.clone()),
+			build::output(60_000_000_000 - 84 - 42 - 21, key_id1.clone()),
+		],
+		&keychain,
+		&builder,
+	)
+	.expect("valid tx");
+
+	let hf4_height = 4 * consensus::TESTING_HARD_FORK_INTERVAL;
+	assert_eq!(
+		tx.accept_fee(hf4_height),
+		(1 * 1 + 1 * 21 + 1 * 3) * 500_000
+	);
+	assert_eq!(tx.fee(hf4_height), 42);
+	assert_eq!(tx.fee(hf4_height), 42);
+	assert_eq!(tx.shifted_fee(hf4_height), 21);
+	assert_eq!(
+		tx.accept_fee(hf4_height - 1),
+		(1 * 4 + 1 * 1 - 1 * 1) * 1_000_000
+	);
+	assert_eq!(tx.fee(hf4_height - 1), 42 + (1u64 << 40));
+	assert_eq!(tx.shifted_fee(hf4_height - 1), 42 + (1u64 << 40));
+
+	tx.body.kernels.append(&mut vec![
+		TxKernel::with_features(KernelFeatures::Plain {
+			fee: FeeFields::new(2, 84).unwrap(),
+		}),
+		TxKernel::with_features(KernelFeatures::Plain { fee: 21.into() }),
+	]);
+
+	assert_eq!(tx.fee(hf4_height), 147);
+	assert_eq!(tx.shifted_fee(hf4_height), 36);
+	assert_eq!(tx.aggregate_fee_fields(hf4_height), FeeFields::new(2, 147));
+	assert_eq!(tx_fee(1, 1, 3), 15_500_000);
 
 	Ok(())
 }

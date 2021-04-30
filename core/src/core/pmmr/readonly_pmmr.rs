@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -145,6 +145,14 @@ where
 			None
 		} else {
 			self.backend.get_from_file(pos)
+		}
+	}
+
+	fn get_peak_from_file(&self, pos: u64) -> Option<Hash> {
+		if pos > self.last_pos {
+			None
+		} else {
+			self.backend.get_peak_from_file(pos)
 		}
 	}
 

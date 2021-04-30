@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ use std::cmp::Ordering;
 
 use crate::servers::{PeerStats, ServerStats};
 
-use crate::tui::humansize::{file_size_opts::CONVENTIONAL, FileSize};
 use chrono::prelude::*;
+use humansize::{file_size_opts::CONVENTIONAL, FileSize};
 
 use cursive::direction::Orientation;
 use cursive::event::Key;
@@ -29,8 +29,8 @@ use cursive::views::{Dialog, LinearLayout, OnEventView, ResizedView, TextView};
 use cursive::Cursive;
 
 use crate::tui::constants::{MAIN_MENU, TABLE_PEER_STATUS, VIEW_PEER_SYNC};
-use crate::tui::table::{TableView, TableViewItem};
 use crate::tui::types::TUIStatusListener;
+use cursive_table_view::{TableView, TableViewItem};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum PeerColumn {
@@ -41,6 +41,7 @@ pub enum PeerColumn {
 	Direction,
 	Version,
 	UserAgent,
+	Capabilities,
 }
 
 impl PeerColumn {
@@ -53,6 +54,7 @@ impl PeerColumn {
 			PeerColumn::TotalDifficulty => "Total Difficulty",
 			PeerColumn::Direction => "Direction",
 			PeerColumn::UserAgent => "User Agent",
+			PeerColumn::Capabilities => "Capabilities",
 		}
 	}
 }
@@ -82,6 +84,7 @@ impl TableViewItem<PeerColumn> for PeerStats {
 			PeerColumn::Direction => self.direction.clone(),
 			PeerColumn::Version => format!("{}", self.version),
 			PeerColumn::UserAgent => self.user_agent.clone(),
+			PeerColumn::Capabilities => format!("{}", self.capabilities.bits()),
 		}
 	}
 
@@ -100,7 +103,7 @@ impl TableViewItem<PeerColumn> for PeerStats {
 			let other_sum = other_recv_bytes + other_sent_bytes;
 
 			curr_sum.cmp(&other_sum)
-		};
+		}
 
 		let sort_by_addr = || self.addr.cmp(&other.addr);
 
@@ -115,6 +118,10 @@ impl TableViewItem<PeerColumn> for PeerStats {
 			PeerColumn::Direction => self.direction.cmp(&other.direction).then(sort_by_addr()),
 			PeerColumn::Version => self.version.cmp(&other.version).then(sort_by_addr()),
 			PeerColumn::UserAgent => self.user_agent.cmp(&other.user_agent).then(sort_by_addr()),
+			PeerColumn::Capabilities => self
+				.capabilities
+				.cmp(&other.capabilities)
+				.then(sort_by_addr()),
 		}
 	}
 }
@@ -133,7 +140,8 @@ impl TUIPeerView {
 			.column(PeerColumn::TotalDifficulty, "Total Difficulty", |c| {
 				c.width_percent(24)
 			})
-			.column(PeerColumn::Version, "Proto", |c| c.width_percent(6))
+			.column(PeerColumn::Version, "Proto", |c| c.width_percent(4))
+			.column(PeerColumn::Capabilities, "Capab", |c| c.width_percent(4))
 			.column(PeerColumn::UserAgent, "User Agent", |c| c.width_percent(18));
 		let peer_status_view = ResizedView::with_full_screen(
 			LinearLayout::new(Orientation::Vertical)
@@ -182,7 +190,7 @@ impl TUIStatusListener for TUIPeerView {
 		let _ = c.call_on_name(
 			TABLE_PEER_STATUS,
 			|t: &mut TableView<PeerStats, PeerColumn>| {
-				t.set_items(stats.peer_stats.clone());
+				t.set_items_stable(stats.peer_stats.clone());
 			},
 		);
 		let _ = c.call_on_name("peers_total", |t: &mut TextView| {

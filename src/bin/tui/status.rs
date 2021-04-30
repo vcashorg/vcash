@@ -1,4 +1,4 @@
-// Copyright 2020 The Grin Developers
+// Copyright 2021 The Grin Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,13 +39,14 @@ impl TUIStatusView {
 			SyncStatus::NoSync => Cow::Borrowed("Running"),
 			SyncStatus::AwaitingPeers(_) => Cow::Borrowed("Waiting for peers"),
 			SyncStatus::HeaderSync {
-				current_height,
+				sync_head,
 				highest_height,
+				..
 			} => {
 				let percent = if highest_height == 0 {
 					0
 				} else {
-					current_height * 100 / highest_height
+					sync_head.height * 100 / highest_height
 				};
 				Cow::Owned(format!("Sync step 1/9: Downloading headers: {}%", percent))
 			}
