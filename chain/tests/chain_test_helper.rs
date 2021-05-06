@@ -26,6 +26,7 @@ use chrono::Duration;
 use grin_chain as chain;
 use grin_core as core;
 use grin_keychain as keychain;
+use grin_util as util;
 use std::fs;
 use std::sync::Arc;
 

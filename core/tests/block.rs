@@ -30,7 +30,7 @@ use crate::core::{global, pow, ser};
 use chrono::Duration;
 use grin_core as core;
 use keychain::{BlindingFactor, ExtKeychain, Keychain};
-use util::{secp, ToHex};
+use util::secp;
 
 use crate::common::{tokentx1i2o, txissuetoken};
 use crate::core::core::transaction::TokenKey;
@@ -310,7 +310,7 @@ fn block_with_token_cut_through() {
 
 	let token_key = TokenKey::new_token_key();
 	let btx1 = build::transaction(
-		KernelFeatures::Plain { fee: 2 },
+		KernelFeatures::Plain { fee: 2.into() },
 		Some(TokenKernelFeatures::PlainToken),
 		&[
 			token_input(10, token_key, false, key_id1),
@@ -325,7 +325,7 @@ fn block_with_token_cut_through() {
 	.unwrap();
 
 	let btx2 = build::transaction(
-		KernelFeatures::Plain { fee: 5 },
+		KernelFeatures::Plain { fee: 5.into() },
 		Some(TokenKernelFeatures::PlainToken),
 		&[
 			token_input(6, token_key, false, key_id2),
@@ -342,8 +342,7 @@ fn block_with_token_cut_through() {
 
 	// block should have been automatically compacted (including reward
 	// output) and should still be valid
-	b.validate(&BlindingFactor::zero(), verifier_cache())
-		.unwrap();
+	b.validate(&BlindingFactor::zero()).unwrap();
 	assert_eq!(b.inputs().len(), 1);
 	assert_eq!(b.outputs().len(), 1);
 	assert_eq!(b.kernels().len(), 3);
@@ -466,7 +465,7 @@ fn remove_issuetoken_output_flag() {
 	b.body = b.body.replace_token_outputs(&[token_output]);
 
 	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache()),
+		b.validate(&BlindingFactor::zero()),
 		Err(Error::Transaction(
 			transaction::Error::IssueTokenSumMismatch
 		))
@@ -489,7 +488,7 @@ fn remove_issuetoken_kernel_flag() {
 	b.body = b.body.replace_token_kernel(token_kernel);
 
 	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache()),
+		b.validate(&BlindingFactor::zero()),
 		Err(Error::Transaction(
 			transaction::Error::IssueTokenSumMismatch
 		))
@@ -1039,7 +1038,7 @@ fn reissue_token() {
 
 	let token_key = TokenKey::new_token_key();
 	let tx1 = build::transaction(
-		KernelFeatures::Plain { fee: 4 },
+		KernelFeatures::Plain { fee: 4.into() },
 		Some(TokenKernelFeatures::IssueToken),
 		&[
 			input(10, key_id1),
@@ -1052,7 +1051,7 @@ fn reissue_token() {
 	.unwrap();
 
 	let tx2 = build::transaction(
-		KernelFeatures::Plain { fee: 4 },
+		KernelFeatures::Plain { fee: 4.into() },
 		Some(TokenKernelFeatures::IssueToken),
 		&[
 			input(20, key_id4),
@@ -1068,7 +1067,7 @@ fn reissue_token() {
 	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
 	let b = new_block(&[tx1, tx2], &keychain, &builder, &prev, &key_id);
 
-	match b.validate(&BlindingFactor::zero(), verifier_cache()) {
+	match b.validate(&BlindingFactor::zero()) {
 		Err(Error::Transaction(transaction::Error::IssueTokenKeyRepeated)) => {}
 		_ => panic!("Bad range proof should be invalid"),
 	}

@@ -21,7 +21,6 @@ use self::core::global;
 use self::core::libtx::aggsig;
 use self::keychain::{BlindingFactor, ExtKeychain, Keychain};
 use self::pool::types::PoolError;
-use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
 use grin_keychain as keychain;
@@ -66,7 +65,7 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 
 	let header = chain.head_header().unwrap();
 
-	assert_eq!(header.height, consensus::TESTING_THIRD_HARD_FORK);
+	assert_eq!(header.height, consensus::TESTING_FOURTH_HARD_FORK);
 	assert_eq!(header.version, HeaderVersion(3));
 
 	let (tx1, tx2, tx3) = {

@@ -17,6 +17,7 @@ use self::chain::ErrorKind;
 use self::core::core::KernelFeatures;
 use self::core::global::{self, ChainTypes};
 use self::core::libtx::{self, build, ProofBuilder};
+use self::core::pow::Difficulty;
 use self::core::{consensus, pow};
 use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
 use chrono::Duration;

@@ -122,7 +122,7 @@ pub fn txissuetoken() -> Transaction {
 	let key_id3 = keychain::ExtKeychain::derive_key_id(1, 3, 0, 0, 0);
 
 	let tx = build::transaction(
-		KernelFeatures::Plain { fee: 4 },
+		KernelFeatures::Plain { fee: 4.into() },
 		Some(TokenKernelFeatures::IssueToken),
 		&[
 			input(10, key_id1),
@@ -150,7 +150,7 @@ pub fn tokentx1i2o() -> Transaction {
 
 	let token_key = TokenKey::new_token_key();
 	let tx = build::transaction(
-		KernelFeatures::Plain { fee: 4 },
+		KernelFeatures::Plain { fee: 4.into() },
 		Some(TokenKernelFeatures::PlainToken),
 		&[
 			input(10, key_id1),

@@ -15,12 +15,10 @@
 pub mod common;
 
 use self::core::core::hash::Hashed;
-use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{transaction, TokenKey, Weighting};
 use self::core::global;
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::TxSource;
-use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
 use grin_keychain as keychain;
@@ -32,6 +30,7 @@ use std::sync::Arc;
 fn test_transaction_pool_token_tx() {
 	util::init_test_logger();
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
+	global::set_local_accept_fee_base(1);
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 
 	let db_root = "target/.trasaction_pool_token_tx";
@@ -39,23 +38,19 @@ fn test_transaction_pool_token_tx() {
 
 	let genesis = genesis_block(&keychain);
 	let chain = Arc::new(init_chain(db_root, genesis));
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
 
 	// Initialize a new pool with our chain adapter.
-	let mut pool = init_transaction_pool(
-		Arc::new(ChainAdapter {
-			chain: chain.clone(),
-		}),
-		verifier_cache.clone(),
-	);
+	let mut pool = init_transaction_pool(Arc::new(ChainAdapter {
+		chain: chain.clone(),
+	}));
 
-	add_some_blocks(&chain, 3, &keychain);
+	add_some_blocks(&chain, 4 * 3, &keychain);
 
 	let header_1 = chain.get_header_by_height(1).unwrap();
 
 	// Now create tx to spend an early coinbase (now matured).
 	// Provides us with some useful outputs to test with.
-	let initial_tx = test_transaction_spending_coinbase(&keychain, &header_1, vec![500]);
+	let initial_tx = test_transaction_spending_coinbase(&keychain, &header_1, vec![500000]);
 
 	// Mine that initial tx so we can spend it with multiple txs.
 	add_block(&chain, &[initial_tx], &keychain);
@@ -65,9 +60,9 @@ fn test_transaction_pool_token_tx() {
 	// start test issue token test
 	let token_type = TokenKey::new_token_key();
 	let issue_token_tx =
-		test_issue_token_transaction(&keychain, 500, 499, token_type.clone(), 3500);
+		test_issue_token_transaction(&keychain, 500000, 499000, token_type.clone(), 3500);
 	let invalid_issue_token_tx =
-		test_issue_token_transaction(&keychain, 499, 498, token_type.clone(), 10001);
+		test_issue_token_transaction(&keychain, 499000, 498000, token_type.clone(), 10001);
 
 	pool.add_to_pool(test_source(), issue_token_tx.clone(), false, &header)
 		.unwrap();
@@ -102,8 +97,8 @@ fn test_transaction_pool_token_tx() {
 	// start test send token tx test
 	let initial_token_tx = test_token_transaction(
 		&keychain,
-		499,
-		498,
+		499000,
+		498000,
 		token_type.clone(),
 		vec![(true, 3500)],
 		vec![500, 600, 700, 800, 900],
@@ -118,16 +113,16 @@ fn test_transaction_pool_token_tx() {
 
 	let token_tx1 = test_token_transaction(
 		&keychain,
-		498,
-		497,
+		498000,
+		497000,
 		token_type.clone(),
 		vec![(false, 500), (false, 600)],
 		vec![499, 601],
 	);
 	let token_tx2 = test_token_transaction(
 		&keychain,
-		497,
-		496,
+		497000,
+		496000,
 		token_type.clone(),
 		vec![(false, 499), (false, 700)],
 		vec![498, 701],
@@ -158,8 +153,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let tx = test_token_transaction(
 			&keychain,
-			496,
-			495,
+			496000,
+			495000,
 			token_type.clone(),
 			vec![(false, 500), (false, 600)],
 			vec![1010],
@@ -172,8 +167,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let tx1a = test_token_transaction(
 			&keychain,
-			496,
-			495,
+			496000,
+			495000,
 			token_type.clone(),
 			vec![(false, 500), (false, 600)],
 			vec![499, 601],
@@ -187,8 +182,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let bad_tx = test_token_transaction(
 			&keychain,
-			496,
-			495,
+			496000,
+			495000,
 			token_type.clone(),
 			vec![(false, 10000)],
 			vec![4000, 6000],
@@ -205,8 +200,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let tx = test_token_transaction(
 			&keychain,
-			496,
-			495,
+			496000,
+			495000,
 			token_type.clone(),
 			vec![(false, 900)],
 			vec![498, 402],
@@ -218,8 +213,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let tx3 = test_token_transaction(
 			&keychain,
-			496,
-			495,
+			496000,
+			495000,
 			token_type.clone(),
 			vec![(false, 500)],
 			vec![497, 3],
@@ -234,8 +229,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let tx = test_token_transaction(
 			&keychain,
-			496,
-			495,
+			496000,
+			495000,
 			token_type.clone(),
 			vec![(false, 601)],
 			vec![301, 300],
@@ -243,8 +238,8 @@ fn test_transaction_pool_token_tx() {
 		pool.add_to_pool(test_source(), tx, true, &header).unwrap();
 		let tx2 = test_token_transaction(
 			&keychain,
-			495,
-			494,
+			495000,
+			494000,
 			token_type.clone(),
 			vec![(false, 301)],
 			vec![151, 150],
@@ -275,8 +270,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let tx = test_token_transaction(
 			&keychain,
-			494,
-			493,
+			494000,
+			493000,
 			token_type.clone(),
 			vec![(false, 151)],
 			vec![76, 75],
@@ -300,8 +295,8 @@ fn test_transaction_pool_token_tx() {
 	{
 		let token_tx4 = test_token_transaction(
 			&keychain,
-			493,
-			492,
+			493000,
+			492000,
 			token_type.clone(),
 			vec![(false, 800)],
 			vec![431, 369],
@@ -311,9 +306,8 @@ fn test_transaction_pool_token_tx() {
 		let agg_tx =
 			transaction::aggregate(&[token_tx1.clone(), token_tx2.clone(), token_tx4]).unwrap();
 
-		agg_tx
-			.validate(Weighting::AsTransaction, verifier_cache.clone())
-			.unwrap();
+		let height = 12 + 1;
+		agg_tx.validate(Weighting::AsTransaction, height).unwrap();
 
 		pool.add_to_pool(test_source(), agg_tx, false, &header)
 			.unwrap();

@@ -19,7 +19,6 @@ use self::core::core::hash::Hashed;
 use self::core::core::TokenKey;
 use self::core::global;
 use self::keychain::{ExtKeychain, Keychain};
-use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
 use grin_keychain as keychain;
@@ -77,23 +76,23 @@ fn test_block_building_max_weight() {
 		test_transaction(&keychain, vec![2_000_000], vec![1_970_000]),
 		test_transaction(&keychain, vec![3_000_000], vec![2_900_000, 30_000]),
 		test_transaction(&keychain, vec![2_900_000], vec![2_800_000, 40_000]),
-		test_issue_token_transaction(&keychain, 80, 71, token_type.clone(), 100),
+		test_issue_token_transaction(&keychain, 800_000, 710_000, token_type.clone(), 100),
 	];
 
 	// Fees and weights of our original txs in insert order.
 	assert_eq!(
 		txs.iter().map(|x| x.fee(header.height)).collect::<Vec<_>>(),
-		[2_500_000, 90_000, 80_000, 30_000, 70_000, 60_000]
+		[2_500_000, 90_000, 80_000, 30_000, 70_000, 60_000, 90_000]
 	);
 	assert_eq!(
 		txs.iter().map(|x| x.weight()).collect::<Vec<_>>(),
-		[88, 46, 46, 25, 46, 46]
+		[88, 46, 46, 25, 46, 46, 49]
 	);
 	assert_eq!(
 		txs.iter()
 			.map(|x| x.fee_rate(header.height))
 			.collect::<Vec<_>>(),
-		[28409, 1956, 1739, 1200, 1521, 1304]
+		[28409, 1956, 1739, 1200, 1521, 1304, 1836]
 	);
 
 	// Populate our txpool with the txs.
@@ -111,17 +110,17 @@ fn test_block_building_max_weight() {
 	// Fees and weights of the "mineable" txs.
 	assert_eq!(
 		txs.iter().map(|x| x.fee(header.height)).collect::<Vec<_>>(),
-		[2_500_000, 90_000, 80_000, 70_000]
+		[2_500_000, 90_000, 80_000, 90_000, 30_000]
 	);
 	assert_eq!(
 		txs.iter().map(|x| x.weight()).collect::<Vec<_>>(),
-		[88, 46, 46, 46]
+		[88, 46, 46, 49, 25]
 	);
 	assert_eq!(
 		txs.iter()
 			.map(|x| x.fee_rate(header.height))
 			.collect::<Vec<_>>(),
-		[28409, 1956, 1739, 1521]
+		[28409, 1956, 1739, 1836, 1200]
 	);
 
 	add_block(&chain, &txs, &keychain);

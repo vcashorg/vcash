@@ -148,7 +148,7 @@ fn test_verify_cut_through_plain() -> Result<(), Error> {
 		.replace_outputs(outputs);
 
 	assert_eq!(
-		tx.validate(Weighting::AsTransaction, verifier_cache.clone()),
+		tx.validate(Weighting::AsTransaction, height),
 		Err(Error::TokenCutThrough),
 	);
 
@@ -252,8 +252,9 @@ fn test_fee_fields() -> Result<(), Error> {
 		KernelFeatures::Plain {
 			fee: FeeFields::new(1, 42).unwrap(),
 		},
+		None,
 		&[
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
+			build::coinbase_input(consensus::REWARD_ORIGIN, key_id1.clone()),
 			build::output(60_000_000_000 - 84 - 42 - 21, key_id1.clone()),
 		],
 		&keychain,
@@ -286,7 +287,7 @@ fn test_fee_fields() -> Result<(), Error> {
 	assert_eq!(tx.fee(hf4_height), 147);
 	assert_eq!(tx.shifted_fee(hf4_height), 36);
 	assert_eq!(tx.aggregate_fee_fields(hf4_height), FeeFields::new(2, 147));
-	assert_eq!(tx_fee(1, 1, 3), 15_500_000);
+	assert_eq!(tx_fee(1, 1, 3, 0, 0, 0), 15_500_000);
 
 	Ok(())
 }
@@ -307,11 +308,9 @@ fn test_verify_token_cut_through() -> Result<(), Error> {
 
 	let builder = ProofBuilder::new(&keychain);
 
-	let verifier_cache = Arc::new(RwLock::new(LruVerifierCache::new()));
-
 	let token_key0 = TokenKey::new_token_key();
 	let tx0 = build::transaction(
-		KernelFeatures::Plain { fee: 4 },
+		KernelFeatures::Plain { fee: 4.into() },
 		Some(TokenKernelFeatures::PlainToken),
 		&[
 			build::input(10, key_id1.clone()),
@@ -325,15 +324,17 @@ fn test_verify_token_cut_through() -> Result<(), Error> {
 	)
 	.expect("valid tx");
 
+	let height = 42; // arbitrary
+
 	// Transaction validates successfully after applying cut-through.
-	tx0.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+	tx0.validate(Weighting::AsTransaction, height)?;
 
 	// Transaction validates via lightweight "read" validation as well.
 	tx0.validate_read()?;
 
 	let token_key1 = TokenKey::new_token_key();
 	let tx1 = build::transaction(
-		KernelFeatures::Plain { fee: 4 },
+		KernelFeatures::Plain { fee: 4.into() },
 		Some(TokenKernelFeatures::PlainToken),
 		&[
 			build::input(20, key_id1.clone()),
@@ -348,7 +349,7 @@ fn test_verify_token_cut_through() -> Result<(), Error> {
 	.expect("valid tx");
 
 	// Transaction validates successfully after applying cut-through.
-	tx1.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+	tx1.validate(Weighting::AsTransaction, height)?;
 
 	// Transaction validates via lightweight "read" validation as well.
 	tx1.validate_read()?;
@@ -361,7 +362,7 @@ fn test_verify_token_cut_through() -> Result<(), Error> {
 	assert_eq!(tx01.token_outputs().len(), 4);
 
 	// Transaction validates successfully after applying cut-through.
-	tx01.validate(Weighting::AsTransaction, verifier_cache.clone())?;
+	tx01.validate(Weighting::AsTransaction, height)?;
 
 	// Transaction validates via lightweight "read" validation as well.
 	tx01.validate_read()?;

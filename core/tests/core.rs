@@ -118,7 +118,8 @@ fn token_issue_tx_ser_deser() {
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
 	let dtx: Transaction = ser::deserialize_default(&mut &vec[..]).unwrap();
-	assert_eq!(dtx.fee(), 4);
+	let height = 42; // arbitrary
+	assert_eq!(dtx.fee(height), 4);
 	assert_eq!(dtx.inputs().len(), 1);
 	assert_eq!(dtx.outputs().len(), 1);
 	assert_eq!(dtx.token_inputs().len(), 0);
@@ -133,7 +134,8 @@ fn token_tx_ser_deser() {
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &tx).expect("serialization failed");
 	let dtx: Transaction = ser::deserialize_default(&mut &vec[..]).unwrap();
-	assert_eq!(dtx.fee(), 4);
+	let height = 42; // arbitrary
+	assert_eq!(dtx.fee(height), 4);
 	assert_eq!(dtx.inputs().len(), 1);
 	assert_eq!(dtx.outputs().len(), 1);
 	assert_eq!(dtx.token_inputs().len(), 1);

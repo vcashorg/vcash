@@ -35,6 +35,7 @@ use grin_chain as chain;
 use grin_core as core;
 use grin_keychain as keychain;
 use grin_pool as pool;
+use grin_util as util;
 use std::convert::TryInto;
 use std::fs;
 use std::sync::Arc;
@@ -282,7 +283,9 @@ where
 	tx_elements.push(build::token_output(amount, token_type, true, key_id));
 
 	build::transaction(
-		KernelFeatures::Plain { fee: fees as u64 },
+		KernelFeatures::Plain {
+			fee: (fees as u64).try_into().unwrap(),
+		},
 		Some(TokenKernelFeatures::IssueToken),
 		&tx_elements,
 		keychain,
@@ -334,7 +337,9 @@ where
 	}
 
 	build::transaction(
-		KernelFeatures::Plain { fee: fees as u64 },
+		KernelFeatures::Plain {
+			fee: (fees as u64).try_into().unwrap(),
+		},
 		Some(TokenKernelFeatures::PlainToken),
 		&tx_elements,
 		keychain,

@@ -651,18 +651,18 @@ fn spend_in_fork_and_compact() {
 
 		// create issue token
 		let key_id3 = ExtKeychainPath::new(1, 3, 0, 0, 0).to_identifier();
+		let key_id40 = ExtKeychainPath::new(1, 40, 0, 0, 0).to_identifier();
 		let token_amount = 10000;
 		let key_id_token = ExtKeychainPath::new(1, 10000, 0, 0, 0).to_identifier();
 		let key_id_token1 = ExtKeychainPath::new(1, 10001, 0, 0, 0).to_identifier();
 		let key_id_token2 = ExtKeychainPath::new(1, 10002, 0, 0, 0).to_identifier();
 		let token_key = TokenKey::new_token_key();
 		let issue_token_tx = build::transaction(
-			KernelFeatures::Plain {
-				fee: consensus::REWARD_ORIGIN,
-			},
+			KernelFeatures::Plain { fee: 20000.into() },
 			Some(TokenKernelFeatures::IssueToken),
 			&[
 				build::coinbase_input(consensus::REWARD_ORIGIN, key_id3),
+				build::output(consensus::REWARD_ORIGIN - 20000, key_id40),
 				build::token_output(token_amount, token_key, true, key_id_token.clone()),
 			],
 			&kc,
@@ -909,8 +909,8 @@ where
 	B: ProofBuild,
 {
 	Box::new(
-		move |build, acc| -> Result<(Transaction, BlindSum), Error> {
-			let (tx, sum) = acc?;
+		move |build, acc| -> Result<(Transaction, BlindSum, BlindSum), Error> {
+			let (tx, sum, token_sum) = acc?;
 
 			// TODO: proper support for different switch commitment schemes
 			let switch = SwitchCommitmentType::Regular;
@@ -938,6 +938,7 @@ where
 			Ok((
 				tx.with_output(Output::new(OutputFeatures::Plain, commit, proof)),
 				sum.sub_key_id(key_id.to_value_path(value)),
+				token_sum,
 			))
 		},
 	)
@@ -984,9 +985,10 @@ fn test_overflow_cached_rangeproof() {
 		// build a regular transaction so we have a rangeproof to copy
 		let tx1 = build::transaction(
 			KernelFeatures::Plain { fee: 20000.into() },
+			None,
 			&[
-				build::coinbase_input(consensus::REWARD, key_id2.clone()),
-				build::output(consensus::REWARD - 20000, key_id30.clone()),
+				build::coinbase_input(consensus::REWARD_ORIGIN, key_id2.clone()),
+				build::output(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
 			],
 			&kc,
 			&pb,
@@ -1005,10 +1007,11 @@ fn test_overflow_cached_rangeproof() {
 		// and a positive output for 1m grin
 		let mut tx2 = build::transaction(
 			KernelFeatures::Plain { fee: 0.into() },
+			None,
 			&[
-				build::input(consensus::REWARD - 20000, key_id30.clone()),
+				build::input(consensus::REWARD_ORIGIN - 20000, key_id30.clone()),
 				build::output(
-					consensus::REWARD - 20000 + 1_000_000_000_000_000,
+					consensus::REWARD_ORIGIN - 20000 + 1_000_000_000_000_000,
 					key_id31.clone(),
 				),
 				build_output_negative(1_000_000_000_000_000, key_id32.clone()),

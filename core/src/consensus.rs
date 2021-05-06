@@ -219,6 +219,9 @@ pub const TESTNET_FOURTH_HARD_FORK_HEIGHT: u64 = 1_000;
 /// AutomatedTesting support Fee Field
 pub const TESTING_FOURTH_HARD_FORK: u64 = 12;
 
+/// Fork every 3 blocks
+pub const TESTING_HARD_FORK_INTERVAL: u64 = 3;
+
 /// Check whether the block version is valid at a given height, implements
 /// 6 months interval scheduled hard forks for the first 2 years.
 pub fn header_version(height: u64) -> HeaderVersion {
@@ -256,8 +259,8 @@ pub const BLOCK_TIME_WINDOW: u64 = 2 * 7 * 24 * 3600;
 /// Limit value to within this factor of goal
 pub const CLAMP_FACTOR: u64 = 2;
 
-/// Dampening factor to use for DMA difficulty adjustment
-pub const DMA_DAMP_FACTOR: u64 = 3;
+/// Dampening factor to use for difficulty adjustment
+pub const DIFFICULTY_DAMP_FACTOR: u64 = 3;
 
 /// Dampening factor to use for AR scale calculation.
 pub const AR_SCALE_DAMP_FACTOR: u64 = 13;

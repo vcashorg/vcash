@@ -19,7 +19,6 @@ use self::core::core::TokenKey;
 use self::core::global;
 use self::keychain::{ExtKeychain, Keychain};
 use self::pool::PoolError;
-use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
 use grin_keychain as keychain;
@@ -107,7 +106,7 @@ fn test_transaction_pool_block_building() -> Result<(), PoolError> {
 
 	// start test issue token test
 	let token_type = TokenKey::new_token_key();
-	let issue_token_tx = test_issue_token_transaction(&keychain, 22, 19, token_type.clone(), 100);
+	let issue_token_tx = test_issue_token_transaction(&keychain, 320, 220, token_type.clone(), 100);
 	let header = block.header;
 	{
 		pool.add_to_pool(test_source(), issue_token_tx.clone(), false, &header)?;
@@ -140,8 +139,8 @@ fn test_transaction_pool_block_building() -> Result<(), PoolError> {
 	// start test send token tx test
 	let token_tx = test_token_transaction(
 		&keychain,
-		19,
-		17,
+		220,
+		120,
 		token_type.clone(),
 		vec![(true, 100)],
 		vec![49, 51],
