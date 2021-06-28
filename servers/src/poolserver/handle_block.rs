@@ -223,6 +223,7 @@ impl BlockHandler {
 			while Utc::now().timestamp() < sleep_deadline {
 				let new_header_hash = self.chain.head().unwrap().last_block_h;
 				if latest_hash != new_header_hash {
+					self.mining_blocks.write().clear();
 					need_notify_pool = true;
 					break;
 				}
